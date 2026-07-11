@@ -1,0 +1,16 @@
+{
+  "name": "react-native-surrealdb-workspace",
+  "version": "0.0.0",
+  "private": true,
+  "packageManager": "pnpm@11.5.0",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=11"
+  },
+  "scripts": {
+    "build": "pnpm --recursive --if-present run build",
+    "format": "pnpm --recursive --if-present run format && cargo fmt --all --check",
+    "lint": "pnpm --recursive --if-present run lint",
+    "test": "pnpm --recursive --if-present run test"
+  }
+}

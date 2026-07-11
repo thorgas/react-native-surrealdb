@@ -1,0 +1,71 @@
+# JavaScript and package managers
+node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build and test output
+dist/
+build/
+lib/
+coverage/
+.turbo/
+.nx/
+*.tsbuildinfo
+
+# Rust
+target/
+*.pdb
+
+# React Native / Metro
+.expo/
+.metro-health-check*
+metro-cache/
+*.jsbundle
+*.hbc
+
+# Android
+.gradle/
+.cxx/
+local.properties
+android/app/build/
+android/build/
+*.apk
+*.aab
+
+# Apple platforms
+Pods/
+DerivedData/
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcuserstate
+*.ipa
+*.dSYM
+*.dSYM.zip
+
+# Native build tooling
+.uniffi-bindgen/
+generated/
+
+# Editors and operating systems
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.local
+
+# Temporary files
+.cache/
+tmp/
+temp/
+*.log

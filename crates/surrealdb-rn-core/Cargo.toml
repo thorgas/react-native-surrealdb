@@ -1,0 +1,30 @@
+[package]
+name = "surrealdb-rn-core"
+version = "0.1.0-alpha.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Rust and UniFFI core for react-native-surrealdb"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "staticlib", "lib"]
+
+[features]
+default = ["engine-mem", "engine-surrealkv", "protocol-ws"]
+engine-mem = ["surrealdb/kv-mem"]
+engine-surrealkv = ["surrealdb/kv-surrealkv"]
+protocol-ws = ["surrealdb/protocol-ws", "surrealdb/rustls"]
+
+[dependencies]
+base64 = "0.22.1"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+surrealdb = { version = "=3.2.1", default-features = false }
+thiserror = "2.0.17"
+tokio = { version = "1.52.0", features = ["rt", "time"] }
+uniffi = { version = "0.31.0", features = ["tokio"] }
+
+[dev-dependencies]
+temp-dir = "0.1.16"
+tokio = { version = "1.52.0", features = ["macros", "rt-multi-thread", "time"] }
