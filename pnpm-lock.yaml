@@ -53,9 +53,15 @@ importers:
       '@react-native/babel-preset':
         specifier: 0.86.0
         version: 0.86.0(@babel/core@7.29.7)
+      '@react-native/codegen':
+        specifier: 0.86.0
+        version: 0.86.0(@babel/core@7.29.7)
       '@react-native/eslint-config':
         specifier: 0.86.0
         version: 0.86.0(eslint@8.57.1)(jest@30.2.0(@types/node@26.1.1))(prettier@2.8.8)(typescript@5.9.3)
+      '@react-native/gradle-plugin':
+        specifier: 0.86.0
+        version: 0.86.0
       '@react-native/metro-config':
         specifier: 0.86.0
         version: 0.86.0(@babel/core@7.29.7)

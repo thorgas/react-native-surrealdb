@@ -7,7 +7,7 @@ set (CMAKE_CXX_STANDARD 17)
 
 # Resolve the path to the uniffi-bindgen-react-native package
 execute_process(
-    COMMAND node -p "require.resolve('uniffi-bindgen-react-native/package.json')"
+    COMMAND node -p "require('path').resolve(require('path').dirname(require.resolve('uniffi-bindgen-react-native')), '../../../package.json')"
     OUTPUT_VARIABLE UNIFFI_BINDGEN_PATH
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
