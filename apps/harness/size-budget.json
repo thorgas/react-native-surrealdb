@@ -2,6 +2,11 @@
   "android": {
     "baselineBytes": 19488849,
     "baselineDescription": "RNTA 5.4.4, React Native 0.86.0, Hermes, New Architecture, arm64-v8a Release APK",
+    "baselineMeasuredAt": "2026-07-12",
+    "baselineMeasuredOn": "macOS with Xcode 26.1.1 and Android NDK 27.1.12297006",
+    "baselineCommand": "pnpm --filter SurrealDbHarness run size:android:baseline",
+    "baselineSource": "apps/harness with react-native-surrealdb Android autolinking disabled by SURREALDB_SIZE_BASELINE=1",
+    "comparisonCommand": "pnpm --filter SurrealDbHarness run size:android:benchmark",
     "maxDeltaBytes": 83886080
   }
 }

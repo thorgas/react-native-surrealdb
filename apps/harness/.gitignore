@@ -13,6 +13,7 @@
 .xcode.env
 android/app/
 android/build/
+android.size-benchmark-backup/
 dist/*
 !dist/.gitignore
 ios/DerivedData/

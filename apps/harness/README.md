@@ -42,8 +42,15 @@ repository root:
 
 ```sh
 pnpm --filter react-native-surrealdb run ubrn:android:size
-pnpm --filter SurrealDbHarness run size:android
+pnpm --filter SurrealDbHarness run size:android:benchmark
 ```
+
+To reproduce only the stock RNTA number, run
+`pnpm --filter SurrealDbHarness run size:android:baseline`. The script records
+the exact configuration, command, timestamp, and source in
+`size-results/android/baseline-report.json`. The paired benchmark uses the
+freshly built baseline APK; `size-budget.json` also retains the original
+2026-07-12 reference measurement and its provenance for historical comparison.
 
 The release artifact and JSON report are written below `size-results/`. The
 budget in `size-budget.json` is a hard ceiling for the candidate-minus-baseline

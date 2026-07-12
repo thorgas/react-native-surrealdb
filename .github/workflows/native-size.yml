@@ -33,7 +33,7 @@ jobs:
       - run: cargo install cargo-ndk --version 4.1.2 --locked
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter react-native-surrealdb run ubrn:android:size
-      - run: pnpm --filter SurrealDbHarness run size:android
+      - run: pnpm --filter SurrealDbHarness run size:android:benchmark
       - uses: actions/upload-artifact@v4
         if: always()
         with:

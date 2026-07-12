@@ -9,6 +9,8 @@
     "ios": "react-native run-ios",
     "lint": "eslint .",
     "size:android": "bash scripts/measure-android-release-size.sh",
+    "size:android:baseline": "bash scripts/measure-android-baseline.sh",
+    "size:android:benchmark": "bash scripts/benchmark-android-release-size.sh",
     "start": "react-native start",
     "test:harness:android": "react-native-harness --harnessRunner android",
     "test:harness:ios": "react-native-harness --harnessRunner ios",

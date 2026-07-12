@@ -1,19 +1,19 @@
 const project = (() => {
   try {
-    const { configureProjects } = require("react-native-test-app");
+    const { configureProjects } = require('react-native-test-app');
     return configureProjects({
       android: {
-        sourceDir: "android",
+        sourceDir: 'android',
       },
       ios: {
-        sourceDir: "ios",
+        sourceDir: 'ios',
       },
       macos: {
-        sourceDir: "macos",
+        sourceDir: 'macos',
       },
       windows: {
-        sourceDir: "windows",
-        solutionFile: "windows/SurrealDbHarness.sln",
+        sourceDir: 'windows',
+        solutionFile: 'windows/SurrealDbHarness.sln',
       },
     });
   } catch (_) {
@@ -23,4 +23,15 @@ const project = (() => {
 
 module.exports = {
   ...(project ? { project } : undefined),
+  // Used only by scripts/measure-android-baseline.sh. This produces the stock
+  // RNTA measurement without changing package.json or the pnpm dependency graph.
+  ...(process.env.SURREALDB_SIZE_BASELINE === '1'
+    ? {
+        dependencies: {
+          'react-native-surrealdb': {
+            platforms: { android: null, ios: null },
+          },
+        },
+      }
+    : undefined),
 };

@@ -1,5 +1,5 @@
 import { readFile, readdir, stat, writeFile } from 'node:fs/promises';
-import { basename, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 
 const args = Object.fromEntries(
@@ -10,6 +10,7 @@ const args = Object.fromEntries(
 );
 
 const platform = args.platform;
+const baselinePath = args.baseline && resolve(args.baseline);
 const candidatePath = args.candidate && resolve(args.candidate);
 const outputPath = resolve(args.output ?? 'size-results/report.json');
 
@@ -33,7 +34,22 @@ async function recursiveSize(path) {
 
 const root = new URL('..', import.meta.url);
 const budget = JSON.parse(await readFile(new URL('size-budget.json', root)));
-const baselineBytes = budget[platform]?.baselineBytes;
+const baselineBytes = baselinePath
+  ? await recursiveSize(baselinePath)
+  : budget[platform]?.baselineBytes;
+let baselineRun;
+if (baselinePath) {
+  try {
+    baselineRun = JSON.parse(
+      await readFile(
+        join(dirname(baselinePath), 'baseline-report.json'),
+        'utf8',
+      ),
+    );
+  } catch {
+    baselineRun = undefined;
+  }
+}
 const candidateBytes = await recursiveSize(candidatePath);
 const deltaBytes = candidateBytes - baselineBytes;
 const maxDeltaBytes = budget[platform]?.maxDeltaBytes;
@@ -49,8 +65,17 @@ const report = {
   schemaVersion: 1,
   platform,
   baseline: {
-    name: budget[platform].baselineDescription,
+    name: baselinePath
+      ? basename(baselinePath)
+      : budget[platform].baselineDescription,
     bytes: baselineBytes,
+    referenceBytes: budget[platform].baselineBytes,
+    measuredAt: baselineRun?.measuredAt ?? budget[platform].baselineMeasuredAt,
+    measuredOn:
+      baselineRun?.configuration ?? budget[platform].baselineMeasuredOn,
+    reproductionCommand:
+      baselineRun?.command ?? budget[platform].baselineCommand,
+    source: baselineRun?.source ?? budget[platform].baselineSource,
   },
   candidate: {
     name: basename(candidatePath),
@@ -58,6 +83,7 @@ const report = {
   },
   deltaBytes,
   maxDeltaBytes,
+  comparisonCommand: budget[platform].comparisonCommand,
   passed: deltaBytes <= maxDeltaBytes,
 };
 
