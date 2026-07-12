@@ -4151,6 +4151,7 @@ name = "surrealdb-rn-core"
 version = "0.1.0-alpha.0"
 dependencies = [
  "base64",
+ "futures",
  "serde",
  "serde_json",
  "surrealdb",

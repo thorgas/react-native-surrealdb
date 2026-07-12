@@ -95,6 +95,16 @@ typedef struct UniffiForeignFutureResultVoid {
 } UniffiForeignFutureResultVoid;
 typedef void (*UniffiForeignFutureCompleteVoid)(
     uint64_t callback_data, UniffiForeignFutureResultVoid result);
+/*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_clone_livequery(
+    /*handle*/ uint64_t handle, RustCallStatus *uniffi_out_err);
+void uniffi_surrealdb_rn_core_fn_free_livequery(
+    /*handle*/ uint64_t handle, RustCallStatus *uniffi_out_err);
+/*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_method_livequery_close(
+    /*handle*/ uint64_t ptr);
+int8_t uniffi_surrealdb_rn_core_fn_method_livequery_is_closed(
+    /*handle*/ uint64_t ptr, RustCallStatus *uniffi_out_err);
+/*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_method_livequery_next(
+    /*handle*/ uint64_t ptr);
 /*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_clone_surrealdatabase(
     /*handle*/ uint64_t handle, RustCallStatus *uniffi_out_err);
 void uniffi_surrealdb_rn_core_fn_free_surrealdatabase(
@@ -109,6 +119,9 @@ uniffi_surrealdb_rn_core_fn_method_surrealdatabase_invalidate(
     /*handle*/ uint64_t ptr);
 int8_t uniffi_surrealdb_rn_core_fn_method_surrealdatabase_is_closed(
     /*handle*/ uint64_t ptr, RustCallStatus *uniffi_out_err);
+/*handle*/ uint64_t
+uniffi_surrealdb_rn_core_fn_method_surrealdatabase_live_query(
+    /*handle*/ uint64_t ptr, RustBuffer surql, RustBuffer variables_json);
 /*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query(
     /*handle*/ uint64_t ptr, RustBuffer surql, RustBuffer variables_json);
 /*handle*/ uint64_t
@@ -243,11 +256,15 @@ void ffi_surrealdb_rn_core_rust_future_free_void(
 void ffi_surrealdb_rn_core_rust_future_complete_void(
     /*handle*/ uint64_t handle, RustCallStatus *uniffi_out_err);
 uint16_t uniffi_surrealdb_rn_core_checksum_func_connect();
+uint16_t uniffi_surrealdb_rn_core_checksum_method_livequery_close();
+uint16_t uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed();
+uint16_t uniffi_surrealdb_rn_core_checksum_method_livequery_next();
 uint16_t
 uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_authenticate();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_close();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_invalidate();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_is_closed();
+uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_live_query();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query();
 uint16_t
 uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_database();
@@ -1618,6 +1635,63 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                 ->cpp_uniffi_internal_fn_func_ffi__read_string_from_buffer(
                     rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_clone_livequery"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt, "ubrn_uniffi_surrealdb_rn_core_fn_clone_livequery"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_surrealdb_rn_core_fn_clone_livequery(
+                rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_free_livequery"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt, "ubrn_uniffi_surrealdb_rn_core_fn_free_livequery"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_surrealdb_rn_core_fn_free_livequery(
+                rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_close"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt, "ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_close"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_surrealdb_rn_core_fn_method_livequery_close(
+                rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_is_closed"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt,
+              "ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_is_closed"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_method_livequery_is_closed(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_next"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt, "ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_next"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_surrealdb_rn_core_fn_method_livequery_next(
+                rt, thisVal, args, count);
+          });
   props["ubrn_uniffi_surrealdb_rn_core_fn_clone_surrealdatabase"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -1687,6 +1761,18 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                  const jsi::Value *args, size_t count) -> jsi::Value {
             return this
                 ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_is_closed(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_live_query"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_"
+                                        "method_surrealdatabase_live_query"),
+          3,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_live_query(
                     rt, thisVal, args, count);
           });
   props["ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query"] =
@@ -2291,6 +2377,44 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
             return this->cpp_uniffi_surrealdb_rn_core_checksum_func_connect(
                 rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_close"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt,
+              "ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_close"),
+          0,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_checksum_method_livequery_close(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_"
+                                        "checksum_method_livequery_is_closed"),
+          0,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_next"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt,
+              "ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_next"),
+          0,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_checksum_method_livequery_next(
+                    rt, thisVal, args, count);
+          });
   props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_"
         "authenticate"] = jsi::Function::createFromHostFunction(
       rt,
@@ -2338,6 +2462,18 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
              const jsi::Value *args, size_t count) -> jsi::Value {
         return this
             ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_is_closed(
+                rt, thisVal, args, count);
+      });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_live_"
+        "query"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "method_surrealdatabase_live_query"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_live_query(
                 rt, thisVal, args, count);
       });
   props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query"] =
@@ -2400,6 +2536,19 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                  const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_ffi_surrealdb_rn_core_uniffi_contract_version(
                 rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_internal_fn_method_livequery_ffi__bless_pointer"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt,
+              "ubrn_uniffi_internal_fn_method_livequery_ffi__bless_pointer"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_internal_fn_method_livequery_ffi__bless_pointer(
+                    rt, thisVal, args, count);
           });
   props["ubrn_uniffi_internal_fn_method_surrealdatabase_ffi__bless_pointer"] =
       jsi::Function::createFromHostFunction(
@@ -2569,6 +2718,21 @@ NativeSurrealdbRnCore::cpp_uniffi_internal_fn_func_ffi__read_string_from_buffer(
       rt, args[0], args[1], args[2]);
 }
 jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_internal_fn_method_livequery_ffi__bless_pointer(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto pointer =
+      uniffi_jsi::Bridging<uint64_t>::fromJs(rt, callInvoker, args[0]);
+  auto static destructor = [](uint64_t p) {
+    RustCallStatus status = {0};
+    uniffi_surrealdb_rn_core_fn_free_livequery(p, &status);
+  };
+  auto ptrObj =
+      std::make_shared<uniffi_jsi::DestructibleObject>(pointer, destructor);
+  auto obj = jsi::Object::createFromHostObject(rt, ptrObj);
+  return jsi::Value(rt, obj);
+}
+jsi::Value NativeSurrealdbRnCore::
     cpp_uniffi_internal_fn_method_surrealdatabase_ffi__bless_pointer(
         jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
         size_t count) {
@@ -2585,6 +2749,74 @@ jsi::Value NativeSurrealdbRnCore::
 }
 
 // Methods calling directly into the uniffi generated C API of the Rust crate.
+jsi::Value
+NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_clone_livequery(
+    jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+    size_t count) {
+  RustCallStatus status =
+      uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::rustSuccess(rt);
+  auto value = uniffi_surrealdb_rn_core_fn_clone_livequery(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]),
+      &status);
+  uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::copyIntoJs(
+      rt, callInvoker, status, args[count - 1]);
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value
+NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_free_livequery(
+    jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+    size_t count) {
+  RustCallStatus status =
+      uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::rustSuccess(rt);
+  uniffi_surrealdb_rn_core_fn_free_livequery(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]),
+      &status);
+  uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::copyIntoJs(
+      rt, callInvoker, status, args[count - 1]);
+
+  return jsi::Value::undefined();
+}
+jsi::Value
+NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_method_livequery_close(
+    jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+    size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_method_livequery_close(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_method_livequery_is_closed(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  RustCallStatus status =
+      uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::rustSuccess(rt);
+  auto value = uniffi_surrealdb_rn_core_fn_method_livequery_is_closed(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]),
+      &status);
+  uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::copyIntoJs(
+      rt, callInvoker, status, args[count - 1]);
+
+  return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value
+NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_method_livequery_next(
+    jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+    size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_method_livequery_next(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
 jsi::Value
 NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_clone_surrealdatabase(
     jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
@@ -2665,6 +2897,21 @@ jsi::Value NativeSurrealdbRnCore::
       rt, callInvoker, status, args[count - 1]);
 
   return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_live_query(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_method_surrealdatabase_live_query(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]),
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[1]),
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[2]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
 }
 jsi::Value NativeSurrealdbRnCore::
     cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query(
@@ -3348,6 +3595,30 @@ NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_checksum_func_connect(
   return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }
 jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_method_livequery_close(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_checksum_method_livequery_close();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_method_livequery_next(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_checksum_method_livequery_next();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
     cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_authenticate(
         jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
         size_t count) {
@@ -3379,6 +3650,15 @@ jsi::Value NativeSurrealdbRnCore::
         size_t count) {
   auto value =
       uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_is_closed();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_live_query(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_live_query();
 
   return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }

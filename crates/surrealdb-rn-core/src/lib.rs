@@ -6,13 +6,17 @@
 
 mod wire;
 
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect as connect_any};
 use surrealdb::opt::auth::{Database as DatabaseCredentials, Root, Token};
-use surrealdb::types::{Object, Value};
+use surrealdb::types::{Action, Object, Value};
+use tokio::sync::{Mutex as AsyncMutex, watch};
+
+use futures::StreamExt;
 
 use crate::wire::{decode_variables, encode_value};
 
@@ -28,6 +32,22 @@ pub struct ConnectOptions {
 #[derive(Debug, Clone, uniffi::Record)]
 pub struct QueryStatementResult {
     pub statement_index: u32,
+    pub value_json: String,
+}
+
+#[derive(Debug, Clone, uniffi::Enum)]
+pub enum LiveAction {
+    Create,
+    Update,
+    Delete,
+    Error,
+    Unknown,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct LiveNotification {
+    pub query_id: String,
+    pub action: LiveAction,
     pub value_json: String,
 }
 
@@ -65,6 +85,51 @@ pub struct SurrealDatabase {
     // Surreal is cheaply cloneable. Taking a clone while holding this mutex lets
     // async work proceed without retaining a lock across an await point.
     inner: Mutex<Option<Surreal<Any>>>,
+    live_queries: Mutex<Vec<Weak<LiveQuery>>>,
+}
+
+#[derive(uniffi::Object)]
+pub struct LiveQuery {
+    stream: AsyncMutex<Option<surrealdb::method::QueryStream<Value>>>,
+    response: Mutex<Option<surrealdb::IndexedResults>>,
+    client: Mutex<Option<Surreal<Any>>>,
+    closed: AtomicBool,
+    close_signal: watch::Sender<bool>,
+}
+
+impl LiveQuery {
+    fn request_close(&self) -> bool {
+        if self.closed.swap(true, Ordering::AcqRel) {
+            false
+        } else {
+            self.close_signal.send(true).ok();
+            true
+        }
+    }
+
+    async fn close_inner(&self) {
+        self.request_close();
+        self.stream.lock().await.take();
+        if let Ok(mut response) = self.response.lock() {
+            response.take();
+        }
+        if let Ok(mut client) = self.client.lock() {
+            client.take();
+        }
+    }
+}
+
+impl Drop for LiveQuery {
+    fn drop(&mut self) {
+        self.request_close();
+        self.stream.get_mut().take();
+        if let Ok(response) = self.response.get_mut() {
+            response.take();
+        }
+        if let Ok(client) = self.client.get_mut() {
+            client.take();
+        }
+    }
 }
 
 impl SurrealDatabase {
@@ -76,6 +141,20 @@ impl SurrealDatabase {
             })?
             .clone()
             .ok_or(SurrealRnError::Closed)
+    }
+
+    /// Promote a successfully mutated SDK session to the template used by
+    /// subsequent client clones. SurrealDB clones session state at clone time;
+    /// mutating a temporary clone alone would otherwise be lost.
+    fn replace_client(&self, client: Surreal<Any>) -> Result<(), SurrealRnError> {
+        let mut slot = self.inner.lock().map_err(|_| SurrealRnError::Internal {
+            message: "database handle lock poisoned".into(),
+        })?;
+        if slot.is_none() {
+            return Err(SurrealRnError::Closed);
+        }
+        *slot = Some(client);
+        Ok(())
     }
 }
 
@@ -104,7 +183,57 @@ pub async fn connect(options: ConnectOptions) -> Result<Arc<SurrealDatabase>, Su
 
     Ok(Arc::new(SurrealDatabase {
         inner: Mutex::new(Some(client)),
+        live_queries: Mutex::new(Vec::new()),
     }))
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl LiveQuery {
+    pub async fn next(&self) -> Result<Option<LiveNotification>, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+
+        let mut close_signal = self.close_signal.subscribe();
+        let mut slot = self.stream.lock().await;
+        if self.closed.load(Ordering::Acquire) || *close_signal.borrow() {
+            return Ok(None);
+        }
+        let Some(stream) = slot.as_mut() else {
+            return Ok(None);
+        };
+
+        tokio::select! {
+            changed = close_signal.changed() => {
+                changed.ok();
+                Ok(None)
+            }
+            notification = stream.next() => {
+                match notification {
+                    Some(Ok(notification)) => Ok(Some(LiveNotification {
+                        query_id: notification.query_id.to_string(),
+                        action: live_action(notification.action),
+                        value_json: encode_value(notification.data)?,
+                    })),
+                    Some(Err(error)) => Err(error.into()),
+                    None => {
+                        self.closed.store(true, Ordering::Release);
+                        slot.take();
+                        Ok(None)
+                    }
+                }
+            }
+        }
+    }
+
+    pub async fn close(&self) -> Result<(), SurrealRnError> {
+        self.close_inner().await;
+        Ok(())
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -114,8 +243,9 @@ impl SurrealDatabase {
         namespace: String,
         database: String,
     ) -> Result<(), SurrealRnError> {
-        self.client()?.use_ns(namespace).use_db(database).await?;
-        Ok(())
+        let client = self.client()?;
+        client.use_ns(namespace).use_db(database).await?;
+        self.replace_client(client)
     }
 
     /// Execute one or more SurrealQL statements.
@@ -129,7 +259,7 @@ impl SurrealDatabase {
     ) -> Result<Vec<QueryStatementResult>, SurrealRnError> {
         let client = self.client()?;
         let variables: Object = decode_variables(variables_json.as_deref())?;
-        let mut response = client.query(surql).bind(variables).await?;
+        let mut response = client.query(surql).bind(variables).await?.check()?;
         let statement_count = response.num_statements();
         let mut results = Vec::with_capacity(statement_count);
 
@@ -144,11 +274,44 @@ impl SurrealDatabase {
         Ok(results)
     }
 
+    /// Start a single live SurrealQL statement and return a pull-based stream.
+    ///
+    /// Pulling avoids invoking JavaScript from a Rust worker thread, provides
+    /// natural backpressure, and maps cleanly to an async iterator in TypeScript.
+    pub async fn live_query(
+        &self,
+        surql: String,
+        variables_json: Option<String>,
+    ) -> Result<Arc<LiveQuery>, SurrealRnError> {
+        let client = self.client()?;
+        let variables: Object = decode_variables(variables_json.as_deref())?;
+        let mut response = client.query(surql).bind(variables).await?;
+        let stream = response.stream::<Value>(0)?;
+        let (close_signal, _) = watch::channel(false);
+        let live_query = Arc::new(LiveQuery {
+            stream: AsyncMutex::new(Some(stream)),
+            response: Mutex::new(Some(response)),
+            client: Mutex::new(Some(client)),
+            closed: AtomicBool::new(false),
+            close_signal,
+        });
+
+        let mut subscriptions = self
+            .live_queries
+            .lock()
+            .map_err(|_| SurrealRnError::Internal {
+                message: "live query registry lock poisoned".into(),
+            })?;
+        subscriptions.retain(|query| query.strong_count() > 0);
+        subscriptions.push(Arc::downgrade(&live_query));
+
+        Ok(live_query)
+    }
+
     pub async fn authenticate(&self, access_token: String) -> Result<(), SurrealRnError> {
-        self.client()?
-            .authenticate(Token::from(access_token))
-            .await?;
-        Ok(())
+        let client = self.client()?;
+        client.authenticate(Token::from(access_token)).await?;
+        self.replace_client(client)
     }
 
     pub async fn sign_in_root(
@@ -156,8 +319,12 @@ impl SurrealDatabase {
         username: String,
         password: String,
     ) -> Result<String, SurrealRnError> {
-        let token = self.client()?.signin(Root { username, password }).await?;
-        Ok(token.access.as_insecure_token().to_owned())
+        let client = self.client()?;
+        let token = client.signin(Root { username, password }).await?;
+        let access_token = token.access.as_insecure_token().to_owned();
+        client.authenticate(token).await?;
+        self.replace_client(client)?;
+        Ok(access_token)
     }
 
     pub async fn sign_in_database(
@@ -167,8 +334,8 @@ impl SurrealDatabase {
         username: String,
         password: String,
     ) -> Result<String, SurrealRnError> {
-        let token = self
-            .client()?
+        let client = self.client()?;
+        let token = client
             .signin(DatabaseCredentials {
                 namespace,
                 database,
@@ -176,12 +343,16 @@ impl SurrealDatabase {
                 password,
             })
             .await?;
-        Ok(token.access.as_insecure_token().to_owned())
+        let access_token = token.access.as_insecure_token().to_owned();
+        client.authenticate(token).await?;
+        self.replace_client(client)?;
+        Ok(access_token)
     }
 
     pub async fn invalidate(&self) -> Result<(), SurrealRnError> {
-        self.client()?.invalidate().await?;
-        Ok(())
+        let client = self.client()?;
+        client.invalidate().await?;
+        self.replace_client(client)
     }
 
     /// Idempotently prevent new operations and release this handle's client.
@@ -191,6 +362,23 @@ impl SurrealDatabase {
                 message: "database handle lock poisoned".into(),
             })?;
             slot.take();
+        }
+        let live_queries = {
+            let mut subscriptions =
+                self.live_queries
+                    .lock()
+                    .map_err(|_| SurrealRnError::Internal {
+                        message: "live query registry lock poisoned".into(),
+                    })?;
+            let live_queries = subscriptions
+                .iter()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>();
+            subscriptions.clear();
+            live_queries
+        };
+        for live_query in live_queries {
+            live_query.close_inner().await;
         }
         // The SDK owns its embedded router task. Dropping the last client closes
         // its route channel; yield so that task can begin datastore shutdown.
@@ -203,6 +391,16 @@ impl SurrealDatabase {
             message: "database handle lock poisoned".into(),
         })?;
         Ok(slot.is_none())
+    }
+}
+
+fn live_action(action: Action) -> LiveAction {
+    match action {
+        Action::Create => LiveAction::Create,
+        Action::Update => LiveAction::Update,
+        Action::Delete => LiveAction::Delete,
+        Action::Error => LiveAction::Error,
+        _ => LiveAction::Unknown,
     }
 }
 
@@ -292,6 +490,105 @@ mod tests {
             database.query("RETURN 1".into(), None).await,
             Err(SurrealRnError::Closed)
         ));
+    }
+
+    #[tokio::test]
+    async fn live_query_delivers_notifications_and_database_close_cancels_next() {
+        let database = connect(ConnectOptions {
+            endpoint: "mem://".into(),
+            namespace: Some("live".into()),
+            database: Some("live".into()),
+        })
+        .await
+        .unwrap();
+
+        database
+            .query("DEFINE TABLE event SCHEMALESS".into(), None)
+            .await
+            .unwrap();
+        let live_query = database
+            .live_query("LIVE SELECT * FROM event".into(), None)
+            .await
+            .unwrap();
+        database
+            .query("CREATE event:ada SET name = 'Ada'".into(), None)
+            .await
+            .unwrap();
+
+        let notification = tokio::time::timeout(Duration::from_secs(2), live_query.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(notification.action, LiveAction::Create));
+        assert!(notification.value_json.contains("Ada"));
+
+        let pending_query = Arc::clone(&live_query);
+        let pending_next = tokio::spawn(async move { pending_query.next().await });
+        tokio::task::yield_now().await;
+        database.close().await.unwrap();
+
+        let pending_result = tokio::time::timeout(Duration::from_secs(2), pending_next)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(pending_result.is_none());
+        assert!(live_query.is_closed());
+    }
+
+    /// Run explicitly against a local authenticated SurrealDB server:
+    ///
+    /// `SURREAL_TEST_WS_ENDPOINT=ws://127.0.0.1:18080 cargo test \
+    ///   -p surrealdb-rn-core authenticated_websocket_live_query -- --ignored`
+    #[tokio::test]
+    #[ignore = "requires an authenticated SurrealDB server"]
+    async fn authenticated_websocket_live_query() {
+        let endpoint = std::env::var("SURREAL_TEST_WS_ENDPOINT")
+            .unwrap_or_else(|_| "ws://127.0.0.1:18080".into());
+        let username = std::env::var("SURREAL_TEST_WS_USERNAME").unwrap_or_else(|_| "root".into());
+        let password = std::env::var("SURREAL_TEST_WS_PASSWORD").unwrap_or_else(|_| "root".into());
+        let database = connect(ConnectOptions {
+            endpoint,
+            namespace: None,
+            database: None,
+        })
+        .await
+        .unwrap();
+
+        let token = database.sign_in_root(username, password).await.unwrap();
+        assert!(!token.is_empty());
+        database
+            .use_namespace_database("rn_remote".into(), "rn_remote".into())
+            .await
+            .unwrap();
+        database
+            .query("DEFINE TABLE event SCHEMALESS".into(), None)
+            .await
+            .unwrap();
+
+        let live_query = database
+            .live_query("LIVE SELECT * FROM event".into(), None)
+            .await
+            .unwrap();
+        database
+            .query(
+                "CREATE event:remote SET transport = 'websocket'".into(),
+                None,
+            )
+            .await
+            .unwrap();
+
+        let notification = tokio::time::timeout(Duration::from_secs(5), live_query.next())
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(matches!(notification.action, LiveAction::Create));
+        assert!(notification.value_json.contains("websocket"));
+
+        live_query.close().await.unwrap();
+        database.close().await.unwrap();
     }
 
     #[tokio::test]

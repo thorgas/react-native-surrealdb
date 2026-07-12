@@ -50,11 +50,12 @@
   "scripts": {
     "build": "bob build",
     "format": "prettier --check \"src/**/*.{ts,tsx}\" \"test/**/*.ts\" \"*.{json,yaml}\"",
+    "format:generated": "prettier --write src/native.tsx src/NativeSurrealdb.ts",
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "ubrn:ios": "ubrn build ios --and-generate --release --targets aarch64-apple-ios-sim",
-    "ubrn:android": "ubrn build android --and-generate --release --targets aarch64-linux-android"
+    "ubrn:ios": "IPHONEOS_DEPLOYMENT_TARGET=15.1 ubrn build ios --and-generate --release --targets aarch64-apple-ios-sim && pnpm run format:generated",
+    "ubrn:android": "ubrn build android --and-generate --release --targets aarch64-linux-android && pnpm run format:generated"
   },
   "dependencies": {
     "@ubjs/core": "0.31.0-3",

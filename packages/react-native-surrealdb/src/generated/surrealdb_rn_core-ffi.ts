@@ -166,6 +166,14 @@ interface NativeModuleInterface {
     uniffi_out_err: UniffiRustCallStatus,
   ): void;
   ubrn_ffi_surrealdb_rn_core_rust_future_free_void(handle: bigint): void;
+  ubrn_uniffi_surrealdb_rn_core_fn_clone_livequery(
+    ptr: bigint,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_free_livequery(
+    ptr: bigint,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): void;
   ubrn_uniffi_surrealdb_rn_core_fn_clone_surrealdatabase(
     ptr: bigint,
     uniffi_out_err: UniffiRustCallStatus,
@@ -175,6 +183,16 @@ interface NativeModuleInterface {
     uniffi_out_err: UniffiRustCallStatus,
   ): void;
   ubrn_uniffi_surrealdb_rn_core_fn_func_connect(options: Uint8Array): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_close(
+    uniffiSelf: bigint,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_is_closed(
+    uniffiSelf: bigint,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): number;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_next(
+    uniffiSelf: bigint,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_authenticate(
     uniffiSelf: bigint,
     accessToken: Uint8Array,
@@ -189,6 +207,11 @@ interface NativeModuleInterface {
     uniffiSelf: bigint,
     uniffi_out_err: UniffiRustCallStatus,
   ): number;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_live_query(
+    uniffiSelf: bigint,
+    surql: Uint8Array,
+    variablesJson: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query(
     uniffiSelf: bigint,
     surql: Uint8Array,
@@ -213,14 +236,22 @@ interface NativeModuleInterface {
   ): bigint;
   ubrn_ffi_surrealdb_rn_core_uniffi_contract_version(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_connect(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_close(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_next(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_authenticate(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_close(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_invalidate(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_is_closed(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_live_query(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_database(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_root(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_use_namespace_database(): number;
+  ubrn_uniffi_internal_fn_method_livequery_ffi__bless_pointer(
+    pointer: bigint,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): UniffiGcObject;
   ubrn_uniffi_internal_fn_method_surrealdatabase_ffi__bless_pointer(
     pointer: bigint,
     uniffi_out_err: UniffiRustCallStatus,

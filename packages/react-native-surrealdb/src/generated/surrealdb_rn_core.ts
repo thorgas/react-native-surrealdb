@@ -25,6 +25,7 @@ import {
   FfiConverterUInt8,
   RustBuffer,
   UniffiAbstractObject,
+  UniffiEnum,
   UniffiError,
   UniffiInternalError,
   UniffiRustCaller,
@@ -198,6 +199,104 @@ const FfiConverterTypeConnectOptions = (() => {
         FfiConverterString.allocationSize(value.endpoint) +
         FfiConverterOptionalString.allocationSize(value.namespace) +
         FfiConverterOptionalString.allocationSize(value.database)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export enum LiveAction {
+  Create,
+  Update,
+  Delete,
+  Error,
+  Unknown,
+}
+
+const FfiConverterTypeLiveAction = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = LiveAction;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return LiveAction.Create;
+        case 2:
+          return LiveAction.Update;
+        case 3:
+          return LiveAction.Delete;
+        case 4:
+          return LiveAction.Error;
+        case 5:
+          return LiveAction.Unknown;
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value) {
+        case LiveAction.Create:
+          return ordinalConverter.write(1, into);
+        case LiveAction.Update:
+          return ordinalConverter.write(2, into);
+        case LiveAction.Delete:
+          return ordinalConverter.write(3, into);
+        case LiveAction.Error:
+          return ordinalConverter.write(4, into);
+        case LiveAction.Unknown:
+          return ordinalConverter.write(5, into);
+      }
+    }
+    allocationSize(value: TypeName): number {
+      return ordinalConverter.allocationSize(0);
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type LiveNotification = {
+  queryId: string;
+  action: LiveAction;
+  valueJson: string;
+};
+
+/**
+ * Generated factory for {@link LiveNotification} record objects.
+ */
+export const LiveNotification = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<LiveNotification, ReturnType<typeof defaults>>(
+      defaults,
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<LiveNotification>,
+  });
+})();
+
+const FfiConverterTypeLiveNotification = (() => {
+  type TypeName = LiveNotification;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        queryId: FfiConverterString.read(from),
+        action: FfiConverterTypeLiveAction.read(from),
+        valueJson: FfiConverterString.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.queryId, into);
+      FfiConverterTypeLiveAction.write(value.action, into);
+      FfiConverterString.write(value.valueJson, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.queryId) +
+        FfiConverterTypeLiveAction.allocationSize(value.action) +
+        FfiConverterString.allocationSize(value.valueJson)
       );
     }
   }
@@ -598,6 +697,202 @@ const FfiConverterTypeSurrealRnError = (() => {
   return new FFIConverter();
 })();
 
+export interface LiveQueryLike {
+  close(asyncOpts_?: { signal: AbortSignal }) /*throws*/ : Promise<void>;
+  isClosed(): boolean;
+  next(asyncOpts_?: {
+    signal: AbortSignal;
+  }) /*throws*/ : Promise<LiveNotification | undefined>;
+}
+/**
+ * @deprecated Use `LiveQueryLike` instead.
+ */
+export type LiveQueryInterface = LiveQueryLike;
+
+export class LiveQuery extends UniffiAbstractObject implements LiveQueryLike {
+  readonly [uniffiTypeNameSymbol] = "LiveQuery";
+  readonly [destructorGuardSymbol]: UniffiGcObject;
+  readonly [pointerLiteralSymbol]: UniffiHandle;
+  // No primary constructor declared for this class.
+  private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] =
+      uniffiTypeLiveQueryObjectFactory.bless(pointer);
+  }
+
+  async close(asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_close(
+            uniffiTypeLiveQueryObjectFactory.clonePointer(this),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_void,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_void,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_void,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_void,
+        /*liftFunc:*/ (_v) => {},
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeSurrealRnError.lift.bind(
+          FfiConverterTypeSurrealRnError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  isClosed(): boolean {
+    return FfiConverterBool.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_is_closed(
+            uniffiTypeLiveQueryObjectFactory.clonePointer(this),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  async next(asyncOpts_?: {
+    signal: AbortSignal;
+  }): Promise<LiveNotification | undefined> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_next(
+            uniffiTypeLiveQueryObjectFactory.clonePointer(this),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterOptionalTypeLiveNotification.lift.bind(
+          FfiConverterOptionalTypeLiveNotification,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeSurrealRnError.lift.bind(
+          FfiConverterTypeSurrealRnError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  uniffiDestroy(): void {
+    const ptr = (this as any)[destructorGuardSymbol];
+    if (ptr !== undefined) {
+      const pointer = uniffiTypeLiveQueryObjectFactory.pointer(this);
+      uniffiTypeLiveQueryObjectFactory.freePointer(pointer);
+      uniffiTypeLiveQueryObjectFactory.unbless(ptr);
+      delete (this as any)[destructorGuardSymbol];
+    }
+  }
+
+  static instanceOf(obj_: any): obj_ is LiveQuery {
+    return uniffiTypeLiveQueryObjectFactory.isConcreteType(obj_);
+  }
+}
+
+const uniffiTypeLiveQueryObjectFactory: UniffiObjectFactory<LiveQueryLike> =
+  (() => {
+    return {
+      create(pointer: UniffiHandle): LiveQueryLike {
+        const instance = Object.create(LiveQuery.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "LiveQuery";
+        return instance;
+      },
+
+      bless(p: UniffiHandle): UniffiGcObject {
+        return uniffiCaller.rustCall(
+          /*caller:*/ (status) =>
+            nativeModule().ubrn_uniffi_internal_fn_method_livequery_ffi__bless_pointer(
+              p,
+              status,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      unbless(ptr_: UniffiGcObject) {
+        ptr_.markDestroyed();
+      },
+
+      pointer(obj_: LiveQueryLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+          throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+      },
+
+      clonePointer(obj_: LiveQueryLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_clone_livequery(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_free_livequery(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      isConcreteType(obj_: any): obj_ is LiveQueryLike {
+        return (
+          obj_[destructorGuardSymbol] &&
+          obj_[uniffiTypeNameSymbol] === "LiveQuery"
+        );
+      },
+    };
+  })();
+const FfiConverterTypeLiveQuery = new FfiConverterObject(
+  uniffiTypeLiveQueryObjectFactory,
+);
+
 export interface SurrealDatabaseLike {
   authenticate(
     accessToken: string,
@@ -609,6 +904,17 @@ export interface SurrealDatabaseLike {
   close(asyncOpts_?: { signal: AbortSignal }) /*throws*/ : Promise<void>;
   invalidate(asyncOpts_?: { signal: AbortSignal }) /*throws*/ : Promise<void>;
   isClosed() /*throws*/ : boolean;
+  /**
+   * Start a single live SurrealQL statement and return a pull-based stream.
+   *
+   * Pulling avoids invoking JavaScript from a Rust worker thread, provides
+   * natural backpressure, and maps cleanly to an async iterator in TypeScript.
+   */
+  liveQuery(
+    surql: string,
+    variablesJson: string | undefined,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<LiveQueryLike>;
   /**
    * Execute one or more SurrealQL statements.
    *
@@ -784,6 +1090,61 @@ export class SurrealDatabase
         /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
       ),
     );
+  }
+
+  /**
+   * Start a single live SurrealQL statement and return a pull-based stream.
+   *
+   * Pulling avoids invoking JavaScript from a Rust worker thread, provides
+   * natural backpressure, and maps cleanly to an async iterator in TypeScript.
+   */
+  async liveQuery(
+    surql: string,
+    variablesJson: string | undefined,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<LiveQueryLike> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_live_query(
+            uniffiTypeSurrealDatabaseObjectFactory.clonePointer(this),
+            FfiConverterString.lower(surql, nativeModule().rustbuffer_alloc),
+            FfiConverterOptionalString.lower(
+              variablesJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_u64,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_u64,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_u64,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_u64,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeLiveQuery.lift.bind(
+          FfiConverterTypeLiveQuery,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeSurrealRnError.lift.bind(
+          FfiConverterTypeSurrealRnError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
   }
 
   /**
@@ -1064,6 +1425,11 @@ const FfiConverterTypeSurrealDatabase = new FfiConverterObject(
 // FfiConverter for string | undefined
 const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 
+// FfiConverter for LiveNotification | undefined
+const FfiConverterOptionalTypeLiveNotification = new FfiConverterOptional(
+  FfiConverterTypeLiveNotification,
+);
+
 // FfiConverter for Array<QueryStatementResult>
 const FfiConverterSequenceTypeQueryStatementResult = new FfiConverterArray(
   FfiConverterTypeQueryStatementResult,
@@ -1100,6 +1466,30 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_close() !==
+    55792
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_livequery_close",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed() !==
+    51850
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_next() !==
+    48144
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_livequery_next",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_authenticate() !==
     53111
   ) {
@@ -1129,6 +1519,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_is_closed",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_live_query() !==
+    57387
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_live_query",
     );
   }
   if (
@@ -1169,6 +1567,9 @@ export default Object.freeze({
   initialize: uniffiEnsureInitialized,
   converters: {
     FfiConverterTypeConnectOptions,
+    FfiConverterTypeLiveAction,
+    FfiConverterTypeLiveNotification,
+    FfiConverterTypeLiveQuery,
     FfiConverterTypeQueryStatementResult,
     FfiConverterTypeSurrealDatabase,
     FfiConverterTypeSurrealRnError,
