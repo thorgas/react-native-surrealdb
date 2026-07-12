@@ -1,0 +1,102 @@
+{
+  "name": "react-native-surrealdb",
+  "version": "0.1.0-alpha.0",
+  "description": "Embedded and remote SurrealDB for React Native",
+  "keywords": [
+    "react-native",
+    "surrealdb",
+    "database",
+    "offline-first"
+  ],
+  "license": "MIT",
+  "author": "Tim Horgas",
+  "homepage": "https://github.com/timhorgas/react-native-surrealdb#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/timhorgas/react-native-surrealdb.git"
+  },
+  "bugs": {
+    "url": "https://github.com/timhorgas/react-native-surrealdb/issues"
+  },
+  "files": [
+    "src",
+    "lib",
+    "android",
+    "ios",
+    "cpp",
+    "SurrealDbRnFramework.xcframework",
+    "*.podspec",
+    "react-native.config.js",
+    "!ios/build",
+    "!android/build",
+    "!android/gradle",
+    "!android/gradlew",
+    "!android/gradlew.bat",
+    "!android/local.properties",
+    "!**/__tests__"
+  ],
+  "main": "./lib/module/index.js",
+  "types": "./lib/typescript/index.d.ts",
+  "react-native": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/typescript/index.d.ts",
+      "react-native": "./src/index.ts",
+      "source": "./src/index.ts",
+      "default": "./lib/module/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "bob build",
+    "format": "prettier --check \"src/**/*.{ts,tsx}\" \"test/**/*.ts\" \"*.{json,yaml}\"",
+    "lint": "tsc --noEmit",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "ubrn:ios": "ubrn build ios --and-generate --release --targets aarch64-apple-ios-sim",
+    "ubrn:android": "ubrn build android --and-generate --release --targets aarch64-linux-android"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-3",
+    "uniffi-bindgen-react-native": "0.31.0-3"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.0",
+    "prettier": "^3.6.2",
+    "react": "^19.1.0",
+    "react-native": "^0.81.5",
+    "react-native-builder-bob": "^0.40.14",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.4"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-native": ">=0.76"
+  },
+  "codegenConfig": {
+    "name": "SurrealDbRnSpec",
+    "type": "modules",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "com.surrealdb.rn"
+    }
+  },
+  "react-native-builder-bob": {
+    "source": "src",
+    "output": "lib",
+    "targets": [
+      [
+        "module",
+        {
+          "esm": true
+        }
+      ],
+      [
+        "typescript",
+        {
+          "project": "tsconfig.build.json"
+        }
+      ]
+    ]
+  }
+}

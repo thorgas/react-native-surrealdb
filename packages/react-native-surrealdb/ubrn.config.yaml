@@ -1,0 +1,25 @@
+---
+rust:
+  directory: ../..
+  manifestPath: crates/surrealdb-rn-core/Cargo.toml
+
+bindings:
+  cpp: cpp/generated
+  ts: src/generated
+
+turboModule:
+  entrypoint: src/native.tsx
+
+android:
+  apiLevel: 24
+  targets:
+    - arm64-v8a
+  useSharedLibrary: false
+
+ios:
+  frameworkName: SurrealDbRnFramework
+  targets:
+    - aarch64-apple-ios-sim
+
+noOverwrite:
+  - android/build.gradle

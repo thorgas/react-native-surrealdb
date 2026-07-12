@@ -49,7 +49,9 @@ DerivedData/
 
 # Native build tooling
 .uniffi-bindgen/
-generated/
+/generated/
+packages/react-native-surrealdb/SurrealDbRnFramework.xcframework/
+packages/react-native-surrealdb/android/src/main/jniLibs/
 
 # Editors and operating systems
 .DS_Store
