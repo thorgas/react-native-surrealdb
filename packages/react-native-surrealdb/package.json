@@ -18,6 +18,10 @@
   "bugs": {
     "url": "https://github.com/timhorgas/react-native-surrealdb/issues"
   },
+  "publishConfig": {
+    "access": "public",
+    "tag": "next"
+  },
   "files": [
     "src",
     "lib",
@@ -26,9 +30,13 @@
     "cpp",
     "SurrealDbRnFramework.xcframework",
     "*.podspec",
-    "react-native.config.js",
+    "CHANGELOG.md",
+    "LICENSE",
+    "RELEASING.md",
     "!ios/build",
     "!android/build",
+    "!android/.cxx",
+    "!android/.gradle",
     "!android/gradle",
     "!android/gradlew",
     "!android/gradlew.bat",
@@ -54,8 +62,13 @@
     "lint": "tsc --noEmit",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "ubrn:ios": "IPHONEOS_DEPLOYMENT_TARGET=15.1 ubrn build ios --and-generate --release --targets aarch64-apple-ios-sim && pnpm run format:generated",
-    "ubrn:android": "ubrn build android --and-generate --release --targets aarch64-linux-android && pnpm run format:generated"
+    "verify:package": "node scripts/verify-package.mjs",
+    "release:artifacts": "pnpm run ubrn:ios && pnpm run ubrn:android",
+    "release:check": "pnpm run build && pnpm run typecheck && pnpm run test && pnpm run verify:package",
+    "prepack": "pnpm run release:check",
+    "prepublishOnly": "pnpm run release:check",
+    "ubrn:ios": "IPHONEOS_DEPLOYMENT_TARGET=15.1 ubrn build ios --and-generate --release --targets aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios && pnpm run format:generated",
+    "ubrn:android": "ubrn build android --and-generate --release --targets aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android && pnpm run format:generated"
   },
   "dependencies": {
     "@ubjs/core": "0.31.0-3",
