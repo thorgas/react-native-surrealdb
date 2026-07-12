@@ -12,7 +12,7 @@ The native core and first React Native integration milestone are implemented:
 - versioned JSON wire values that preserve 64-bit integers, decimals, bytes, UUIDs, record IDs, `NONE`, sets, and other non-JSON SurrealDB values;
 - checked-in UniFFI/JSI generated bindings and a hand-written TypeScript facade for React Native's New Architecture;
 - host tests for queries, live notifications, Hermes-safe integer transport, idempotent close, and SurrealKV persistence/reopen;
-- React Native Harness integration tests passing on React Native 0.86/Hermes V1 with an iPhone 17 Pro simulator and an Android API 36 arm64 Pixel 9 emulator;
+- a `react-native-test-app` host with React Native Harness integration tests passing on React Native 0.86/Hermes V1 with an iPhone 17 Pro simulator and an Android API 36 arm64 Pixel 9 emulator;
 - authenticated remote WebSocket live-query integration tested against a real SurrealDB server;
 - optimized linking for iOS arm64 simulator and Android arm64 with 16 KB page-size support (NDK 27, API 24 minimum).
 

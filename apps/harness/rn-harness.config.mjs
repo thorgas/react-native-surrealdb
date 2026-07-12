@@ -15,6 +15,7 @@ export default {
       name: 'android',
       device: androidEmulator('Pixel_9'),
       bundleId: 'com.surrealdbharness',
+      activityName: 'com.microsoft.reacttestapp.MainActivity',
     }),
     applePlatform({
       name: 'ios',

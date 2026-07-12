@@ -1,22 +1,30 @@
-const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config');
-const path = require('node:path');
+const { exclusionList, makeMetroConfig } = require("@rnx-kit/metro-config");
+const path = require("node:path");
 
-/**
- * Metro configuration
- * https://reactnative.dev/docs/metro
- *
- * @type {import('@react-native/metro-config').MetroConfig}
- */
-const workspaceRoot = path.resolve(__dirname, '../..');
+const workspaceRoot = path.resolve(__dirname, "../..");
+// RNX Kit excludes __tests__ by default. Harness bundles its selected test
+// file into the device runtime, so preserve every other default exclusion but
+// keep that directory visible to Metro.
+const blockList = exclusionList([], __dirname).map(
+  (pattern) => new RegExp(pattern.source.replace("|__tests__", ""), pattern.flags)
+);
 
-const config = {
+module.exports = makeMetroConfig({
+  projectRoot: __dirname,
   watchFolders: [workspaceRoot],
   resolver: {
+    blockList,
     nodeModulesPaths: [
-      path.resolve(__dirname, 'node_modules'),
-      path.resolve(workspaceRoot, 'node_modules'),
+      path.resolve(__dirname, "node_modules"),
+      path.resolve(workspaceRoot, "node_modules"),
     ],
   },
-};
-
-module.exports = mergeConfig(getDefaultConfig(__dirname), config);
+  transformer: {
+    getTransformOptions: async () => ({
+      transform: {
+        experimentalImportSupport: false,
+        inlineRequires: false,
+      },
+    }),
+  },
+});

@@ -6,7 +6,7 @@ Research date: 2026-07-12
 
 Use two complementary systems:
 
-1. **React Native Harness** for repeatable native integration tests and a lightweight performance smoke signal in Debug builds.
+1. **React Native Test App + React Native Harness** for a low-maintenance native host, repeatable native integration tests, and a lightweight performance smoke signal in Debug builds.
 2. **A dedicated Release benchmark app** for canonical latency, throughput, memory, startup, durability, and binary-size results.
 
 Do not use screenshots or a single elapsed-time measurement as the performance history. Each run should emit structured JSON containing raw samples and environment metadata, upload it as a CI artifact, compare it with a compatible baseline, and publish a human-readable summary.
@@ -52,6 +52,8 @@ We should reuse the workload categories, Release-app execution, cooldown, and co
 ## React Native Harness: where it fits
 
 [`callstackincubator/react-native-harness`](https://github.com/callstackincubator/react-native-harness) replaces the app's Metro entry bundle with a test runner while leaving the native binary intact. The Node CLI controls a simulator, emulator, or physical device; tests execute serially in the real React Native JavaScript runtime and communicate results over a WebSocket.
+
+Use [`microsoft/react-native-test-app`](https://github.com/microsoft/react-native-test-app) for that native binary. RNTA keeps the Android application and Xcode project package-owned and generates their integration from `app.json`, while Harness remains responsible for device orchestration and on-device tests.
 
 Useful capabilities for this package:
 

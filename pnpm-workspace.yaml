@@ -4,3 +4,5 @@ packages:
 allowBuilds:
   esbuild: true
   unrs-resolver: true
+patchedDependencies:
+  '@rnx-kit/react-native-host@0.5.20': patches/@rnx-kit__react-native-host@0.5.20.patch
