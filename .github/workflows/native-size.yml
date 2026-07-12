@@ -1,0 +1,41 @@
+name: Native size
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "crates/surrealdb-rn-core/**"
+      - "packages/react-native-surrealdb/**"
+      - "apps/harness/**"
+      - ".github/workflows/native-size.yml"
+
+concurrency:
+  group: native-size-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.96.1
+          targets: aarch64-linux-android
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "ndk;27.1.12297006"
+      - run: cargo install cargo-ndk --version 4.1.2 --locked
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter react-native-surrealdb run ubrn:android:size
+      - run: pnpm --filter SurrealDbHarness run size:android
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-size-report
+          path: apps/harness/size-results/android

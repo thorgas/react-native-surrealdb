@@ -1,0 +1,7 @@
+{
+  "android": {
+    "baselineBytes": 19488849,
+    "baselineDescription": "RNTA 5.4.4, React Native 0.86.0, Hermes, New Architecture, arm64-v8a Release APK",
+    "maxDeltaBytes": 83886080
+  }
+}
