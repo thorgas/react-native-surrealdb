@@ -79,7 +79,9 @@ impl SurrealDatabase {
     }
 }
 
-#[uniffi::export]
+// UniFFI futures are polled by the foreign runtime. The Tokio compatibility
+// adapter supplies a reactor even when Hermes invokes us from a native thread.
+#[uniffi::export(async_runtime = "tokio")]
 pub async fn connect(options: ConnectOptions) -> Result<Arc<SurrealDatabase>, SurrealRnError> {
     validate_endpoint(&options.endpoint)?;
 
@@ -105,7 +107,7 @@ pub async fn connect(options: ConnectOptions) -> Result<Arc<SurrealDatabase>, Su
     }))
 }
 
-#[uniffi::export]
+#[uniffi::export(async_runtime = "tokio")]
 impl SurrealDatabase {
     pub async fn use_namespace_database(
         &self,
