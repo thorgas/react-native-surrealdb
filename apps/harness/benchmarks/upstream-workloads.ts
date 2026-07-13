@@ -30,11 +30,13 @@ export type ResolvedScan = Omit<ScanSpec, 'start' | 'limit' | 'expect'> & {
  * revision. Dialect-specific fields are intentionally reduced to SurrealQL.
  */
 export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L54-L62
   {
     id: 'count',
     label: 'count()',
     projections: ['count'],
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L64-L80
   {
     id: 'limit',
     label: 'limit(100)',
@@ -42,6 +44,7 @@ export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
     limit: 100,
     expect: 100,
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L82-L99
   {
     id: 'start_limit',
     label: 'start(5000) limit(100)',
@@ -50,6 +53,7 @@ export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
     limit: 100,
     expect: 100,
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L101-L136
   {
     id: 'where_field_integer_eq',
     label: 'where(number = 21)',
@@ -58,6 +62,7 @@ export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
     index: { fields: ['number'] },
     mixedWrites: true,
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L138-L176
   {
     id: 'where_field_integer_eq_or_eq',
     label: 'where(number = 21 OR number = 22)',
@@ -66,6 +71,7 @@ export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
     index: { fields: ['number'] },
     mixedWrites: true,
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L178-L213
   {
     id: 'where_field_integer_gte_lte',
     label: 'where(number >= 18 AND number <= 21)',
@@ -74,6 +80,7 @@ export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
     index: { fields: ['number'] },
     mixedWrites: true,
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L215-L258
   {
     id: 'where_field_integer_in_many',
     label: 'where(number IN [18, 21, 30, 40, 50, 60]) limit(1000)',
@@ -83,6 +90,7 @@ export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
     index: { fields: ['number'] },
     mixedWrites: true,
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L260-L304
   {
     id: 'where_field_string_eq_order_by_desc',
     label: "where(status = 'published') order(created_at DESC) limit(1000)",
@@ -93,6 +101,7 @@ export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
     index: { fields: ['status', 'created_at'] },
     mixedWrites: true,
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L306-L350
   {
     id: 'where_field_integer_in_many_order_by_desc',
     label:
@@ -104,6 +113,7 @@ export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
     index: { fields: ['http_status', 'created_at'] },
     mixedWrites: true,
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L352-L398
   {
     id: 'where_field_many_contains_string_order_by_desc',
     label: "where(tags CONTAINS 'omicron') order(created_at DESC) limit(1000)",
@@ -114,6 +124,7 @@ export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
     index: { fields: ['tags.*', 'created_at'] },
     mixedWrites: true,
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L400-L420
   {
     id: 'where_field_fulltext_single',
     label: "where(words @@ 'hello') limit(1000) - BM25",
@@ -122,6 +133,7 @@ export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
     limit: 1_000,
     index: { fields: ['words'], type: 'fulltext' },
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L422-L442
   {
     id: 'where_field_fulltext_multi_and',
     label: "where(words @@ 'hello' AND words @@ 'world') limit(1000) - BM25",
@@ -130,6 +142,7 @@ export const UPSTREAM_SCAN_SPECS: readonly ScanSpec[] = [
     limit: 1_000,
     index: { fields: ['words'], type: 'fulltext' },
   },
+  // Upstream: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L444-L464
   {
     id: 'where_field_fulltext_multi_or',
     label: "where(words @@ 'foo' OR words @@ 'bar') limit(1000) - BM25",
@@ -169,7 +182,8 @@ export function buildScanQuery(scan: ResolvedScan): string {
         `SELECT count() FROM benchmark_record ${filter} GROUP ALL`,
       );
     }
-    // crud-bench deliberately does not apply ORDER BY to COUNT projections.
+    // Upstream COUNT run definitions omit ORDER BY even when the paired FULL
+    // run has it: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L264-L291
     return compact(
       `SELECT count() FROM (SELECT 1 FROM benchmark_record ${filter} ${start} ${limit}) GROUP ALL`,
     );

@@ -7,6 +7,8 @@ import {
   UPSTREAM_BENCHMARK_OPTIONS,
 } from '../benchmarks/surreal-crud';
 
+// Upstream workload specification:
+// https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L54-L544
 describe('SurrealDB upstream-coverage mobile performance', () => {
   test('runs the full default crud-bench matrix with the 5,000-row offset', async () => {
     const report = await runSurrealCrudBenchmark({

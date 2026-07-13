@@ -25,6 +25,14 @@ export const CRUD_BENCH_SOURCE = {
     'The separate upstream vector.toml suite, server resource profiling, Docker lifecycle, multi-client concurrency, and cross-database comparisons are not part of this embedded mobile profile.',
 } as const;
 
+// Upstream default batch sizes:
+// https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L466-L544
+const CRUD_BENCH_BATCH_SIZES = [100, 1_000] as const;
+
+// Every indexed default scan defines 15% and 50% interleaved UPDATE legs; for
+// example: https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L125-L136
+const CRUD_BENCH_WRITE_RATIOS = [0.15, 0.5] as const;
+
 export type MobileBenchmarkProfile = 'smoke' | 'canonical' | 'upstream';
 
 export type MobileBenchmarkOptions = {
@@ -113,8 +121,8 @@ export const SMOKE_BENCHMARK_OPTIONS: ProfileOptions = {
   samples: 7,
   warmups: 3,
   batchIterations: 2,
-  batchSizes: [100, 1_000],
-  writeRatios: [0.15, 0.5],
+  batchSizes: CRUD_BENCH_BATCH_SIZES,
+  writeRatios: CRUD_BENCH_WRITE_RATIOS,
 };
 
 export const CANONICAL_BENCHMARK_OPTIONS: ProfileOptions = {
@@ -123,8 +131,8 @@ export const CANONICAL_BENCHMARK_OPTIONS: ProfileOptions = {
   samples: 20,
   warmups: 5,
   batchIterations: 3,
-  batchSizes: [100, 1_000],
-  writeRatios: [0.15, 0.5],
+  batchSizes: CRUD_BENCH_BATCH_SIZES,
+  writeRatios: CRUD_BENCH_WRITE_RATIOS,
 };
 
 /** Full default workload coverage with the upstream 5,000-row offset intact. */
@@ -134,8 +142,8 @@ export const UPSTREAM_BENCHMARK_OPTIONS: ProfileOptions = {
   samples: 50,
   warmups: 10,
   batchIterations: 10,
-  batchSizes: [100, 1_000],
-  writeRatios: [0.15, 0.5],
+  batchSizes: CRUD_BENCH_BATCH_SIZES,
+  writeRatios: CRUD_BENCH_WRITE_RATIOS,
 };
 
 export async function runSurrealCrudBenchmark(
@@ -210,6 +218,7 @@ function buildWorkloads(
   const workloads: Workload[] = [];
   const runQuery = (surql: string) => query(database, surql, signal);
 
+  // Local bridge-overhead control; not present in crud-bench.
   workloads.push({
     name: 'bridge.return-one',
     category: 'bridge',
@@ -219,6 +228,8 @@ function buildWorkloads(
   });
 
   workloads.push(
+    // Upstream CREATE phase:
+    // https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/src/benchmark.rs#L238-L247
     {
       name: 'crud.create-one',
       category: 'crud',
@@ -231,6 +242,8 @@ function buildWorkloads(
           )} RETURN NONE`,
         ),
     },
+    // Upstream READ phase:
+    // https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/src/benchmark.rs#L250-L253
     {
       name: 'crud.read-one',
       category: 'crud',
@@ -238,6 +251,8 @@ function buildWorkloads(
       variant: 'single record / individual transaction',
       run: iteration => runQuery(`SELECT * FROM ONLY ${crudId(iteration)}`),
     },
+    // Upstream UPDATE phase:
+    // https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/src/benchmark.rs#L256-L265
     {
       name: 'crud.update-one',
       category: 'crud',
@@ -257,6 +272,7 @@ function buildWorkloads(
   }
 
   workloads.push(
+    // Package-specific graph extension; not present in crud-bench.
     {
       name: 'extension.graph.out-depth-one',
       category: 'graph',
@@ -267,6 +283,7 @@ function buildWorkloads(
           'SELECT ->benchmark_edge->benchmark_record.* FROM ONLY benchmark_record:record_0',
         ),
     },
+    // Package-specific graph extension; not present in crud-bench.
     {
       name: 'extension.graph.out-depth-two',
       category: 'graph',
@@ -277,6 +294,8 @@ function buildWorkloads(
           'SELECT ->benchmark_edge->benchmark_record->benchmark_edge->benchmark_record.* FROM ONLY benchmark_record:record_0',
         ),
     },
+    // Upstream DELETE phase:
+    // https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/src/benchmark.rs#L616-L626
     {
       name: 'crud.delete-one',
       category: 'crud',
@@ -286,6 +305,8 @@ function buildWorkloads(
     },
   );
 
+  // Upstream batch definitions (CREATE/READ/UPDATE/DELETE at 100 and 1,000):
+  // https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L466-L544
   for (const batchSize of options.batchSizes) {
     appendBatchWorkloads(workloads, database, batchSize, options, signal);
   }
@@ -300,6 +321,9 @@ function appendScanWorkloads(
   options: MobileBenchmarkOptions,
   signal?: AbortSignal,
 ) {
+  // Upstream indexed-scan lifecycle is heap reads/writes, index build, indexed
+  // reads/writes, then index removal:
+  // https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/src/benchmark.rs#L425-L519
   const stem = scanMetricStem(scan);
   const scanCategory =
     scan.index?.type === 'fulltext' ? ('fulltext' as const) : ('scan' as const);
@@ -390,6 +414,8 @@ function appendBatchWorkloads(
   options: MobileBenchmarkOptions,
   signal?: AbortSignal,
 ) {
+  // Upstream maps each configured batch operation to its matching client call:
+  // https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/src/benchmark.rs#L629-L650
   const table = `benchmark_batch_${batchSize}`;
   const workload = (
     operation: 'create' | 'read' | 'update' | 'delete',
@@ -586,6 +612,8 @@ function transaction(statements: readonly string[]): string {
 }
 
 function recordContent(index: number): string {
+  // Deterministic mobile data implementing the upstream generated value shape:
+  // https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L28-L52
   const statuses = ['draft', 'published', 'archived'] as const;
   const cities = ['London', 'Paris', 'Berlin', 'Tokyo', 'New York'] as const;
   const httpStatuses = [200, 201, 400, 404, 500] as const;

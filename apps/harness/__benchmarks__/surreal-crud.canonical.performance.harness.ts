@@ -7,6 +7,8 @@ import {
 } from '../benchmarks/surreal-crud';
 import { emitBenchmarkReport } from '../benchmarks/report-output';
 
+// Upstream workload specification:
+// https://github.com/surrealdb/crud-bench/blob/18eb1fc8d8edcfd3d6ba8328149789ffa7866659/config/bench.toml#L54-L544
 describe('SurrealDB canonical mobile performance', () => {
   test('runs the 2,000-record crud-bench-derived profile', async () => {
     const report = await runSurrealCrudBenchmark({
