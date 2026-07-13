@@ -69,6 +69,11 @@ for (const comparison of comparisons) {
 if (!result.passed) process.exit(1);
 
 function assertCompatible(left, right) {
+  if (left.schemaVersion !== right.schemaVersion) {
+    throw new Error(
+      `Incompatible benchmark schema: ${left.schemaVersion} != ${right.schemaVersion}`,
+    );
+  }
   const fields = [
     'platform',
     'device',
@@ -79,13 +84,19 @@ function assertCompatible(left, right) {
     'records',
     'samples',
     'warmups',
-    'batchSize',
+    'batchIterations',
+    'batchSizes',
+    'writeRatios',
     'engine',
     'buildType',
     'fullyMaterialized',
+    'clients',
   ];
   for (const field of fields) {
-    if (left.configuration[field] !== right.configuration[field]) {
+    if (
+      JSON.stringify(left.configuration[field]) !==
+      JSON.stringify(right.configuration[field])
+    ) {
       throw new Error(
         `Incompatible benchmark configuration for ${field}: ${left.configuration[field]} != ${right.configuration[field]}`,
       );

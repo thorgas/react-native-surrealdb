@@ -21,9 +21,20 @@ describe('SurrealDB mobile performance', () => {
       surrealDb: '3.2.1',
     });
 
-    expect(report.metrics.length).toBeGreaterThanOrEqual(10);
-    expect(report.metrics.every(metric => metric.samplesMs.length === 7)).toBe(
-      true,
+    expect(report.schemaVersion).toBe(2);
+    expect(report.metrics.length).toBe(141);
+    expect(
+      report.metrics.every(metric =>
+        [1, 2, 7].includes(metric.samplesMs.length),
+      ),
+    ).toBe(true);
+    expect(report.metrics.map(metric => metric.name)).toEqual(
+      expect.arrayContaining([
+        'scan.where_field_integer_eq.full.no-index.write-15',
+        'scan.where_field_integer_eq.full.indexed.write-50',
+        'scan.where_field_fulltext_multi_and.full.indexed',
+        'batch.read-1000',
+      ]),
     );
     emitBenchmarkReport(report);
   });

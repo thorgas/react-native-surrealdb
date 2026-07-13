@@ -1,16 +1,16 @@
-import { describe, expect, test } from 'react-native-harness';
 import { Platform } from 'react-native';
+import { describe, expect, test } from 'react-native-harness';
 
-import {
-  CANONICAL_BENCHMARK_OPTIONS,
-  runSurrealCrudBenchmark,
-} from '../benchmarks/surreal-crud';
 import { emitBenchmarkReport } from '../benchmarks/report-output';
+import {
+  runSurrealCrudBenchmark,
+  UPSTREAM_BENCHMARK_OPTIONS,
+} from '../benchmarks/surreal-crud';
 
-describe('SurrealDB canonical mobile performance', () => {
-  test('runs the 2,000-record crud-bench-derived profile', async () => {
+describe('SurrealDB upstream-coverage mobile performance', () => {
+  test('runs the full default crud-bench matrix with the 5,000-row offset', async () => {
     const report = await runSurrealCrudBenchmark({
-      ...CANONICAL_BENCHMARK_OPTIONS,
+      ...UPSTREAM_BENCHMARK_OPTIONS,
       platform: Platform.OS === 'ios' ? 'ios' : 'android',
       device:
         Platform.OS === 'android'
@@ -21,11 +21,11 @@ describe('SurrealDB canonical mobile performance', () => {
       surrealDb: '3.2.1',
     });
 
-    expect(report.configuration.records).toBe(2_000);
+    expect(report.configuration.records).toBe(10_000);
     expect(report.metrics.length).toBe(141);
     expect(
       report.metrics.every(metric =>
-        [1, 3, 20].includes(metric.samplesMs.length),
+        [1, 10, 50].includes(metric.samplesMs.length),
       ),
     ).toBe(true);
     emitBenchmarkReport(report);

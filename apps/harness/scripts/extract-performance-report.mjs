@@ -42,7 +42,10 @@ export function extractPerformanceReport(text) {
     latest.chunks.get(index + 1),
   ).join('');
   const report = JSON.parse(encoded);
-  if (report.schemaVersion !== 1 || !Array.isArray(report.metrics)) {
+  if (
+    ![1, 2].includes(report.schemaVersion) ||
+    !Array.isArray(report.metrics)
+  ) {
     throw new Error('Benchmark report has an unsupported schema');
   }
   return report;

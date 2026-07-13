@@ -57,7 +57,7 @@ async function compare(baseline, candidate) {
 
 function report(medianMs) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     configuration: {
       platform: 'android',
       device: 'Pixel_9',
@@ -68,10 +68,13 @@ function report(medianMs) {
       records: 200,
       samples: 7,
       warmups: 3,
-      batchSize: 25,
+      batchIterations: 2,
+      batchSizes: [100, 1_000],
+      writeRatios: [0.15, 0.5],
       engine: 'memory',
       buildType: 'Debug harness',
       fullyMaterialized: true,
+      clients: 1,
     },
     metrics: [
       {

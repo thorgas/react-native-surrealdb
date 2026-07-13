@@ -9,15 +9,30 @@ LOG_PATH="$RESULTS_DIR/harness.log"
 REPORT_PATH="$RESULTS_DIR/report.json"
 JEST_RESULT_PATH="$RESULTS_DIR/jest-results.json"
 DEVICE_LOG_PATH="$RESULTS_DIR/device.log"
+DEVICE_LOG_PID=""
+
+cleanup_device_log() {
+  if [[ -n "$DEVICE_LOG_PID" ]]; then
+    kill "$DEVICE_LOG_PID" >/dev/null 2>&1 || true
+    wait "$DEVICE_LOG_PID" 2>/dev/null || true
+    DEVICE_LOG_PID=""
+  fi
+}
+trap cleanup_device_log EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 if [[ "$PLATFORM" != "android" && "$PLATFORM" != "ios" ]]; then
-  echo "Usage: $0 <android|ios> <smoke|canonical>" >&2
+  echo "Usage: $0 <android|ios> <smoke|canonical|upstream>" >&2
   exit 2
 fi
-if [[ "$PROFILE" != "smoke" && "$PROFILE" != "canonical" ]]; then
-  echo "Usage: $0 <android|ios> <smoke|canonical>" >&2
+if [[ "$PROFILE" != "smoke" && "$PROFILE" != "canonical" && "$PROFILE" != "upstream" ]]; then
+  echo "Usage: $0 <android|ios> <smoke|canonical|upstream>" >&2
   exit 2
 fi
+mkdir -p "$RESULTS_DIR"
+rm -f "$REPORT_PATH" "$DEVICE_LOG_PATH"
+
 if [[ "$PLATFORM" == "android" ]]; then
   source "$HARNESS_DIR/scripts/android-env.sh"
   "$HARNESS_DIR/android/gradlew" \
@@ -35,9 +50,32 @@ if [[ "$PLATFORM" == "android" ]]; then
     "$ADB" uninstall com.surrealdbharness >/dev/null 2>&1 || true
     "$ADB" logcat -c
   fi
+
+  # Harness shuts down emulators that it started. Capture logcat concurrently
+  # so the benchmark JSON is preserved before that teardown happens.
+  (
+    "$ADB" wait-for-device
+    exec "$ADB" logcat -v raw
+  ) > "$DEVICE_LOG_PATH" 2>&1 &
+  DEVICE_LOG_PID=$!
+else
+  # The Apple runner may also shut down a simulator that it booted. Wait for a
+  # booted simulator, then stream only benchmark chunks while the test runs.
+  (
+    until xcrun simctl list devices booted | grep -q '(Booted)'; do
+      sleep 1
+    done
+    exec xcrun simctl spawn booted log stream \
+      --style compact \
+      --predicate 'eventMessage CONTAINS "SURREALDB_BENCHMARK_RESULT_CHUNK="'
+  ) > "$DEVICE_LOG_PATH" 2>&1 &
+  DEVICE_LOG_PID=$!
 fi
 
-if [[ "$PROFILE" == "canonical" ]]; then
+if [[ "$PROFILE" == "upstream" ]]; then
+  TEST_PATH="__benchmarks__/surreal-crud.upstream.performance.harness.ts"
+  TEST_TIMEOUT=600000
+elif [[ "$PROFILE" == "canonical" ]]; then
   TEST_PATH="__benchmarks__/surreal-crud.canonical.performance.harness.ts"
   TEST_TIMEOUT=300000
 else
@@ -45,8 +83,6 @@ else
   TEST_TIMEOUT=120000
 fi
 
-mkdir -p "$RESULTS_DIR"
-rm -f "$REPORT_PATH"
 set +e
 pnpm exec react-native-harness \
   --config jest.performance.config.mjs \
@@ -58,19 +94,13 @@ pnpm exec react-native-harness \
   2>&1 | tee "$LOG_PATH"
 HARNESS_STATUS=${PIPESTATUS[0]}
 set -e
+
+cleanup_device_log
+
 if [[ "$HARNESS_STATUS" -ne 0 ]]; then
   exit "$HARNESS_STATUS"
 fi
 
-if [[ "$PLATFORM" == "android" ]]; then
-  "$ADB" logcat -d -v raw > "$DEVICE_LOG_PATH"
-else
-  xcrun simctl spawn booted log show \
-    --style compact \
-    --last 10m \
-    --predicate 'eventMessage CONTAINS "SURREALDB_BENCHMARK_RESULT_CHUNK="' \
-    > "$DEVICE_LOG_PATH"
-fi
 node "$HARNESS_DIR/scripts/extract-performance-report.mjs" \
   --input="$DEVICE_LOG_PATH" \
   --output="$REPORT_PATH"
