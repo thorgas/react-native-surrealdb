@@ -17,7 +17,9 @@ android:
     - armeabi-v7a
     - x86_64
     - x86
-  useSharedLibrary: false
+  # Keep the Rust engine as its own .so. This lets the Rust linker optimize the
+  # cdylib as a unit and avoids pulling the static archive into the JSI wrapper.
+  useSharedLibrary: true
 
 ios:
   frameworkName: SurrealDbRnFramework

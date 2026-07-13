@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "$0")/android-env.sh"
+
 # Reproduces the committed stock RNTA baseline. The package remains installed in
 # the workspace, but React Native CLI is instructed to disable only SurrealDB's
 # Android autolinking. The complete Android host is moved aside and restored;
@@ -35,10 +37,12 @@ SURREALDB_SIZE_BASELINE=1 "$ANDROID_DIR/gradlew" \
 
 cp "$ANDROID_DIR/app/build/outputs/apk/release/app-release.apk" "$RESULTS_DIR/baseline.apk"
 
-if [[ "$(unzip -Z1 "$RESULTS_DIR/baseline.apk" | grep -c "libreact-native-surrealdb.so")" -ne 0 ]]; then
-  echo "Baseline unexpectedly contains libreact-native-surrealdb.so" >&2
-  exit 1
-fi
+for library in libreact-native-surrealdb.so libsurrealdb_rn_core.so; do
+  if [[ "$(unzip -Z1 "$RESULTS_DIR/baseline.apk" | grep -c "$library")" -ne 0 ]]; then
+    echo "Baseline unexpectedly contains $library" >&2
+    exit 1
+  fi
+done
 
 node -e '
   const { statSync, writeFileSync } = require("node:fs");

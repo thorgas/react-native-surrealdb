@@ -49,7 +49,7 @@ for (const path of [
 }
 
 for (const abi of ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"]) {
-  await requireFile(`android/src/main/jniLibs/${abi}/libsurrealdb_rn_core.a`);
+  await requireFile(`android/src/main/jniLibs/${abi}/libsurrealdb_rn_core.so`);
 }
 
 const plistPath = join(root, "SurrealDbRnFramework.xcframework/Info.plist");

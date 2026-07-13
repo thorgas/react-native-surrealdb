@@ -6,3 +6,12 @@ members = ["crates/surrealdb-rn-core"]
 edition = "2024"
 rust-version = "1.96.1"
 license = "MIT"
+
+# Mobile release binaries favor download size. Keep symbols available in the
+# Rust artifact because UniFFI reads them while generating bindings; Android
+# and Xcode strip the final app binaries during their release builds.
+[profile.release]
+opt-level = "z"
+lto = "fat"
+codegen-units = 1
+strip = "none"

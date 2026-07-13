@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source "$(dirname "$0")/android-env.sh"
+
 HARNESS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 RESULTS_DIR="$HARNESS_DIR/size-results/android"
 GRADLE="$HARNESS_DIR/android/gradlew"
@@ -17,10 +19,12 @@ rm -rf "$HARNESS_DIR/android/build" "$HARNESS_DIR/android/app/build"
 "$GRADLE" -p "$HARNESS_DIR/android" --no-daemon --no-build-cache app:assembleRelease "$ARCH_PROPERTY"
 cp "$HARNESS_DIR/android/app/build/outputs/apk/release/app-release.apk" "$RESULTS_DIR/candidate.apk"
 
-if [[ "$(unzip -Z1 "$RESULTS_DIR/candidate.apk" | grep -c "libreact-native-surrealdb.so")" -eq 0 ]]; then
-  echo "Candidate is missing libreact-native-surrealdb.so" >&2
-  exit 1
-fi
+for library in libreact-native-surrealdb.so libsurrealdb_rn_core.so; do
+  if [[ "$(unzip -Z1 "$RESULTS_DIR/candidate.apk" | grep -c "$library")" -eq 0 ]]; then
+    echo "Candidate is missing $library" >&2
+    exit 1
+  fi
+done
 
 COMPARE_ARGS=(
   --platform=android

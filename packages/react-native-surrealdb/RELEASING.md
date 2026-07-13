@@ -25,10 +25,12 @@ pnpm --filter react-native-surrealdb pack
 ```
 
 Install the resulting tarball in a clean React Native test app and run both
-platforms before publishing it. The first complete alpha matrix packed to
-approximately 308 MB compressed. Treat an unexpected increase as a release
-blocker; reducing native distribution size remains a priority before a stable
-release.
+platforms before publishing it. The first static-library alpha matrix packed to
+approximately 308 MB compressed and installed to roughly 1.1 GB. This is the
+historical upper reference, not an acceptable long-term target. Android now
+ships the Rust core as a stripped-at-app-build shared library; record both the
+new tarball and extracted sizes before publishing. Treat an unexpected increase
+as a release blocker.
 
 ## Publish
 

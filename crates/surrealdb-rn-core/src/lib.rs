@@ -14,7 +14,7 @@ use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect as connect_any};
 use surrealdb::opt::auth::{Database as DatabaseCredentials, Root, Token};
 use surrealdb::types::{Action, Object, Value};
-use tokio::sync::{Mutex as AsyncMutex, watch};
+use tokio::sync::{Mutex as AsyncMutex, RwLock as AsyncRwLock, watch};
 
 use futures::StreamExt;
 
@@ -82,10 +82,12 @@ impl From<surrealdb::Error> for SurrealRnError {
 
 #[derive(uniffi::Object)]
 pub struct SurrealDatabase {
-    // Surreal is cheaply cloneable. Taking a clone while holding this mutex lets
-    // async work proceed without retaining a lock across an await point.
-    inner: Mutex<Option<Surreal<Any>>>,
+    // Reads only hold the lock long enough to clone the cheap SDK handle.
+    // Session mutations use the write side across their await point, preventing
+    // concurrent sign-in/use calls from silently overwriting one another.
+    inner: AsyncRwLock<Option<Surreal<Any>>>,
     live_queries: Mutex<Vec<Weak<LiveQuery>>>,
+    closed: AtomicBool,
 }
 
 #[derive(uniffi::Object)]
@@ -133,28 +135,15 @@ impl Drop for LiveQuery {
 }
 
 impl SurrealDatabase {
-    fn client(&self) -> Result<Surreal<Any>, SurrealRnError> {
-        self.inner
-            .lock()
-            .map_err(|_| SurrealRnError::Internal {
-                message: "database handle lock poisoned".into(),
-            })?
-            .clone()
-            .ok_or(SurrealRnError::Closed)
-    }
-
-    /// Promote a successfully mutated SDK session to the template used by
-    /// subsequent client clones. SurrealDB clones session state at clone time;
-    /// mutating a temporary clone alone would otherwise be lost.
-    fn replace_client(&self, client: Surreal<Any>) -> Result<(), SurrealRnError> {
-        let mut slot = self.inner.lock().map_err(|_| SurrealRnError::Internal {
-            message: "database handle lock poisoned".into(),
-        })?;
-        if slot.is_none() {
+    async fn client(&self) -> Result<Surreal<Any>, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
             return Err(SurrealRnError::Closed);
         }
-        *slot = Some(client);
-        Ok(())
+        self.inner
+            .read()
+            .await
+            .clone()
+            .ok_or(SurrealRnError::Closed)
     }
 }
 
@@ -182,8 +171,9 @@ pub async fn connect(options: ConnectOptions) -> Result<Arc<SurrealDatabase>, Su
     }
 
     Ok(Arc::new(SurrealDatabase {
-        inner: Mutex::new(Some(client)),
+        inner: AsyncRwLock::new(Some(client)),
         live_queries: Mutex::new(Vec::new()),
+        closed: AtomicBool::new(false),
     }))
 }
 
@@ -243,9 +233,11 @@ impl SurrealDatabase {
         namespace: String,
         database: String,
     ) -> Result<(), SurrealRnError> {
-        let client = self.client()?;
+        let mut slot = self.inner.write().await;
+        let client = slot.clone().ok_or(SurrealRnError::Closed)?;
         client.use_ns(namespace).use_db(database).await?;
-        self.replace_client(client)
+        *slot = Some(client);
+        Ok(())
     }
 
     /// Execute one or more SurrealQL statements.
@@ -257,7 +249,7 @@ impl SurrealDatabase {
         surql: String,
         variables_json: Option<String>,
     ) -> Result<Vec<QueryStatementResult>, SurrealRnError> {
-        let client = self.client()?;
+        let client = self.client().await?;
         let variables: Object = decode_variables(variables_json.as_deref())?;
         let mut response = client.query(surql).bind(variables).await?.check()?;
         let statement_count = response.num_statements();
@@ -283,7 +275,7 @@ impl SurrealDatabase {
         surql: String,
         variables_json: Option<String>,
     ) -> Result<Arc<LiveQuery>, SurrealRnError> {
-        let client = self.client()?;
+        let client = self.client().await?;
         let variables: Object = decode_variables(variables_json.as_deref())?;
         let mut response = client.query(surql).bind(variables).await?;
         let stream = response.stream::<Value>(0)?;
@@ -309,9 +301,11 @@ impl SurrealDatabase {
     }
 
     pub async fn authenticate(&self, access_token: String) -> Result<(), SurrealRnError> {
-        let client = self.client()?;
+        let mut slot = self.inner.write().await;
+        let client = slot.clone().ok_or(SurrealRnError::Closed)?;
         client.authenticate(Token::from(access_token)).await?;
-        self.replace_client(client)
+        *slot = Some(client);
+        Ok(())
     }
 
     pub async fn sign_in_root(
@@ -319,11 +313,12 @@ impl SurrealDatabase {
         username: String,
         password: String,
     ) -> Result<String, SurrealRnError> {
-        let client = self.client()?;
+        let mut slot = self.inner.write().await;
+        let client = slot.clone().ok_or(SurrealRnError::Closed)?;
         let token = client.signin(Root { username, password }).await?;
         let access_token = token.access.as_insecure_token().to_owned();
         client.authenticate(token).await?;
-        self.replace_client(client)?;
+        *slot = Some(client);
         Ok(access_token)
     }
 
@@ -334,7 +329,8 @@ impl SurrealDatabase {
         username: String,
         password: String,
     ) -> Result<String, SurrealRnError> {
-        let client = self.client()?;
+        let mut slot = self.inner.write().await;
+        let client = slot.clone().ok_or(SurrealRnError::Closed)?;
         let token = client
             .signin(DatabaseCredentials {
                 namespace,
@@ -345,24 +341,22 @@ impl SurrealDatabase {
             .await?;
         let access_token = token.access.as_insecure_token().to_owned();
         client.authenticate(token).await?;
-        self.replace_client(client)?;
+        *slot = Some(client);
         Ok(access_token)
     }
 
     pub async fn invalidate(&self) -> Result<(), SurrealRnError> {
-        let client = self.client()?;
+        let mut slot = self.inner.write().await;
+        let client = slot.clone().ok_or(SurrealRnError::Closed)?;
         client.invalidate().await?;
-        self.replace_client(client)
+        *slot = Some(client);
+        Ok(())
     }
 
     /// Idempotently prevent new operations and release this handle's client.
     pub async fn close(&self) -> Result<(), SurrealRnError> {
-        {
-            let mut slot = self.inner.lock().map_err(|_| SurrealRnError::Internal {
-                message: "database handle lock poisoned".into(),
-            })?;
-            slot.take();
-        }
+        self.closed.store(true, Ordering::Release);
+        self.inner.write().await.take();
         let live_queries = {
             let mut subscriptions =
                 self.live_queries
@@ -386,11 +380,8 @@ impl SurrealDatabase {
         Ok(())
     }
 
-    pub fn is_closed(&self) -> Result<bool, SurrealRnError> {
-        let slot = self.inner.lock().map_err(|_| SurrealRnError::Internal {
-            message: "database handle lock poisoned".into(),
-        })?;
-        Ok(slot.is_none())
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
     }
 }
 
@@ -485,7 +476,7 @@ mod tests {
 
         database.close().await.unwrap();
         database.close().await.unwrap();
-        assert!(database.is_closed().unwrap());
+        assert!(database.is_closed());
         assert!(matches!(
             database.query("RETURN 1".into(), None).await,
             Err(SurrealRnError::Closed)
