@@ -12,8 +12,13 @@
     "size:android:baseline": "bash scripts/measure-android-baseline.sh",
     "size:android:benchmark": "bash scripts/benchmark-android-release-size.sh",
     "start": "react-native start",
+    "benchmark:android": "bash scripts/run-performance-benchmark.sh android smoke",
+    "benchmark:android:canonical": "bash scripts/run-performance-benchmark.sh android canonical",
+    "benchmark:ios": "bash scripts/run-performance-benchmark.sh ios smoke",
+    "benchmark:ios:canonical": "bash scripts/run-performance-benchmark.sh ios canonical",
     "test:harness:android": "react-native-harness --harnessRunner android",
     "test:harness:ios": "react-native-harness --harnessRunner ios",
+    "test:benchmark-tools": "node --test scripts/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -304,3 +304,26 @@ The first performance milestone should produce a reproducible `kv-mem` baseline 
 - [Harness configuration](https://react-native-harness.dev/docs/getting-started/configuration)
 - [Harness CI/CD guide](https://react-native-harness.dev/docs/guides/ci-cd)
 - [Harness native coverage](https://react-native-harness.dev/docs/guides/native-coverage)
+- [SurrealDB 3.0 benchmark report](https://surrealdb.com/blog/surrealdb-3-0-benchmarks-a-new-foundation-for-performance)
+- [SurrealDB crud-bench](https://github.com/surrealdb/crud-bench)
+
+## Implemented mobile benchmark profile
+
+The first executable profile now lives in `apps/harness/benchmarks/` and is
+run by the opt-in Harness suites in `apps/harness/__benchmarks__/`. It adapts
+the upstream crud-bench workload categories rather than copying SurrealDB's
+server throughput numbers. Source revision, research date, adaptation notes,
+exact workload configuration, raw samples, median, p95, MAD, min/max, and
+operations/second are embedded in every JSON report.
+
+Two scales are available:
+
+- `smoke`: 200 deterministic records, 3 warmups, 7 samples, batch size 25;
+- `canonical`: 2,000 deterministic records, 5 warmups, 20 samples, batch size
+  100, matching the published 3.0 scan row count and an upstream batch shape
+  while limiting heat-induced drift on mobile devices.
+
+The comparator refuses incompatible environments and uses the documented
+initial 15% plus 0.1 ms dual threshold. This is intentionally a device-specific
+regression tool. Public performance claims still require repeated Release runs
+on pinned physical devices.

@@ -14,7 +14,8 @@ The native core and first React Native integration milestone are implemented:
 - host tests for queries, live notifications, Hermes-safe integer transport, idempotent close, and SurrealKV persistence/reopen;
 - a `react-native-test-app` host with React Native Harness integration tests passing on React Native 0.86/Hermes V1 with an iPhone 17 Pro simulator and an Android API 36 arm64 Pixel 9 emulator;
 - authenticated remote WebSocket live-query integration tested against a real SurrealDB server;
-- optimized linking for iOS arm64 simulator and Android arm64 with 16 KB page-size support (NDK 27, API 24 minimum).
+- size-oriented Rust LTO plus a separately packaged Android Rust `cdylib`, reducing the measured arm64 RNTA app increment from 61.88 MiB to 24.31 MiB while preserving 16 KB page-size support (NDK 27, API 24 minimum);
+- device-side, crud-bench-derived performance profiles with raw samples and compatible-baseline regression checks.
 
 Automatic WebSocket re-subscription and event deduplication across reconnects remain future work; the current subscription terminates when its SDK stream terminates.
 
@@ -40,3 +41,4 @@ The Rust toolchain and dependency graph are pinned through `rust-toolchain.toml`
 
 - [Architecture research](./RESEARCH.md)
 - [Performance and device-test strategy](./PERFORMANCE.md)
+- [Native size and Rust implementation decisions](./NATIVE_SIZE.md)
