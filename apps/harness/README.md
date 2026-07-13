@@ -67,10 +67,14 @@ catches native growth directly even when APK compression happens to hide it.
 
 The opt-in performance suite adapts the workload families from SurrealDB's
 open-source [`crud-bench`](https://github.com/surrealdb/crud-bench) at revision
-`18eb1fc8d8edcfd3d6ba8328149789ffa7866659`. It covers create/read/update/delete,
-count and limit scans, indexed equality, ordering, graph traversal, and batch
-create while measuring the complete Hermes → JSI → UniFFI → Rust → SurrealDB
-round trip, including result decoding.
+`18eb1fc8d8edcfd3d6ba8328149789ffa7866659`. The shared runner implements every
+case enabled by that revision's default `config/bench.toml`: single-record and
+100/1,000-record batch CRUD; count, ID-only, full, limit, and offset scans; all
+seven filter/order families as count and full projections; heap and indexed
+reads; 15% and 50% mixed-write runs; index build/removal; and all three BM25
+queries. It adds one bridge baseline and two graph traversals for this package,
+for 141 measured variants in total. Each measurement includes the complete
+Hermes → JSI → UniFFI → Rust → SurrealDB round trip and result decoding.
 
 Run the short profile on the configured emulator/simulator:
 
@@ -79,13 +83,22 @@ pnpm --filter SurrealDbHarness run benchmark:android
 pnpm --filter SurrealDbHarness run benchmark:ios
 ```
 
-The canonical profile uses the 2,000-record scan shape shown in SurrealDB's 3.0
-benchmark report and a 100-record batch from crud-bench:
+The canonical profile uses 2,000 records and more repetitions for a steadier
+mobile regression signal. The upstream profile uses 10,000 records, preserves
+the exact `START 5000 LIMIT 100` shape, and uses the largest repetition counts:
 
 ```sh
 pnpm --filter SurrealDbHarness run benchmark:android:canonical
 pnpm --filter SurrealDbHarness run benchmark:ios:canonical
+pnpm --filter SurrealDbHarness run benchmark:android:upstream
+pnpm --filter SurrealDbHarness run benchmark:ios:upstream
 ```
+
+To run the benchmark manually, start the RNTA example app with `pnpm start` and
+`pnpm run android` or `pnpm run ios`. Its **Mobile benchmark lab** screen lets
+you choose any profile, start or cancel it, follow per-workload progress, inspect
+median/p95/operations-per-second results, and share the complete JSON report.
+The app and Harness tests call the same benchmark implementation.
 
 Reports and raw Harness logs are written below `performance-results/`. To gate
 a run, supply a report from the same device and exact configuration:
@@ -99,4 +112,7 @@ The initial gate fails only when median latency grows by both more than 15% and
 more than 0.1 ms. Keep baselines device-specific; simulator, OS, React Native,
 SurrealDB, workload, and build-profile mismatches are rejected instead of being
 silently compared. The mobile results are regression signals and must not be
-presented as directly comparable to SurrealDB's server benchmark hardware.
+presented as directly comparable to SurrealDB's server benchmark hardware. The
+separate upstream `config/vector.toml`, multi-client/server orchestration,
+resource monitoring, and cross-database drivers are explicitly out of scope for
+this embedded single-client mobile runner.

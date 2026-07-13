@@ -1,45 +1,461 @@
-/**
- * Sample React Native App
- * https://github.com/facebook/react-native
- *
- * @format
- */
-
-import { NewAppScreen } from '@react-native/new-app-screen';
-import { StatusBar, StyleSheet, useColorScheme, View } from 'react-native';
+import { useMemo, useRef, useState } from 'react';
+import {
+  ActivityIndicator,
+  Platform,
+  Pressable,
+  ScrollView,
+  Share,
+  StatusBar,
+  StyleSheet,
+  Text,
+  useColorScheme,
+  View,
+} from 'react-native';
 import {
   SafeAreaProvider,
-  useSafeAreaInsets,
+  SafeAreaView,
 } from 'react-native-safe-area-context';
 
-function App() {
-  const isDarkMode = useColorScheme() === 'dark';
+import {
+  CANONICAL_BENCHMARK_OPTIONS,
+  CRUD_BENCH_SOURCE,
+  runSurrealCrudBenchmark,
+  SMOKE_BENCHMARK_OPTIONS,
+  UPSTREAM_BENCHMARK_OPTIONS,
+  type MobileBenchmarkProfile,
+  type MobileBenchmarkProgress,
+  type MobileBenchmarkReport,
+} from './benchmarks/surreal-crud';
 
+const PROFILES = {
+  smoke: {
+    label: 'Smoke',
+    description: '200 records · quickest full-matrix check',
+    options: SMOKE_BENCHMARK_OPTIONS,
+  },
+  canonical: {
+    label: 'Canonical',
+    description: '2,000 records · stable regression profile',
+    options: CANONICAL_BENCHMARK_OPTIONS,
+  },
+  upstream: {
+    label: 'Full matrix',
+    description: '10,000 records · preserves upstream START 5000',
+    options: UPSTREAM_BENCHMARK_OPTIONS,
+  },
+} as const;
+
+function App() {
+  const isDark = useColorScheme() === 'dark';
   return (
     <SafeAreaProvider>
-      <StatusBar barStyle={isDarkMode ? 'light-content' : 'dark-content'} />
-      <AppContent />
+      <StatusBar barStyle={isDark ? 'light-content' : 'dark-content'} />
+      <BenchmarkScreen isDark={isDark} />
     </SafeAreaProvider>
   );
 }
 
-function AppContent() {
-  const safeAreaInsets = useSafeAreaInsets();
+function BenchmarkScreen({ isDark }: { isDark: boolean }) {
+  const [profile, setProfile] = useState<MobileBenchmarkProfile>('smoke');
+  const [progress, setProgress] = useState<MobileBenchmarkProgress>();
+  const [report, setReport] = useState<MobileBenchmarkReport>();
+  const [error, setError] = useState<string>();
+  const [running, setRunning] = useState(false);
+  const controller = useRef<AbortController | undefined>(undefined);
+  const colors = isDark ? darkColors : lightColors;
+
+  const percent = useMemo(() => {
+    if (!progress?.total) return 0;
+    return Math.min(100, (progress.completed / progress.total) * 100);
+  }, [progress]);
+
+  const start = async () => {
+    const abortController = new AbortController();
+    controller.current = abortController;
+    setRunning(true);
+    setError(undefined);
+    setReport(undefined);
+    setProgress({ completed: 0, total: 0, metric: 'starting', stage: 'setup' });
+
+    try {
+      const result = await runSurrealCrudBenchmark({
+        ...PROFILES[profile].options,
+        platform: Platform.OS === 'ios' ? 'ios' : 'android',
+        device:
+          Platform.OS === 'android'
+            ? Platform.constants.Model
+            : 'iPhone simulator',
+        os: String(Platform.Version),
+        reactNative: '0.86.0',
+        surrealDb: '3.2.1',
+        signal: abortController.signal,
+        onProgress: setProgress,
+      });
+      setReport(result);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      if (controller.current === abortController)
+        controller.current = undefined;
+      setRunning(false);
+    }
+  };
+
+  const cancel = () => {
+    controller.current?.abort();
+    setProgress(current =>
+      current ? { ...current, metric: 'cancelling…' } : current,
+    );
+  };
+
+  const share = async () => {
+    if (!report) return;
+    await Share.share({
+      title: `SurrealDB ${report.configuration.profile} benchmark`,
+      message: JSON.stringify(report, null, 2),
+    });
+  };
 
   return (
-    <View style={styles.container}>
-      <NewAppScreen
-        templateFileName="App.tsx"
-        safeAreaInsets={safeAreaInsets}
-      />
+    <SafeAreaView style={[styles.safeArea, { backgroundColor: colors.page }]}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.header}>
+          <Text style={[styles.eyebrow, { color: colors.accent }]}>
+            SURRΞALDB
+          </Text>
+          <Text style={[styles.title, { color: colors.text }]}>
+            Mobile benchmark lab
+          </Text>
+          <Text style={[styles.subtitle, { color: colors.muted }]}>
+            Run the pinned crud-bench default workload matrix through Hermes,
+            JSI, UniFFI, Rust, and embedded SurrealDB on this device.
+          </Text>
+        </View>
+
+        <View style={styles.profileGrid}>
+          {(Object.keys(PROFILES) as MobileBenchmarkProfile[]).map(key => {
+            const selected = profile === key;
+            return (
+              <Pressable
+                accessibilityRole="radio"
+                accessibilityState={{ checked: selected, disabled: running }}
+                disabled={running}
+                key={key}
+                onPress={() => setProfile(key)}
+                style={({ pressed }) => [
+                  styles.profile,
+                  {
+                    backgroundColor: selected ? colors.selected : colors.card,
+                    borderColor: selected ? colors.accent : colors.border,
+                    opacity: pressed ? 0.75 : 1,
+                  },
+                ]}
+              >
+                <Text style={[styles.profileTitle, { color: colors.text }]}>
+                  {PROFILES[key].label}
+                </Text>
+                <Text
+                  style={[styles.profileDescription, { color: colors.muted }]}
+                >
+                  {PROFILES[key].description}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        <View
+          style={[
+            styles.panel,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
+          <View style={styles.panelRow}>
+            <View style={styles.panelCopy}>
+              <Text style={[styles.panelTitle, { color: colors.text }]}>
+                {running ? 'Benchmark running' : 'Ready on this device'}
+              </Text>
+              <Text style={[styles.panelDetail, { color: colors.muted }]}>
+                {running
+                  ? progress?.metric
+                  : '141 measured variants · raw samples, median, p95, MAD and ops/s'}
+              </Text>
+            </View>
+            {running ? <ActivityIndicator color={colors.accent} /> : null}
+          </View>
+
+          {running ? (
+            <>
+              <View style={[styles.track, { backgroundColor: colors.track }]}>
+                <View
+                  style={[
+                    styles.fill,
+                    { backgroundColor: colors.accent, width: `${percent}%` },
+                  ]}
+                />
+              </View>
+              <Text style={[styles.progressText, { color: colors.muted }]}>
+                {progress?.total
+                  ? `${progress.completed} / ${
+                      progress.total
+                    } workloads · ${percent.toFixed(0)}%`
+                  : 'Preparing deterministic records…'}
+              </Text>
+            </>
+          ) : null}
+
+          <Pressable
+            accessibilityRole="button"
+            onPress={running ? cancel : start}
+            style={({ pressed }) => [
+              styles.primaryButton,
+              {
+                backgroundColor: running ? colors.danger : colors.accent,
+                opacity: pressed ? 0.8 : 1,
+              },
+            ]}
+          >
+            <Text style={styles.primaryButtonText}>
+              {running ? 'Cancel benchmark' : `Run ${PROFILES[profile].label}`}
+            </Text>
+          </Pressable>
+        </View>
+
+        {error ? (
+          <View
+            style={[
+              styles.message,
+              {
+                backgroundColor: colors.errorSurface,
+                borderColor: colors.danger,
+              },
+            ]}
+          >
+            <Text style={[styles.messageTitle, { color: colors.danger }]}>
+              Run failed
+            </Text>
+            <Text
+              selectable
+              style={[styles.messageBody, { color: colors.text }]}
+            >
+              {error}
+            </Text>
+          </View>
+        ) : null}
+
+        {report ? (
+          <Results report={report} colors={colors} onShare={share} />
+        ) : null}
+
+        <View style={[styles.note, { borderColor: colors.border }]}>
+          <Text style={[styles.noteTitle, { color: colors.text }]}>
+            Methodology
+          </Text>
+          <Text style={[styles.noteBody, { color: colors.muted }]}>
+            Pinned to {CRUD_BENCH_SOURCE.revision.slice(0, 12)}. Mobile results
+            are regression signals for matching devices and configurations, not
+            direct comparisons with SurrealDB&apos;s server benchmark hardware.
+            Vector KNN remains a separate upstream suite.
+          </Text>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
+function Results({
+  report,
+  colors,
+  onShare,
+}: {
+  report: MobileBenchmarkReport;
+  colors: typeof lightColors;
+  onShare: () => void;
+}) {
+  return (
+    <View style={styles.results}>
+      <View style={styles.resultsHeader}>
+        <View>
+          <Text style={[styles.resultsTitle, { color: colors.text }]}>
+            Results
+          </Text>
+          <Text style={[styles.resultsMeta, { color: colors.muted }]}>
+            {report.metrics.length} metrics ·{' '}
+            {report.configuration.records.toLocaleString()} records
+          </Text>
+        </View>
+        <Pressable
+          accessibilityRole="button"
+          onPress={onShare}
+          style={({ pressed }) => [
+            styles.shareButton,
+            {
+              borderColor: colors.accent,
+              backgroundColor: pressed ? colors.selected : 'transparent',
+            },
+          ]}
+        >
+          <Text style={[styles.shareText, { color: colors.accent }]}>
+            Share JSON
+          </Text>
+        </Pressable>
+      </View>
+
+      {report.metrics.map(metric => (
+        <View
+          key={metric.name}
+          style={[
+            styles.metric,
+            { backgroundColor: colors.card, borderColor: colors.border },
+          ]}
+        >
+          <Text selectable style={[styles.metricName, { color: colors.text }]}>
+            {metric.name}
+          </Text>
+          <Text style={[styles.metricVariant, { color: colors.muted }]}>
+            {metric.variant}
+          </Text>
+          <View style={styles.metricNumbers}>
+            <MetricNumber
+              label="median"
+              value={`${metric.summary.medianMs.toFixed(3)} ms`}
+              color={colors.text}
+              muted={colors.muted}
+            />
+            <MetricNumber
+              label="p95"
+              value={`${metric.summary.p95Ms.toFixed(3)} ms`}
+              color={colors.text}
+              muted={colors.muted}
+            />
+            <MetricNumber
+              label="ops/s"
+              value={metric.summary.operationsPerSecond.toFixed(1)}
+              color={colors.text}
+              muted={colors.muted}
+            />
+          </View>
+        </View>
+      ))}
     </View>
   );
 }
 
+function MetricNumber({
+  label,
+  value,
+  color,
+  muted,
+}: {
+  label: string;
+  value: string;
+  color: string;
+  muted: string;
+}) {
+  return (
+    <View>
+      <Text style={[styles.metricLabel, { color: muted }]}>{label}</Text>
+      <Text style={[styles.metricValue, { color }]}>{value}</Text>
+    </View>
+  );
+}
+
+const lightColors = {
+  page: '#F4F6F2',
+  card: '#FFFFFF',
+  selected: '#E5F5EE',
+  text: '#15251E',
+  muted: '#617068',
+  accent: '#08A66C',
+  border: '#D5DDD8',
+  track: '#DDE8E2',
+  danger: '#C13B46',
+  errorSurface: '#FBEAEC',
+};
+
+const darkColors: typeof lightColors = {
+  page: '#0D1512',
+  card: '#15201B',
+  selected: '#173C2E',
+  text: '#EEF6F1',
+  muted: '#9DAEA5',
+  accent: '#35D69A',
+  border: '#2A3B33',
+  track: '#23332C',
+  danger: '#FF737D',
+  errorSurface: '#3B2023',
+};
+
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
+  safeArea: { flex: 1 },
+  content: { padding: 20, paddingBottom: 48, gap: 18 },
+  header: { gap: 8, marginTop: 8 },
+  eyebrow: { fontSize: 13, fontWeight: '800', letterSpacing: 2.5 },
+  title: { fontSize: 34, fontWeight: '800', letterSpacing: -1.1 },
+  subtitle: { fontSize: 16, lineHeight: 23, maxWidth: 620 },
+  profileGrid: { gap: 10 },
+  profile: { borderWidth: 1, borderRadius: 16, padding: 16, gap: 4 },
+  profileTitle: { fontSize: 17, fontWeight: '700' },
+  profileDescription: { fontSize: 13, lineHeight: 18 },
+  panel: { borderWidth: 1, borderRadius: 20, padding: 18, gap: 14 },
+  panelRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  panelCopy: { flex: 1, gap: 3 },
+  panelTitle: { fontSize: 19, fontWeight: '700' },
+  panelDetail: { fontSize: 13, lineHeight: 18 },
+  track: { height: 7, overflow: 'hidden', borderRadius: 99 },
+  fill: { height: '100%', borderRadius: 99 },
+  progressText: { fontSize: 12, fontVariant: ['tabular-nums'] },
+  primaryButton: {
+    minHeight: 50,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
+  primaryButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: '800' },
+  message: { borderWidth: 1, borderRadius: 16, padding: 16, gap: 6 },
+  messageTitle: { fontSize: 16, fontWeight: '800' },
+  messageBody: { fontSize: 13, lineHeight: 19 },
+  results: { gap: 10 },
+  resultsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 2,
+  },
+  resultsTitle: { fontSize: 24, fontWeight: '800' },
+  resultsMeta: { fontSize: 13, marginTop: 3 },
+  shareButton: {
+    borderWidth: 1,
+    borderRadius: 99,
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+  },
+  shareText: { fontSize: 13, fontWeight: '700' },
+  metric: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 5 },
+  metricName: {
+    fontSize: 13,
+    fontWeight: '700',
+    fontFamily: Platform.select({ ios: 'Menlo', android: 'monospace' }),
+  },
+  metricVariant: { fontSize: 12, lineHeight: 17 },
+  metricNumbers: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 7,
+  },
+  metricLabel: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 },
+  metricValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
+    marginTop: 2,
+  },
+  note: { borderTopWidth: 1, paddingTop: 16, gap: 5 },
+  noteTitle: { fontSize: 14, fontWeight: '700' },
+  noteBody: { fontSize: 12, lineHeight: 18 },
 });
 
 export default App;
