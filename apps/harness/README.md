@@ -8,7 +8,22 @@ Install workspace dependencies from the repository root:
 pnpm install
 ```
 
-After changing iOS native dependencies, generate the RNTA workspace with:
+The iOS command prepares the ignored Rust XCFramework and RNTA bundle resources
+before launching the configured iPhone 17 Pro (iOS 26.1) simulator:
+
+```sh
+pnpm --filter SurrealDbHarness run ios
+```
+
+The first run builds all iOS Rust slices and can take several minutes. Later
+runs reuse them. To select another installed simulator, override the default:
+
+```sh
+SURREALDB_IOS_SIMULATOR="iPhone 16 Pro (18.5)" \
+  pnpm --filter SurrealDbHarness run ios
+```
+
+After changing iOS native dependencies, regenerate the RNTA workspace with:
 
 ```sh
 cd apps/harness/ios

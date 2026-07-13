@@ -1,8 +1,12 @@
 PODS:
   - FBLazyVector (0.86.0)
   - hermes-engine (250829098.0.14):
-    - hermes-engine/Pre-built (= 250829098.0.14)
-  - hermes-engine/Pre-built (250829098.0.14)
+    - hermes-engine/cdp (= 250829098.0.14)
+    - hermes-engine/Hermes (= 250829098.0.14)
+    - hermes-engine/Public (= 250829098.0.14)
+  - hermes-engine/cdp (250829098.0.14)
+  - hermes-engine/Hermes (250829098.0.14)
+  - hermes-engine/Public (250829098.0.14)
   - RCTDeprecation (0.86.0)
   - RCTRequired (0.86.0)
   - RCTSwiftUI (0.86.0)
@@ -1919,6 +1923,7 @@ PODS:
   - ReactTestApp-DevSupport (5.4.4):
     - React-Core
     - React-jsi
+  - ReactTestApp-Resources (1.0.0-dev)
   - Surrealdb (0.1.0-alpha.0):
     - hermes-engine
     - RCTRequired
@@ -2025,6 +2030,7 @@ DEPENDENCIES:
   - ReactNativeDependencies (from `../node_modules/react-native/third-party-podspecs/ReactNativeDependencies.podspec`)
   - "ReactNativeHost (from `../../../node_modules/.pnpm/react-native-test-app@5.4.4_@react-native-community+cli-types@20.1.0_metro@0.84.4_react_7e221ec7133d2c4c64c028026a83a363/node_modules/@rnx-kit/react-native-host`)"
   - ReactTestApp-DevSupport (from `../node_modules/react-native-test-app`)
+  - ReactTestApp-Resources (from `..`)
   - Surrealdb (from `../node_modules/react-native-surrealdb`)
   - Yoga (from `../node_modules/react-native/ReactCommon/yoga`)
 
@@ -2188,6 +2194,8 @@ EXTERNAL SOURCES:
     :path: "../../../node_modules/.pnpm/react-native-test-app@5.4.4_@react-native-community+cli-types@20.1.0_metro@0.84.4_react_7e221ec7133d2c4c64c028026a83a363/node_modules/@rnx-kit/react-native-host"
   ReactTestApp-DevSupport:
     :path: "../node_modules/react-native-test-app"
+  ReactTestApp-Resources:
+    :path: ".."
   Surrealdb:
     :path: "../node_modules/react-native-surrealdb"
   Yoga:
@@ -2195,7 +2203,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   FBLazyVector: b3e7ad108f0d882e30445c5527d774e3fd432f3d
-  hermes-engine: 0809a7b0a562190aea8c8ea45cb8d52dc067dc2a
+  hermes-engine: ee0ab1a449c08ab3136634fb98aa352b274910fa
   RCTDeprecation: 2a74a2c57675e64419bd89078efde81f7c1de90b
   RCTRequired: 30451112e6fef4e6f31b4e7eee0845156e35e4b0
   RCTSwiftUI: 5aaf0b07e747ba749dc6acc94d8bd41eea4b570f
@@ -2271,6 +2279,7 @@ SPEC CHECKSUMS:
   ReactNativeDependencies: fa0a54b3f5319ae0e3b9aff32bfee7a424b88e66
   ReactNativeHost: 4b4ebc1582984d0469090da61d3f65a45e45e6f3
   ReactTestApp-DevSupport: 371844dc09a55f6bd4d599d2ea17f89d003eb73d
+  ReactTestApp-Resources: 1bd9ff10e4c24f2ad87101a32023721ae923bccf
   Surrealdb: 98726fb35fc6e6e3d243333a50dacb4c40676b34
   uniffi-bindgen-react-native: be56d53d0376ef5bee61ff376b743b193544138f
   Yoga: fe50ab299e578f397fef753cf309c6703a4db29b
