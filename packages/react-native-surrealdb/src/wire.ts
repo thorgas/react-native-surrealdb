@@ -2,17 +2,29 @@ const TAG = "$surreal" as const;
 
 export class SurrealDecimal {
   readonly kind = "decimal";
-  constructor(readonly value: string) {}
+  readonly value: string;
+
+  constructor(value: string) {
+    this.value = value;
+  }
 }
 
 export class SurrealRecordId {
   readonly kind = "record";
-  constructor(readonly value: string) {}
+  readonly value: string;
+
+  constructor(value: string) {
+    this.value = value;
+  }
 }
 
 export class SurrealUuid {
   readonly kind = "uuid";
-  constructor(readonly value: string) {}
+  readonly value: string;
+
+  constructor(value: string) {
+    this.value = value;
+  }
 }
 
 export class SurrealNone {
@@ -28,10 +40,16 @@ export type SurrealSqlKind =
 
 /** A lossless SurrealQL-formatted value not yet represented by a JS class. */
 export class SurrealSqlValue {
+  readonly kind: SurrealSqlKind;
+  readonly value: string;
+
   constructor(
-    readonly kind: SurrealSqlKind,
-    readonly value: string,
-  ) {}
+    kind: SurrealSqlKind,
+    value: string,
+  ) {
+    this.kind = kind;
+    this.value = value;
+  }
 }
 
 export type SurrealScalar =

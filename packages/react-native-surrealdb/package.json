@@ -79,6 +79,7 @@
     "ubrn:android:size": "ubrn build android --and-generate --release --targets aarch64-linux-android && pnpm run format:generated"
   },
   "dependencies": {
+    "@babel/runtime": "7.29.7",
     "@ubjs/core": "0.31.0-3",
     "uniffi-bindgen-react-native": "0.31.0-3"
   },
