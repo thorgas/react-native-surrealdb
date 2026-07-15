@@ -92,6 +92,9 @@ importers:
 
   packages/react-native-surrealdb:
     dependencies:
+      '@babel/runtime':
+        specifier: 7.29.7
+        version: 7.29.7
       '@ubjs/core':
         specifier: 0.31.0-3
         version: 0.31.0-3
