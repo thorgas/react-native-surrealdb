@@ -903,7 +903,7 @@ export interface SurrealDatabaseLike {
    */
   close(asyncOpts_?: { signal: AbortSignal }) /*throws*/ : Promise<void>;
   invalidate(asyncOpts_?: { signal: AbortSignal }) /*throws*/ : Promise<void>;
-  isClosed() /*throws*/ : boolean;
+  isClosed(): boolean;
   /**
    * Start a single live SurrealQL statement and return a pull-based stream.
    *
@@ -1075,12 +1075,9 @@ export class SurrealDatabase
     }
   }
 
-  isClosed(): boolean /*throws*/ {
+  isClosed(): boolean {
     return FfiConverterBool.lift(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSurrealRnError.lift.bind(
-          FfiConverterTypeSurrealRnError,
-        ),
+      uniffiCaller.rustCall(
         /*caller:*/ (callStatus) => {
           return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_is_closed(
             uniffiTypeSurrealDatabaseObjectFactory.clonePointer(this),
@@ -1515,7 +1512,7 @@ function uniffiEnsureInitialized() {
   }
   if (
     nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_is_closed() !==
-    64908
+    8096
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_is_closed",

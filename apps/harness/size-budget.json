@@ -7,6 +7,12 @@
     "baselineCommand": "pnpm --filter SurrealDbHarness run size:android:baseline",
     "baselineSource": "apps/harness with react-native-surrealdb Android autolinking disabled by SURREALDB_SIZE_BASELINE=1",
     "comparisonCommand": "pnpm --filter SurrealDbHarness run size:android:benchmark",
-    "maxDeltaBytes": 83886080
+    "maxDeltaBytes": 29360128,
+    "maxSurrealNativeBytes": 29360128,
+    "optimizedCandidateBytes": 44979008,
+    "optimizedDeltaBytes": 25490159,
+    "optimizedSurrealNativeBytes": 25455176,
+    "optimizedMeasuredAt": "2026-07-13",
+    "optimizedSource": "RNTA 5.4.4 arm64-v8a Release APK after Rust fat LTO with opt-level z and Android cdylib packaging"
   }
 }

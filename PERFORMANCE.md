@@ -304,3 +304,43 @@ The first performance milestone should produce a reproducible `kv-mem` baseline 
 - [Harness configuration](https://react-native-harness.dev/docs/getting-started/configuration)
 - [Harness CI/CD guide](https://react-native-harness.dev/docs/guides/ci-cd)
 - [Harness native coverage](https://react-native-harness.dev/docs/guides/native-coverage)
+- [SurrealDB 3.0 benchmark report](https://surrealdb.com/blog/surrealdb-3-0-benchmarks-a-new-foundation-for-performance)
+- [SurrealDB crud-bench](https://github.com/surrealdb/crud-bench)
+
+## Implemented mobile benchmark profile
+
+The executable runner lives in `apps/harness/benchmarks/` and is used by both
+the opt-in Harness suites in `apps/harness/__benchmarks__/` and the manual RNTA
+benchmark screen. It maps the full default `config/bench.toml` workload at
+crud-bench revision `18eb1fc8d8edcfd3d6ba8328149789ffa7866659`: single and
+batch CRUD, every default heap/indexed scan and mixed-write ratio, index
+lifecycle, and all default BM25 queries. One bridge baseline and two graph
+traversals extend the upstream cases, producing 141 metrics. Source revision,
+research date, adaptation/exclusion notes, exact workload configuration, raw
+samples, median, p95, MAD, min/max, and operations/second are embedded in every
+JSON report.
+
+Three scales are available:
+
+- `smoke`: 200 deterministic records, 3 warmups, 7 samples, and 2 batch
+  iterations;
+- `canonical`: 2,000 deterministic records, 5 warmups, 20 samples, and 3 batch
+  iterations;
+- `upstream`: 10,000 deterministic records, 10 warmups, 50 samples, and 10
+  batch iterations; this is the profile that preserves `START 5000 LIMIT 100`.
+
+Every profile exercises both upstream batch sizes (100 and 1,000) and the 15%
+and 50% mixed-write variants. Smaller profiles scale the offset so the workload
+still returns 100 rows. The separate vector config, multi-client server
+orchestration, process resource sampling, and cross-database comparisons remain
+explicit exclusions because they cannot be reproduced faithfully by the
+current single-handle embedded mobile package.
+
+The RNTA app exposes the three profiles under **Mobile benchmark lab**, with
+start/cancel controls, workload progress, an on-device result browser, and JSON
+sharing. Manual and automated runs use the same workload builder and runner.
+
+The comparator refuses incompatible environments and uses the documented
+initial 15% plus 0.1 ms dual threshold. This is intentionally a device-specific
+regression tool. Public performance claims still require repeated Release runs
+on pinned physical devices.

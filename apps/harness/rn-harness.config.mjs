@@ -13,7 +13,12 @@ export default {
   runners: [
     androidPlatform({
       name: 'android',
-      device: androidEmulator('Pixel_9'),
+      device: androidEmulator('Pixel_9', {
+        apiLevel: 36,
+        profile: 'pixel_9',
+        diskSize: '8G',
+        heapSize: '2G',
+      }),
       bundleId: 'com.surrealdbharness',
       activityName: 'com.microsoft.reacttestapp.MainActivity',
     }),
