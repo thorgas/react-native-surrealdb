@@ -29,6 +29,19 @@ if (packageJson.name !== "react-native-surrealdb")
 if (!packageJson.version.includes("-"))
   failures.push("alpha package version must be a prerelease");
 if (packageJson.license !== "MIT") failures.push("package license must be MIT");
+if (
+  (typeof packageJson.author !== "string" ||
+    packageJson.author.trim().length === 0) &&
+  (typeof packageJson.author !== "object" ||
+    packageJson.author === null ||
+    Object.keys(packageJson.author).length === 0)
+)
+  failures.push("author is required by the CocoaPods podspec");
+if (
+  typeof packageJson.homepage !== "string" ||
+  !URL.canParse(packageJson.homepage)
+)
+  failures.push("homepage must be a valid URL for the CocoaPods podspec");
 if (packageJson.publishConfig?.access !== "public")
   failures.push("publishConfig.access must be public");
 if (packageJson.publishConfig?.tag !== "next")
