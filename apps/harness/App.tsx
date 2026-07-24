@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -26,6 +26,12 @@ import {
   type MobileBenchmarkProgress,
   type MobileBenchmarkReport,
 } from './benchmarks/surreal-crud';
+import {
+  runStartupLoadBenchmark,
+  STARTUP_LOAD_RECORD_COUNT,
+  type StartupLoadProgress,
+  type StartupLoadReport,
+} from './benchmarks/startup-load';
 
 const PROFILES = {
   smoke: {
@@ -62,12 +68,61 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
   const [error, setError] = useState<string>();
   const [running, setRunning] = useState(false);
   const controller = useRef<AbortController | undefined>(undefined);
+  const startupController = useRef<AbortController | undefined>(undefined);
+  const [startupProgress, setStartupProgress] =
+    useState<StartupLoadProgress>();
+  const [startupReport, setStartupReport] = useState<StartupLoadReport>();
+  const [startupError, setStartupError] = useState<string>();
+  const [startupRunning, setStartupRunning] = useState(false);
   const colors = isDark ? darkColors : lightColors;
+
+  const runStartup = useCallback(async () => {
+    const abortController = new AbortController();
+    startupController.current?.abort();
+    startupController.current = abortController;
+    setStartupRunning(true);
+    setStartupError(undefined);
+    setStartupReport(undefined);
+    setStartupProgress({ stage: 'open', completed: 0, total: 1 });
+
+    try {
+      const result = await runStartupLoadBenchmark({
+        signal: abortController.signal,
+        onProgress: setStartupProgress,
+      });
+      if (!abortController.signal.aborted) setStartupReport(result);
+    } catch (cause) {
+      if (!abortController.signal.aborted) {
+        setStartupError(cause instanceof Error ? cause.message : String(cause));
+      }
+    } finally {
+      if (
+        startupController.current === abortController &&
+        !abortController.signal.aborted
+      ) {
+        startupController.current = undefined;
+        setStartupRunning(false);
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    void runStartup();
+    return () => startupController.current?.abort();
+  }, [runStartup]);
 
   const percent = useMemo(() => {
     if (!progress?.total) return 0;
     return Math.min(100, (progress.completed / progress.total) * 100);
   }, [progress]);
+
+  const startupPercent = useMemo(() => {
+    if (!startupProgress?.total) return 0;
+    return Math.min(
+      100,
+      (startupProgress.completed / startupProgress.total) * 100,
+    );
+  }, [startupProgress]);
 
   const start = async () => {
     const abortController = new AbortController();
@@ -134,6 +189,16 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
             JSI, UniFFI, Rust, and embedded SurrealDB on this device.
           </Text>
         </View>
+
+        <StartupLoadCard
+          colors={colors}
+          error={startupError}
+          onRun={runStartup}
+          percent={startupPercent}
+          progress={startupProgress}
+          report={startupReport}
+          running={startupRunning}
+        />
 
         <View style={styles.profileGrid}>
           {(Object.keys(PROFILES) as MobileBenchmarkProfile[]).map(key => {
@@ -263,6 +328,125 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
         </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function StartupLoadCard({
+  colors,
+  error,
+  onRun,
+  percent,
+  progress,
+  report,
+  running,
+}: {
+  colors: typeof lightColors;
+  error?: string;
+  onRun: () => void;
+  percent: number;
+  progress?: StartupLoadProgress;
+  report?: StartupLoadReport;
+  running: boolean;
+}) {
+  const status =
+    progress?.stage === 'open'
+      ? 'Opening embedded database…'
+      : progress?.stage === 'seed'
+      ? `Creating ${progress.completed.toLocaleString()} / ${progress.total.toLocaleString()} records…`
+      : progress?.stage === 'load'
+      ? 'Querying and decoding all records…'
+      : report
+      ? `${report.rowsLoaded.toLocaleString()} records loaded and verified`
+      : 'Waiting to start…';
+
+  return (
+    <View
+      style={[
+        styles.panel,
+        { backgroundColor: colors.card, borderColor: colors.border },
+      ]}
+    >
+      <View style={styles.panelRow}>
+        <View style={styles.panelCopy}>
+          <Text style={[styles.panelTitle, { color: colors.text }]}>
+            10k startup load
+          </Text>
+          <Text style={[styles.panelDetail, { color: colors.muted }]}>
+            Automatically creates, queries, decodes, and fully reads{' '}
+            {STARTUP_LOAD_RECORD_COUNT.toLocaleString()} entries at app startup.
+          </Text>
+        </View>
+        {running ? <ActivityIndicator color={colors.accent} /> : null}
+      </View>
+
+      <Text style={[styles.progressText, { color: colors.muted }]}>
+        {error ?? status}
+      </Text>
+
+      {running ? (
+        <View style={[styles.track, { backgroundColor: colors.track }]}>
+          <View
+            style={[
+              styles.fill,
+              { backgroundColor: colors.accent, width: `${percent}%` },
+            ]}
+          />
+        </View>
+      ) : null}
+
+      {report ? (
+        <View style={styles.startupMetrics}>
+          <MetricNumber
+            label="open"
+            value={`${report.timingsMs.open.toFixed(1)} ms`}
+            color={colors.text}
+            muted={colors.muted}
+          />
+          <MetricNumber
+            label="ready"
+            value={`${report.timingsMs.ready.toFixed(1)} ms`}
+            color={colors.text}
+            muted={colors.muted}
+          />
+          <MetricNumber
+            label="seed"
+            value={`${report.timingsMs.seed.toFixed(1)} ms`}
+            color={colors.text}
+            muted={colors.muted}
+          />
+          <MetricNumber
+            label="query + decode"
+            value={`${report.timingsMs.queryAndDecode.toFixed(1)} ms`}
+            color={colors.text}
+            muted={colors.muted}
+          />
+          <MetricNumber
+            label="materialize"
+            value={`${report.timingsMs.materialize.toFixed(1)} ms`}
+            color={colors.text}
+            muted={colors.muted}
+          />
+        </View>
+      ) : null}
+
+      {!running ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onRun}
+          style={({ pressed }) => [
+            styles.secondaryButton,
+            {
+              borderColor: colors.accent,
+              backgroundColor: pressed ? colors.selected : 'transparent',
+            },
+          ]}
+        >
+          <Text style={[styles.shareText, { color: colors.accent }]}>
+            Run startup load again
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -445,6 +629,19 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginTop: 7,
+  },
+  startupMetrics: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    columnGap: 28,
+    rowGap: 12,
+  },
+  secondaryButton: {
+    minHeight: 44,
+    borderWidth: 1,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
   metricLabel: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 },
   metricValue: {
