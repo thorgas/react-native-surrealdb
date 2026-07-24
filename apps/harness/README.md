@@ -118,9 +118,12 @@ The app and Harness tests call the same benchmark implementation.
 The example app also runs a **10k startup load** automatically when its React
 tree mounts. This opens an in-memory embedded database, creates 10,000
 deterministic entries in 250-record transactions, queries and decodes every
-entry, and touches every selected field. The result card separates database
-open, seed, query/decode, materialization, and total ready time. Use its rerun
-button to repeat the same workload without restarting the native app.
+entry, touches every selected field, and mounts all 10,000 rows in an invisible
+React Native render probe. The result card separates database open, seed,
+query/decode, materialization, React render, render-to-native-layout, and total
+ready time. Use its rerun button to repeat the same workload without restarting
+the native app. Completed runs also emit `SURREALDB_STARTUP_TIMING=` JSON to the
+device log for collection on Android and iOS.
 
 Reports and raw Harness logs are written below `performance-results/`. To gate
 a run, supply a report from the same device and exact configuration:
