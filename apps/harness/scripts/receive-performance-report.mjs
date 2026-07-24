@@ -39,7 +39,7 @@ const server = createServer((request, response) => {
     try {
       const report = JSON.parse(body);
       if (
-        ![1, 2].includes(report.schemaVersion) ||
+        ![1, 2, 3].includes(report.schemaVersion) ||
         !Array.isArray(report.metrics)
       ) {
         throw new Error('Benchmark report has an unsupported schema');

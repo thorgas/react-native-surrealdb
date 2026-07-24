@@ -12,6 +12,7 @@ import {
   SQLITE_BENCH_ITERATIONS,
   SQLITE_BENCH_SOURCE,
 } from '../benchmarks/sqlite-bench';
+import { buildSQLiteBenchComparisons } from '../benchmarks/sqlite-comparison';
 import { summarize } from '../benchmarks/statistics';
 
 // Adapted from:
@@ -95,9 +96,27 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
       firstOrderOpSQLiteReport.metrics,
       secondOrderOpSQLiteReport.metrics,
     );
+    const comparisons = buildSQLiteBenchComparisons(
+      surrealMetrics,
+      opSQLiteMetrics,
+    );
+
+    expect(comparisons.map(comparison => comparison.workload)).toEqual([
+      'async-insert-1k',
+      'transaction-insert-1k',
+      'select-and-read-1k-times-1k',
+    ]);
+    expect(
+      comparisons.every(
+        comparison =>
+          comparison.factor >= 1 &&
+          comparison.statement.includes(' for ') &&
+          comparison.basis === 'median duration; lower is faster',
+      ),
+    ).toBe(true);
 
     await emitBenchmarkReport({
-      schemaVersion: 2,
+      schemaVersion: 3,
       measuredAt: new Date().toISOString(),
       source: {
         upstream: SQLITE_BENCH_SOURCE,
@@ -127,6 +146,7 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
         surrealDb: firstOrderSurrealReport.checksum,
         opSQLite: firstOrderOpSQLiteReport.checksum,
       },
+      comparisons,
       metrics: [...surrealMetrics, ...opSQLiteMetrics],
     });
   });
