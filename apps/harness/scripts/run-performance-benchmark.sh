@@ -88,6 +88,8 @@ if [[ "$PLATFORM" == "android" ]]; then
   ) > "$DEVICE_LOG_PATH" 2>&1 &
   DEVICE_LOG_PID=$!
 else
+  bash "$HARNESS_DIR/scripts/prepare-ios.sh"
+
   # The Apple runner may also shut down a simulator that it booted. Wait for a
   # specific simulator, then stream only benchmark chunks while the test runs.
   # Using the generic `booted` alias can attach to an unrelated simulator that
