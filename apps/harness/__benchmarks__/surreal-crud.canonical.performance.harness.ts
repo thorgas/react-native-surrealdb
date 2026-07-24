@@ -30,6 +30,6 @@ describe('SurrealDB canonical mobile performance', () => {
         [1, 3, 20].includes(metric.samplesMs.length),
       ),
     ).toBe(true);
-    emitBenchmarkReport(report);
+    await emitBenchmarkReport(report);
   });
 });

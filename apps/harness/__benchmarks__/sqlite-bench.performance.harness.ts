@@ -43,6 +43,6 @@ describe('SurrealDB ospfranco/sqlite-bench adaptation', () => {
       ),
     ).toBe(true);
     expect(BigInt(report.checksum)).toBeGreaterThan(0n);
-    emitBenchmarkReport(report);
+    await emitBenchmarkReport(report);
   });
 });

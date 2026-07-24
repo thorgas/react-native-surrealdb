@@ -10,15 +10,21 @@ REPORT_PATH="$RESULTS_DIR/report.json"
 JEST_RESULT_PATH="$RESULTS_DIR/jest-results.json"
 DEVICE_LOG_PATH="$RESULTS_DIR/device.log"
 DEVICE_LOG_PID=""
+REPORT_RECEIVER_PID=""
 
-cleanup_device_log() {
+cleanup_background_processes() {
   if [[ -n "$DEVICE_LOG_PID" ]]; then
     kill "$DEVICE_LOG_PID" >/dev/null 2>&1 || true
     wait "$DEVICE_LOG_PID" 2>/dev/null || true
     DEVICE_LOG_PID=""
   fi
+  if [[ -n "$REPORT_RECEIVER_PID" ]]; then
+    kill "$REPORT_RECEIVER_PID" >/dev/null 2>&1 || true
+    wait "$REPORT_RECEIVER_PID" 2>/dev/null || true
+    REPORT_RECEIVER_PID=""
+  fi
 }
-trap cleanup_device_log EXIT
+trap cleanup_background_processes EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
@@ -35,6 +41,26 @@ if [[ "$PROFILE" != "smoke" &&
 fi
 mkdir -p "$RESULTS_DIR"
 rm -f "$REPORT_PATH" "$DEVICE_LOG_PATH"
+
+node "$HARNESS_DIR/scripts/receive-performance-report.mjs" \
+  --output="$REPORT_PATH" \
+  > "$RESULTS_DIR/report-receiver.log" 2>&1 &
+REPORT_RECEIVER_PID=$!
+for _ in {1..50}; do
+  if curl --fail --silent "http://127.0.0.1:18082/health" >/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+if ! kill -0 "$REPORT_RECEIVER_PID" >/dev/null 2>&1; then
+  echo "Benchmark report receiver exited during startup" >&2
+  cat "$RESULTS_DIR/report-receiver.log" >&2
+  exit 1
+fi
+if ! curl --fail --silent "http://127.0.0.1:18082/health" >/dev/null; then
+  echo "Benchmark report receiver failed to start" >&2
+  exit 1
+fi
 
 if [[ "$PLATFORM" == "android" ]]; then
   source "$HARNESS_DIR/scripts/android-env.sh"
@@ -63,12 +89,30 @@ if [[ "$PLATFORM" == "android" ]]; then
   DEVICE_LOG_PID=$!
 else
   # The Apple runner may also shut down a simulator that it booted. Wait for a
-  # booted simulator, then stream only benchmark chunks while the test runs.
+  # specific simulator, then stream only benchmark chunks while the test runs.
+  # Using the generic `booted` alias can attach to an unrelated simulator that
+  # was already running before Harness boots its configured device.
+  IOS_SIMULATOR_NAME="${SURREALDB_IOS_SIMULATOR_NAME:-iPhone 17 Pro}"
+  IOS_DEVICE_UDID="$(
+    xcrun simctl list devices available |
+      awk -F '[()]' -v name="$IOS_SIMULATOR_NAME" '
+        {
+          candidate = $1
+          gsub(/^[[:space:]]+|[[:space:]]+$/, "", candidate)
+          if (candidate == name) {
+            print $2
+            exit
+          }
+        }
+      '
+  )"
+  if [[ -z "$IOS_DEVICE_UDID" ]]; then
+    echo "Could not find available iOS simulator: $IOS_SIMULATOR_NAME" >&2
+    exit 1
+  fi
   (
-    until xcrun simctl list devices booted | grep -q '(Booted)'; do
-      sleep 1
-    done
-    exec xcrun simctl spawn booted log stream \
+    xcrun simctl bootstatus "$IOS_DEVICE_UDID" -b
+    exec xcrun simctl spawn "$IOS_DEVICE_UDID" log stream \
       --style compact \
       --predicate 'eventMessage CONTAINS "SURREALDB_BENCHMARK_RESULT_CHUNK="'
   ) > "$DEVICE_LOG_PATH" 2>&1 &
@@ -101,15 +145,19 @@ pnpm exec react-native-harness \
 HARNESS_STATUS=${PIPESTATUS[0]}
 set -e
 
-cleanup_device_log
+cleanup_background_processes
 
 if [[ "$HARNESS_STATUS" -ne 0 ]]; then
   exit "$HARNESS_STATUS"
 fi
 
-node "$HARNESS_DIR/scripts/extract-performance-report.mjs" \
-  --input="$DEVICE_LOG_PATH" \
-  --output="$REPORT_PATH"
+if [[ -s "$REPORT_PATH" ]]; then
+  echo "Benchmark report received at $REPORT_PATH"
+else
+  node "$HARNESS_DIR/scripts/extract-performance-report.mjs" \
+    --input="$DEVICE_LOG_PATH" \
+    --output="$REPORT_PATH"
+fi
 
 if [[ -n "${SURREALDB_PERFORMANCE_BASELINE:-}" ]]; then
   node "$HARNESS_DIR/scripts/compare-performance.mjs" \

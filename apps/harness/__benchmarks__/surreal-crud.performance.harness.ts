@@ -38,6 +38,6 @@ describe('SurrealDB mobile performance', () => {
         'batch.read-1000',
       ]),
     );
-    emitBenchmarkReport(report);
+    await emitBenchmarkReport(report);
   });
 });
