@@ -30,6 +30,6 @@ describe('SurrealDB upstream-coverage mobile performance', () => {
         [1, 10, 50].includes(metric.samplesMs.length),
       ),
     ).toBe(true);
-    emitBenchmarkReport(report);
+    await emitBenchmarkReport(report);
   });
 });
