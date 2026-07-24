@@ -1,6 +1,7 @@
 # Performance monitoring and native-device test strategy
 
 Research date: 2026-07-12
+Implementation update: 2026-07-24
 
 ## Recommendation
 
@@ -112,7 +113,8 @@ The split between completion and full traversal is mandatory. Lazy native object
 - cold open and warm open;
 - first query after open and steady-state query;
 - individual inserts outside a transaction;
-- 100, 1,000, and 10,000 inserts in one transaction/batch;
+- 100, 1,000, and 10,000 individually awaited inserts through one transaction
+  handle, followed by one commit;
 - point lookup by record ID;
 - indexed predicate lookup;
 - full scan returning 10, 100, 1,000, and 10,000 records;
@@ -227,17 +229,25 @@ Suggested starting policy, to be calibrated after collecting variance:
 
 Avoid blindly copying these numbers. First collect 20–30 baseline runs and derive thresholds from observed device variance.
 
-## Harness suites to add
+## Harness coverage and remaining suites
 
-Harness should cover behavior that Node/Rust unit tests cannot:
+The shared Harness suite currently covers:
 
 - connect, query with every value variant, close, and idempotent close;
 - 64-bit integer/decimal/record-ID fidelity through Hermes;
-- simultaneous queries and separate database handles;
 - transaction rollback after a thrown JavaScript error;
+- transaction commit through multiple individually awaited JavaScript/native
+  calls;
+- database close cancelling an open transaction;
+- live-query delivery, explicit close, and no value after close.
+
+Remaining Harness coverage should include:
+
+- simultaneous queries and separate database handles;
 - cancel a long-running query and verify rollback/no late resolution;
 - close during an in-flight query with a bounded timeout;
-- subscribe, unsubscribe, close, and assert no callback after teardown;
+- disconnect a remote live-query stream, close it, and assert no notification
+  after teardown;
 - delete/recreate persistent databases;
 - app relaunch persistence and migration fixtures;
 - invalid paths, low-space errors, corrupt database, wrong schema/version;
@@ -271,29 +281,31 @@ Use platform-specific suites only where behavior genuinely differs. Most databas
 - run cold install/start, migration, forced termination, low-storage, memory, and binary-size gates;
 - publish the exact benchmark commit, devices, build settings, raw JSON, and limitations with any public performance claims.
 
-## Practical first implementation
+## Current implementation layout
 
-Before the native package exists, create these shared files during scaffolding:
+The implemented runner and native integration live here:
 
 ```text
-benchmarks/
-  schema/benchmark-result.v1.json
-  specs/bridge.ts
-  specs/query.ts
-  specs/codec.ts
-  specs/lifecycle.ts
-  runner.ts
-packages/example/
-  src/__tests__/database.harness.ts
-  src/__tests__/lifecycle.harness.ts
-  src/benchmarks/ReleaseBenchmarkScreen.tsx
-scripts/
-  compare-benchmarks.ts
-  collect-ios-metrics.sh
-  collect-android-metrics.sh
+crates/surrealdb-rn-core/src/lib.rs
+packages/react-native-surrealdb/src/client.ts
+apps/harness/
+  __tests__/database.harness.ts
+  __tests__/sqlite-bench.harness.ts
+  __benchmarks__/surreal-crud.*.performance.harness.ts
+  __benchmarks__/sqlite-bench.performance.harness.ts
+  benchmarks/surreal-crud.ts
+  benchmarks/sqlite-bench.ts
+  benchmarks/op-sqlite-bench.ts
+  benchmarks/report-output.ts
+  scripts/compare-performance.mjs
+  scripts/run-performance-benchmark.sh
 ```
 
-The first performance milestone should produce a reproducible `kv-mem` baseline for `RETURN 1`, a 1,000-record fully materialized query, 1,000 transactional inserts, open/close latency, peak RSS, and stripped binary size on one pinned Android and one pinned iOS device. Add SurrealKV only after that baseline is stable.
+The current Debug Harness profiles provide reproducible embedded-memory query,
+CRUD, transaction, full-materialization, and paired op-sqlite regression
+signals, while the Android size runner records the native package increment.
+Release-build latency, peak RSS, and repeated physical-device measurements
+remain required before publishing production performance claims.
 
 ## Sources
 
@@ -344,3 +356,18 @@ The comparator refuses incompatible environments and uses the documented
 initial 15% plus 0.1 ms dual threshold. This is intentionally a device-specific
 regression tool. Public performance claims still require repeated Release runs
 on pinned physical devices.
+
+### Paired sqlite-bench profile
+
+The Harness also adapts `ospfranco/sqlite-bench` revision
+`4c022c9a38294b66af2cd79fae64f0e91f25353b` and runs SurrealDB alongside the
+pinned op-sqlite `17.1.1` dependency in the same Debug app. Both comparable
+transaction legs perform 1,000 awaited JavaScript calls through a transaction
+handle and commit once. SurrealDB uses the native Rust SDK transaction ID for
+every call; it no longer substitutes one concatenated 1,000-statement request.
+
+The paired run uses in-memory engines, two opposite execution orders, complete
+result materialization, checksums, and structured JSON. Synchronous insertion
+and HostObject selection remain op-sqlite-only workloads and are labelled as
+such. These Debug Harness results are regression signals; the published
+third-party screenshot values remain context rather than a compatible baseline.

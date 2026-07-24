@@ -12,7 +12,7 @@ export const SQLITE_BENCH_SOURCE = {
     'https://pbs.twimg.com/media/HLwBJGpWcAAV_Fl?format=jpg&name=4096x4096',
   researchedAt: '2026-07-24',
   adaptation:
-    'Preserves the upstream 1,000 individual async inserts, 1,000 inserts in one transaction, and 1,000 full-table selects with every property read. It uses the same in-memory engine as the existing mobile regression suite. The SurrealDB transaction is submitted as one multi-statement query because the package does not expose a JavaScript transaction handle.',
+    'Preserves the upstream 1,000 individual async inserts, 1,000 awaited inserts through one JavaScript transaction handle, and 1,000 full-table selects with every property read. It uses the same in-memory engine as the existing mobile regression suite.',
   exclusions:
     'The upstream synchronous insert and HostObject/HybridObject variants have no equivalent in the asynchronous SurrealDB client API.',
 } as const;
@@ -149,14 +149,14 @@ export async function runSQLiteBenchBenchmark(
     await query(database, 'DELETE sqlite_bench RETURN NONE', signal);
     await coolDown(cooldownMs, signal, onProgress, 1, 'transaction insert 1k');
     const transactionInsertMs = await measure(() =>
-      query(
-        database,
-        transaction(
-          Array.from({ length: iterations }, (_, index) =>
-            createStatement(index),
-          ),
-        ),
-        signal,
+      database.transaction(
+        async transaction => {
+          for (let index = 0; index < iterations; index += 1) {
+            assertActive(signal);
+            await transaction.query(createStatement(index));
+          }
+        },
+        signal ? { signal } : undefined,
       ),
     );
     onProgress?.({
@@ -244,7 +244,7 @@ export async function runSQLiteBenchBenchmark(
         metric(
           'sqlite-bench.transaction-insert-1k',
           'tx insert 1k',
-          '1,000 CREATE statements / one transaction / one bridge call',
+          '1,000 awaited CREATE calls through one transaction handle',
           iterations,
           transactionInsertMs,
         ),
@@ -286,10 +286,6 @@ function createStatement(index: number): string {
     name: 'n${index}',
     value: ${(index * 1.5).toFixed(1)}
   } RETURN NONE`;
-}
-
-function transaction(statements: readonly string[]): string {
-  return `BEGIN TRANSACTION; ${statements.join('; ')}; COMMIT TRANSACTION`;
 }
 
 async function coolDown(

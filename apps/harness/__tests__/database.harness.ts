@@ -66,4 +66,38 @@ describe('react-native-surrealdb native core', () => {
     expect(events.isClosed).toBe(true);
     expect(await events.next()).toBeUndefined();
   });
+
+  test('commits and rolls back callback transactions', async () => {
+    database = await connect({
+      endpoint: 'memory',
+      namespace: 'harness-transactions',
+      database: 'harness-transactions',
+    });
+
+    await database.transaction(async transaction => {
+      await transaction.query(
+        'CREATE person:ada SET name = $name RETURN NONE',
+        { name: 'Ada' }
+      );
+      await transaction.query(
+        'CREATE person:lin SET name = $name RETURN NONE',
+        { name: 'Lin' }
+      );
+    });
+
+    await expect(
+      database.transaction(async transaction => {
+        await transaction.query(
+          'CREATE person:grace SET name = $name RETURN NONE',
+          { name: 'Grace' }
+        );
+        throw new Error('roll back');
+      })
+    ).rejects.toThrow('roll back');
+
+    const [result] = await database.query<string[]>(
+      'SELECT VALUE name FROM person ORDER BY name'
+    );
+    expect(result?.value).toEqual(['Ada', 'Lin']);
+  });
 });

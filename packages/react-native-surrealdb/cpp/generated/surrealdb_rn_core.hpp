@@ -56,6 +56,10 @@ protected:
   cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_authenticate(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
+  jsi::Value
+  cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_begin_transaction(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
   jsi::Value cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_close(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
@@ -81,6 +85,25 @@ protected:
       size_t count);
   jsi::Value
   cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_use_namespace_database(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value cpp_uniffi_surrealdb_rn_core_fn_clone_surrealtransaction(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value cpp_uniffi_surrealdb_rn_core_fn_free_surrealtransaction(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_cancel(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_commit(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value
+  cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_is_closed(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
   jsi::Value cpp_uniffi_surrealdb_rn_core_fn_func_connect(
@@ -246,6 +269,10 @@ protected:
   cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_authenticate(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
+  jsi::Value
+  cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_begin_transaction(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
   jsi::Value cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_close(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
@@ -276,6 +303,22 @@ protected:
   cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_use_namespace_database(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
+  jsi::Value
+  cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_cancel(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value
+  cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_commit(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value
+  cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_is_closed(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value
+  cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
   jsi::Value cpp_ffi_surrealdb_rn_core_uniffi_contract_version(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
@@ -283,6 +326,10 @@ protected:
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
   jsi::Value cpp_uniffi_internal_fn_method_surrealdatabase_ffi__bless_pointer(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value
+  cpp_uniffi_internal_fn_method_surrealtransaction_ffi__bless_pointer(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
 

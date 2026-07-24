@@ -1,6 +1,7 @@
 # Native size and Rust implementation decisions
 
 Research and measurement date: 2026-07-13
+Implementation update: 2026-07-24
 
 ## Outcome
 
@@ -10,11 +11,16 @@ increment fell from 61.88 MiB to 24.31 MiB, a 60.7% reduction.
 
 The optimized APK contains:
 
-| Library | Uncompressed bytes in APK | MiB |
-| --- | ---: | ---: |
-| `libsurrealdb_rn_core.so` | 25,052,376 | 23.89 |
-| `libreact-native-surrealdb.so` | 402,800 | 0.38 |
-| combined SurrealDB native code | 25,455,176 | 24.28 |
+| Library                        | Uncompressed bytes in APK |   MiB |
+| ------------------------------ | ------------------------: | ----: |
+| `libsurrealdb_rn_core.so`      |                25,052,376 | 23.89 |
+| `libreact-native-surrealdb.so` |                   402,800 |  0.38 |
+| combined SurrealDB native code |                25,455,176 | 24.28 |
+
+These figures predate the JavaScript/native transaction-handle addition and
+remain the last pinned size baseline, not a measurement of the current branch.
+Re-run the paired size benchmark before publishing a release or claiming that
+the transaction bindings did not affect the packaged increment.
 
 Run the paired measurement with:
 
@@ -41,6 +47,10 @@ the reference metadata remains in `apps/harness/size-budget.json`.
   namespace/database changes take the write side across the mutation. This
   prevents concurrent session mutations from overwriting each other without
   blocking unrelated query clones on a synchronous mutex.
+- Native transactions use an owned Rust SDK transaction behind an async mutex.
+  JavaScript calls execute individually under its transaction ID; commit and
+  cancel consume that transaction once, and database close cancels registered
+  open transaction handles.
 
 ## Changes deliberately not retained
 

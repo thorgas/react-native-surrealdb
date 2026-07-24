@@ -1,6 +1,22 @@
 # `react-native-surrealdb` architecture research
 
 Research date: 2026-07-12
+Implementation update: 2026-07-24
+
+## Implementation status
+
+The native-alpha core described by this research is now implemented. The
+current package supports embedded memory and experimental SurrealKV, remote
+WebSocket connections, authentication, lossless values, pull-based live-query
+handles, and native transaction handles exposed to JavaScript. Transactions
+execute each `query()` immediately under one Rust SDK transaction ID and then
+commit or cancel once; callback transactions automatically cancel when the
+callback throws. The reactive `surreal-store`, reconnect/re-subscription logic,
+and production durability/migration gates remain future work.
+
+The recommendation and project comparisons below retain their original
+research-date context. Current package behavior is documented in
+`packages/react-native-surrealdb/README.md`.
 
 ## Executive recommendation
 
@@ -86,7 +102,7 @@ Source: [`uniffi-bindgen-react-native`](https://github.com/jhugman/uniffi-bindge
                               │
                               ▼
 @scope/react-native-surrealdb (public TypeScript API)
-  Database • Query • Subscription • codecs • errors • lifecycle
+  Database • Query • Transaction • LiveQuery • codecs • errors • lifecycle
                               │
                               ▼
 generated UniFFI JSI/TurboModule bindings
@@ -100,26 +116,25 @@ surrealdb-rn-core (Rust)
        embedded Mem/SurrealKV       remote WS/WSS
 ```
 
-Suggested monorepo:
+Implemented monorepo:
 
 ```text
+crates/
+  surrealdb-rn-core/
 packages/
   react-native-surrealdb/
     src/
-    rust/
     ios/
     android/
     cpp/
-  surreal-store/
-    src/
-  example-bare/
-  example-expo/
-crates/
-  surrealdb-rn-core/
-docs/
+apps/
+  harness/
 ```
 
-An Expo config plugin can automate native configuration, but the library cannot run in Expo Go because it contains custom native code. Validate Expo development builds separately from a bare React Native app.
+The optional `surreal-store` and dedicated Expo example have not been created.
+An Expo config plugin can automate native configuration, but the library cannot
+run in Expo Go because it contains custom native code. Validate Expo development
+builds separately from the bare React Native Harness app.
 
 ## Native API: keep it smaller than the SurrealDB Rust SDK
 
@@ -127,20 +142,37 @@ Do not expose every generic Rust SDK builder through UniFFI. A narrow object API
 
 ```ts
 export type ConnectOptions = {
-  endpoint: `mem://${string}` | `surrealkv://${string}` | `ws://${string}` | `wss://${string}`
-  namespace?: string
-  database?: string
+  endpoint: string;
+  namespace?: string;
+  database?: string;
+};
+
+export interface SurrealClient {
+  query<T = unknown>(
+    surql: string,
+    vars?: SurrealVars,
+  ): Promise<QueryStatement<T>[]>;
+  beginTransaction(): Promise<SurrealTransaction>;
+  transaction<T>(
+    run: (transaction: SurrealTransaction) => Promise<T>,
+  ): Promise<T>;
+  live<T = unknown>(surql: string, vars?: SurrealVars): Promise<LiveQuery<T>>;
+  use(namespace: string, database: string): Promise<void>;
+  close(): Promise<void>;
 }
 
-export interface SurrealDatabase {
-  query<T = unknown>(surql: string, vars?: SurrealVars): Promise<QueryResult<T>[]>
-  use(options: { namespace: string; database: string }): Promise<void>
-  close(): Promise<void>
-  subscribe<T>(surql: string, vars: SurrealVars | undefined, listener: LiveListener<T>): Promise<Subscription>
+export interface SurrealTransaction {
+  query<T = unknown>(
+    surql: string,
+    vars?: SurrealVars,
+  ): Promise<QueryStatement<T>[]>;
+  commit(): Promise<void>;
+  cancel(): Promise<void>;
 }
 
-export interface Subscription {
-  cancel(): Promise<void>
+export interface LiveQuery<T> extends AsyncIterable<LiveNotification<T>> {
+  next(): Promise<LiveNotification<T> | undefined>;
+  close(): Promise<void>;
 }
 ```
 
@@ -154,17 +186,20 @@ Define a versioned tagged wire format in Rust and TypeScript, for example:
 
 ```ts
 type SurrealValue =
-  | null | boolean | string | number
-  | { $surreal: 'none' }
-  | { $surreal: 'int'; value: string }
-  | { $surreal: 'decimal'; value: string }
-  | { $surreal: 'record'; table: string; key: SurrealValue }
-  | { $surreal: 'datetime'; value: string }
-  | { $surreal: 'duration'; value: string }
-  | { $surreal: 'uuid'; value: string }
-  | { $surreal: 'bytes'; base64: string }
+  | null
+  | boolean
+  | string
+  | number
+  | { $surreal: "none" }
+  | { $surreal: "int"; value: string }
+  | { $surreal: "decimal"; value: string }
+  | { $surreal: "record"; table: string; key: SurrealValue }
+  | { $surreal: "datetime"; value: string }
+  | { $surreal: "duration"; value: string }
+  | { $surreal: "uuid"; value: string }
+  | { $surreal: "bytes"; base64: string }
   | SurrealValue[]
-  | { [key: string]: SurrealValue }
+  | { [key: string]: SurrealValue };
 ```
 
 Start with a UTF-8 JSON encoding of that algebra for correctness. Benchmark moving the same schema to a binary buffer only after profiling proves bridge serialization is material. The public API may decode familiar types into wrapper classes (`RecordId`, `Decimal`, etc.) while retaining a lossless raw mode.
@@ -173,6 +208,9 @@ Start with a UTF-8 JSON encoding of that algebra for correctness. Benchmark movi
 
 - One long-lived Tokio runtime per native module, not one runtime per call.
 - One `Arc`-owned database handle per connection.
+- One `Arc`-owned transaction handle around the Rust SDK transaction; serialize
+  queries on that handle, commit or cancel idempotently, and cancel registered
+  open transactions when the database closes.
 - No database mutex held while invoking a JavaScript callback.
 - Every stream has an explicit cancellation token and is cancelled during connection close/module invalidation.
 - Catch Rust panics at every exported sync and async boundary and convert them to typed errors.
@@ -215,20 +253,20 @@ Recommended v1 concepts:
 
 ```ts
 const todos = store.query({
-  key: ['todos', projectId],
-  surql: 'SELECT * FROM todo WHERE project = $project ORDER BY created_at',
+  key: ["todos", projectId],
+  surql: "SELECT * FROM todo WHERE project = $project ORDER BY created_at",
   vars: { project: projectId },
-})
+});
 
 function TodoCount() {
-  return useSurrealSelector(todos, state => state.data.length)
+  return useSurrealSelector(todos, (state) => state.data.length);
 }
 
 await store.mutate({
-  surql: 'UPDATE $id MERGE $patch RETURN AFTER',
+  surql: "UPDATE $id MERGE $patch RETURN AFTER",
   vars: { id, patch },
-  optimistic: cache => cache.patchRecord(id, patch),
-})
+  optimistic: (cache) => cache.patchRecord(id, patch),
+});
 ```
 
 Core behaviors:
@@ -306,7 +344,6 @@ Round-trip every SurrealDB value variant through Rust → wire format → TypeSc
 Prove cancellation and absence of callbacks after close/invalidate. Repeatedly mount/unmount subscribers, Fast Refresh, background/foreground the app, disconnect/reconnect remote WebSockets, and assert no leaked Rust tasks or native handles.
 
 Implement these native integration cases as Harness suites, with platform-specific files where necessary. Include forced native errors/panics, timeout recovery, repeated database deletion/recreation, concurrent queries, close during an in-flight query, app relaunch, and validation that no callback arrives after cancellation.
-
 
 ## Licensing and naming
 

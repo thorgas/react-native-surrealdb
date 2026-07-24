@@ -25,7 +25,10 @@ pnpm --filter react-native-surrealdb pack
 ```
 
 Install the resulting tarball in a clean React Native test app and run both
-platforms before publishing it. The first static-library alpha matrix packed to
+platforms before publishing it. The consumer smoke test must cover callback and
+manual transaction commit, callback rollback, an open transaction cancelled by
+database close, and a live query opened and closed through the documented
+pull-based handle. The first static-library alpha matrix packed to
 approximately 308 MB compressed and installed to roughly 1.1 GB. This is the
 historical upper reference, not an acceptable long-term target. Android now
 ships the Rust core as a stripped-at-app-build shared library; record both the

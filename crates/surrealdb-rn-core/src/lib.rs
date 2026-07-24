@@ -12,6 +12,7 @@ use std::time::Duration;
 
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect as connect_any};
+use surrealdb::method::Transaction as NativeTransaction;
 use surrealdb::opt::auth::{Database as DatabaseCredentials, Root, Token};
 use surrealdb::types::{Action, Object, Value};
 use tokio::sync::{Mutex as AsyncMutex, RwLock as AsyncRwLock, watch};
@@ -87,6 +88,13 @@ pub struct SurrealDatabase {
     // concurrent sign-in/use calls from silently overwriting one another.
     inner: AsyncRwLock<Option<Surreal<Any>>>,
     live_queries: Mutex<Vec<Weak<LiveQuery>>>,
+    transactions: Mutex<Vec<Weak<SurrealTransaction>>>,
+    closed: AtomicBool,
+}
+
+#[derive(uniffi::Object)]
+pub struct SurrealTransaction {
+    inner: AsyncMutex<Option<NativeTransaction<Any>>>,
     closed: AtomicBool,
 }
 
@@ -97,6 +105,30 @@ pub struct LiveQuery {
     client: Mutex<Option<Surreal<Any>>>,
     closed: AtomicBool,
     close_signal: watch::Sender<bool>,
+}
+
+impl SurrealTransaction {
+    async fn cancel_inner(&self) -> Result<(), SurrealRnError> {
+        self.closed.store(true, Ordering::Release);
+        if let Some(transaction) = self.inner.lock().await.take() {
+            transaction.cancel().await?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SurrealTransaction {
+    fn drop(&mut self) {
+        self.closed.store(true, Ordering::Release);
+        let Some(transaction) = self.inner.get_mut().take() else {
+            return;
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                transaction.cancel().await.ok();
+            });
+        }
+    }
 }
 
 impl LiveQuery {
@@ -173,8 +205,46 @@ pub async fn connect(options: ConnectOptions) -> Result<Arc<SurrealDatabase>, Su
     Ok(Arc::new(SurrealDatabase {
         inner: AsyncRwLock::new(Some(client)),
         live_queries: Mutex::new(Vec::new()),
+        transactions: Mutex::new(Vec::new()),
         closed: AtomicBool::new(false),
     }))
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl SurrealTransaction {
+    /// Execute one or more statements inside this transaction.
+    pub async fn query(
+        &self,
+        surql: String,
+        variables_json: Option<String>,
+    ) -> Result<Vec<QueryStatementResult>, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SurrealRnError::Closed);
+        }
+        let variables: Object = decode_variables(variables_json.as_deref())?;
+        let slot = self.inner.lock().await;
+        let transaction = slot.as_ref().ok_or(SurrealRnError::Closed)?;
+        let response = transaction.query(surql).bind(variables).await?.check()?;
+        query_results(response)
+    }
+
+    /// Commit once, persisting all queries executed through this handle.
+    pub async fn commit(&self) -> Result<(), SurrealRnError> {
+        self.closed.store(true, Ordering::Release);
+        if let Some(transaction) = self.inner.lock().await.take() {
+            transaction.commit().await?;
+        }
+        Ok(())
+    }
+
+    /// Idempotently roll back all queries executed through this handle.
+    pub async fn cancel(&self) -> Result<(), SurrealRnError> {
+        self.cancel_inner().await
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -228,6 +298,34 @@ impl LiveQuery {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl SurrealDatabase {
+    /// Begin a transaction whose queries can be issued individually.
+    pub async fn begin_transaction(&self) -> Result<Arc<SurrealTransaction>, SurrealRnError> {
+        let client = self.client().await?;
+        let native_transaction = client.begin().await?;
+        let transaction = Arc::new(SurrealTransaction {
+            inner: AsyncMutex::new(Some(native_transaction)),
+            closed: AtomicBool::new(false),
+        });
+
+        {
+            let mut transactions =
+                self.transactions
+                    .lock()
+                    .map_err(|_| SurrealRnError::Internal {
+                        message: "transaction registry lock poisoned".into(),
+                    })?;
+            if self.closed.load(Ordering::Acquire) {
+                drop(transactions);
+                transaction.cancel_inner().await?;
+                return Err(SurrealRnError::Closed);
+            }
+            transactions.retain(|transaction| transaction.strong_count() > 0);
+            transactions.push(Arc::downgrade(&transaction));
+        }
+
+        Ok(transaction)
+    }
+
     pub async fn use_namespace_database(
         &self,
         namespace: String,
@@ -251,19 +349,8 @@ impl SurrealDatabase {
     ) -> Result<Vec<QueryStatementResult>, SurrealRnError> {
         let client = self.client().await?;
         let variables: Object = decode_variables(variables_json.as_deref())?;
-        let mut response = client.query(surql).bind(variables).await?.check()?;
-        let statement_count = response.num_statements();
-        let mut results = Vec::with_capacity(statement_count);
-
-        for index in 0..statement_count {
-            let value: Value = response.take(index)?;
-            results.push(QueryStatementResult {
-                statement_index: index as u32,
-                value_json: encode_value(value)?,
-            });
-        }
-
-        Ok(results)
+        let response = client.query(surql).bind(variables).await?.check()?;
+        query_results(response)
     }
 
     /// Start a single live SurrealQL statement and return a pull-based stream.
@@ -374,6 +461,23 @@ impl SurrealDatabase {
         for live_query in live_queries {
             live_query.close_inner().await;
         }
+        let transactions = {
+            let mut transaction_registry =
+                self.transactions
+                    .lock()
+                    .map_err(|_| SurrealRnError::Internal {
+                        message: "transaction registry lock poisoned".into(),
+                    })?;
+            let transactions = transaction_registry
+                .iter()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>();
+            transaction_registry.clear();
+            transactions
+        };
+        for transaction in transactions {
+            transaction.cancel_inner().await?;
+        }
         // The SDK owns its embedded router task. Dropping the last client closes
         // its route channel; yield so that task can begin datastore shutdown.
         tokio::task::yield_now().await;
@@ -383,6 +487,23 @@ impl SurrealDatabase {
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
     }
+}
+
+fn query_results(
+    mut response: surrealdb::IndexedResults,
+) -> Result<Vec<QueryStatementResult>, SurrealRnError> {
+    let statement_count = response.num_statements();
+    let mut results = Vec::with_capacity(statement_count);
+
+    for index in 0..statement_count {
+        let value: Value = response.take(index)?;
+        results.push(QueryStatementResult {
+            statement_index: index as u32,
+            value_json: encode_value(value)?,
+        });
+    }
+
+    Ok(results)
 }
 
 fn live_action(action: Action) -> LiveAction {
@@ -479,6 +600,88 @@ mod tests {
         assert!(database.is_closed());
         assert!(matches!(
             database.query("RETURN 1".into(), None).await,
+            Err(SurrealRnError::Closed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn transaction_handle_commits_and_cancels_individual_queries() {
+        let database = connect(ConnectOptions {
+            endpoint: "mem://".into(),
+            namespace: Some("transactions".into()),
+            database: Some("transactions".into()),
+        })
+        .await
+        .unwrap();
+        database
+            .query("DEFINE TABLE person SCHEMALESS".into(), None)
+            .await
+            .unwrap();
+
+        let transaction = database.begin_transaction().await.unwrap();
+        transaction
+            .query(
+                "CREATE person:ada SET name = 'Ada' RETURN NONE".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        transaction
+            .query(
+                "CREATE person:lin SET name = 'Lin' RETURN NONE".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+        transaction.commit().await.unwrap();
+        assert!(transaction.is_closed());
+
+        let result = database
+            .query("SELECT VALUE name FROM person ORDER BY name".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(result[0].value_json, r#"["Ada","Lin"]"#);
+
+        let cancelled = database.begin_transaction().await.unwrap();
+        cancelled
+            .query(
+                "CREATE person:grace SET name = 'Grace' RETURN NONE".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        cancelled.cancel().await.unwrap();
+        cancelled.cancel().await.unwrap();
+        assert!(cancelled.is_closed());
+
+        let result = database
+            .query("RETURN record::exists(person:grace)".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(result[0].value_json, "false");
+    }
+
+    #[tokio::test]
+    async fn database_close_cancels_open_transactions() {
+        let database = connect(ConnectOptions {
+            endpoint: "mem://".into(),
+            namespace: Some("transaction_close".into()),
+            database: Some("transaction_close".into()),
+        })
+        .await
+        .unwrap();
+        let transaction = database.begin_transaction().await.unwrap();
+        transaction
+            .query("CREATE event:uncommitted RETURN NONE".into(), None)
+            .await
+            .unwrap();
+
+        database.close().await.unwrap();
+
+        assert!(transaction.is_closed());
+        assert!(matches!(
+            transaction.query("RETURN 1".into(), None).await,
             Err(SurrealRnError::Closed)
         ));
     }

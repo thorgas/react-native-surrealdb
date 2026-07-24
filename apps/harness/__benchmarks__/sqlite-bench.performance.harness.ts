@@ -102,9 +102,7 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
       source: {
         upstream: SQLITE_BENCH_SOURCE,
         comparison:
-          'Same Harness binary, device, OS, debug build, memory-backed engine, record count, cooldown, and fully materialized comparable workloads. Two samples use opposite execution orders to balance first-run and thermal effects.',
-        caveat:
-          'op-sqlite uses 1,000 JavaScript transaction calls; SurrealDB submits one 1,000-statement transaction because it has no JavaScript transaction handle.',
+          'Same Harness binary, device, OS, debug build, memory-backed engine, record count, cooldown, fully materialized comparable workloads, and 1,000 awaited JavaScript calls through each library transaction handle. Two samples use opposite execution orders to balance first-run and thermal effects.',
       },
       configuration: {
         profile: 'sqlite-bench-paired',

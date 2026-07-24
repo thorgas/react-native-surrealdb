@@ -112,6 +112,9 @@ void uniffi_surrealdb_rn_core_fn_free_surrealdatabase(
 /*handle*/ uint64_t
 uniffi_surrealdb_rn_core_fn_method_surrealdatabase_authenticate(
     /*handle*/ uint64_t ptr, RustBuffer access_token);
+/*handle*/ uint64_t
+uniffi_surrealdb_rn_core_fn_method_surrealdatabase_begin_transaction(
+    /*handle*/ uint64_t ptr);
 /*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_method_surrealdatabase_close(
     /*handle*/ uint64_t ptr);
 /*handle*/ uint64_t
@@ -134,6 +137,20 @@ uniffi_surrealdb_rn_core_fn_method_surrealdatabase_sign_in_root(
 /*handle*/ uint64_t
 uniffi_surrealdb_rn_core_fn_method_surrealdatabase_use_namespace_database(
     /*handle*/ uint64_t ptr, RustBuffer namespace_, RustBuffer database);
+/*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_clone_surrealtransaction(
+    /*handle*/ uint64_t handle, RustCallStatus *uniffi_out_err);
+void uniffi_surrealdb_rn_core_fn_free_surrealtransaction(
+    /*handle*/ uint64_t handle, RustCallStatus *uniffi_out_err);
+/*handle*/ uint64_t
+uniffi_surrealdb_rn_core_fn_method_surrealtransaction_cancel(
+    /*handle*/ uint64_t ptr);
+/*handle*/ uint64_t
+uniffi_surrealdb_rn_core_fn_method_surrealtransaction_commit(
+    /*handle*/ uint64_t ptr);
+int8_t uniffi_surrealdb_rn_core_fn_method_surrealtransaction_is_closed(
+    /*handle*/ uint64_t ptr, RustCallStatus *uniffi_out_err);
+/*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query(
+    /*handle*/ uint64_t ptr, RustBuffer surql, RustBuffer variables_json);
 /*handle*/ uint64_t
 uniffi_surrealdb_rn_core_fn_func_connect(RustBuffer options);
 RustBuffer
@@ -261,6 +278,8 @@ uint16_t uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_livequery_next();
 uint16_t
 uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_authenticate();
+uint16_t
+uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_begin_transaction();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_close();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_invalidate();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_is_closed();
@@ -272,6 +291,11 @@ uint16_t
 uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_root();
 uint16_t
 uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_use_namespace_database();
+uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_cancel();
+uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_commit();
+uint16_t
+uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_is_closed();
+uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query();
 uint32_t ffi_surrealdb_rn_core_uniffi_contract_version();
 }
 
@@ -1726,6 +1750,18 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
             ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_authenticate(
                 rt, thisVal, args, count);
       });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_begin_"
+        "transaction"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_method_"
+                                    "surrealdatabase_begin_transaction"),
+      1,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_begin_transaction(
+                rt, thisVal, args, count);
+      });
   props["ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_close"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -1824,6 +1860,78 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
             ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_use_namespace_database(
                 rt, thisVal, args, count);
       });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_clone_surrealtransaction"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt, "ubrn_uniffi_surrealdb_rn_core_fn_clone_surrealtransaction"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_clone_surrealtransaction(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_free_surrealtransaction"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt, "ubrn_uniffi_surrealdb_rn_core_fn_free_surrealtransaction"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_free_surrealtransaction(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_cancel"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_"
+                                        "method_surrealtransaction_cancel"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_cancel(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_commit"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_"
+                                        "method_surrealtransaction_commit"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_commit(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_is_"
+        "closed"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_method_"
+                                    "surrealtransaction_is_closed"),
+      1,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_is_closed(
+                rt, thisVal, args, count);
+      });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_"
+                                        "method_surrealtransaction_query"),
+          3,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query(
+                    rt, thisVal, args, count);
+          });
   props["ubrn_uniffi_surrealdb_rn_core_fn_func_connect"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -2427,6 +2535,18 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
             ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_authenticate(
                 rt, thisVal, args, count);
       });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_begin_"
+        "transaction"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "method_surrealdatabase_begin_transaction"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_begin_transaction(
+                rt, thisVal, args, count);
+      });
   props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_close"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -2526,6 +2646,54 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
             ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_use_namespace_database(
                 rt, thisVal, args, count);
       });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_"
+        "cancel"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "method_surrealtransaction_cancel"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_cancel(
+                rt, thisVal, args, count);
+      });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_"
+        "commit"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "method_surrealtransaction_commit"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_commit(
+                rt, thisVal, args, count);
+      });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_is_"
+        "closed"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "method_surrealtransaction_is_closed"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_is_closed(
+                rt, thisVal, args, count);
+      });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_"
+        "query"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "method_surrealtransaction_query"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query(
+                rt, thisVal, args, count);
+      });
   props["ubrn_ffi_surrealdb_rn_core_uniffi_contract_version"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -2562,6 +2730,18 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                 ->cpp_uniffi_internal_fn_method_surrealdatabase_ffi__bless_pointer(
                     rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_internal_fn_method_surrealtransaction_ffi__bless_"
+        "pointer"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_internal_fn_method_"
+                                    "surrealtransaction_ffi__bless_pointer"),
+      1,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_internal_fn_method_surrealtransaction_ffi__bless_pointer(
+                rt, thisVal, args, count);
+      });
 
   // `rustbuffer_alloc(n)` -> Uint8Array view over Rust-owned memory of capacity
   // `n`. `rustbuffer_free(view)` -> hands the underlying (ptr, capacity) back
@@ -2747,6 +2927,21 @@ jsi::Value NativeSurrealdbRnCore::
   auto obj = jsi::Object::createFromHostObject(rt, ptrObj);
   return jsi::Value(rt, obj);
 }
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_internal_fn_method_surrealtransaction_ffi__bless_pointer(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto pointer =
+      uniffi_jsi::Bridging<uint64_t>::fromJs(rt, callInvoker, args[0]);
+  auto static destructor = [](uint64_t p) {
+    RustCallStatus status = {0};
+    uniffi_surrealdb_rn_core_fn_free_surrealtransaction(p, &status);
+  };
+  auto ptrObj =
+      std::make_shared<uniffi_jsi::DestructibleObject>(pointer, destructor);
+  auto obj = jsi::Object::createFromHostObject(rt, ptrObj);
+  return jsi::Value(rt, obj);
+}
 
 // Methods calling directly into the uniffi generated C API of the Rust crate.
 jsi::Value
@@ -2857,6 +3052,18 @@ jsi::Value NativeSurrealdbRnCore::
                                                         args[0]),
       uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
                                                               args[1]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_begin_transaction(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_fn_method_surrealdatabase_begin_transaction(
+          uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                            args[0]));
 
   return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
                                                          value);
@@ -2975,6 +3182,89 @@ jsi::Value NativeSurrealdbRnCore::
               rt, callInvoker, args[1]),
           uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(
               rt, callInvoker, args[2]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value
+NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_clone_surrealtransaction(
+    jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+    size_t count) {
+  RustCallStatus status =
+      uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::rustSuccess(rt);
+  auto value = uniffi_surrealdb_rn_core_fn_clone_surrealtransaction(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]),
+      &status);
+  uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::copyIntoJs(
+      rt, callInvoker, status, args[count - 1]);
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value
+NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_free_surrealtransaction(
+    jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+    size_t count) {
+  RustCallStatus status =
+      uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::rustSuccess(rt);
+  uniffi_surrealdb_rn_core_fn_free_surrealtransaction(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]),
+      &status);
+  uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::copyIntoJs(
+      rt, callInvoker, status, args[count - 1]);
+
+  return jsi::Value::undefined();
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_cancel(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_method_surrealtransaction_cancel(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_commit(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_method_surrealtransaction_commit(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_is_closed(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  RustCallStatus status =
+      uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::rustSuccess(rt);
+  auto value = uniffi_surrealdb_rn_core_fn_method_surrealtransaction_is_closed(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]),
+      &status);
+  uniffi::surrealdb_rn_core::Bridging<RustCallStatus>::copyIntoJs(
+      rt, callInvoker, status, args[count - 1]);
+
+  return uniffi_jsi::Bridging<int8_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]),
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[1]),
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[2]));
 
   return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
                                                          value);
@@ -3628,6 +3918,15 @@ jsi::Value NativeSurrealdbRnCore::
   return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }
 jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_begin_transaction(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_begin_transaction();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
     cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_close(
         jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
         size_t count) {
@@ -3694,6 +3993,42 @@ jsi::Value NativeSurrealdbRnCore::
         size_t count) {
   auto value =
       uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_use_namespace_database();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_cancel(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_cancel();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_commit(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_commit();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_is_closed(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_is_closed();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query();
 
   return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }

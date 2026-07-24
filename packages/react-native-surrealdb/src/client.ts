@@ -6,6 +6,7 @@ import {
   type ConnectOptions,
   type LiveQueryLike,
   type SurrealDatabaseLike,
+  type SurrealTransactionLike as NativeSurrealTransactionLike,
 } from "./native";
 import {
   decodeSurrealValue,
@@ -73,6 +74,48 @@ export class LiveQuery<T = SurrealValue> implements AsyncIterable<
 }
 
 /**
+ * A JavaScript handle for one native SurrealDB transaction.
+ *
+ * Queries execute immediately and share the native transaction ID. Commit and
+ * cancel are idempotent; no new queries are accepted after either operation.
+ */
+export class SurrealTransaction {
+  readonly #native: NativeSurrealTransactionLike;
+  readonly #options?: CallOptions;
+
+  constructor(native: NativeSurrealTransactionLike, options?: CallOptions) {
+    this.#native = native;
+    this.#options = options;
+  }
+
+  async query<T = SurrealValue>(
+    surql: string,
+    variables?: QueryVariables,
+    options?: CallOptions,
+  ): Promise<Array<QueryStatement<T>>> {
+    const results = await this.#native.query(
+      surql,
+      variables === undefined ? undefined : encodeQueryVariables(variables),
+      options ?? this.#options,
+    );
+
+    return decodeQueryResults<T>(results);
+  }
+
+  commit(options?: CallOptions) {
+    return this.#native.commit(options ?? this.#options);
+  }
+
+  cancel(options?: CallOptions) {
+    return this.#native.cancel(options ?? this.#options);
+  }
+
+  get isClosed() {
+    return this.#native.isClosed();
+  }
+}
+
+/**
  * A stable, hand-written facade over generated UniFFI bindings.
  *
  * This layer owns the lossless wire codec and keeps generated native types out
@@ -96,10 +139,40 @@ export class SurrealClient {
       options,
     );
 
-    return results.map(({ statementIndex, valueJson }) => ({
-      statementIndex,
-      value: decodeSurrealValue(valueJson) as T,
-    }));
+    return decodeQueryResults<T>(results);
+  }
+
+  /** Begin a manually managed transaction that must be committed or cancelled. */
+  async beginTransaction(options?: CallOptions): Promise<SurrealTransaction> {
+    return new SurrealTransaction(
+      await this.#native.beginTransaction(options),
+      options,
+    );
+  }
+
+  /**
+   * Run a callback in one native transaction.
+   *
+   * Resolving commits and returns the callback value. Throwing cancels and
+   * rethrows the original callback error.
+   */
+  async transaction<T>(
+    run: (transaction: SurrealTransaction) => Promise<T>,
+    options?: CallOptions,
+  ): Promise<T> {
+    const transaction = await this.beginTransaction(options);
+    try {
+      const result = await run(transaction);
+      await transaction.commit();
+      return result;
+    } catch (error) {
+      try {
+        await transaction.cancel();
+      } catch {
+        // Preserve the callback or commit error that caused the rollback.
+      }
+      throw error;
+    }
   }
 
   async live<T = SurrealValue>(
@@ -154,6 +227,15 @@ export class SurrealClient {
   get isClosed() {
     return this.#native.isClosed();
   }
+}
+
+function decodeQueryResults<T>(
+  results: ReadonlyArray<{ statementIndex: number; valueJson: string }>,
+): Array<QueryStatement<T>> {
+  return results.map(({ statementIndex, valueJson }) => ({
+    statementIndex,
+    value: decodeSurrealValue(valueJson) as T,
+  }));
 }
 
 export async function connect(

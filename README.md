@@ -7,15 +7,23 @@ An experimental React Native binding for SurrealDB, built from the SurrealDB Rus
 The native core and first React Native integration milestone are implemented:
 
 - SurrealDB 3.2.1 with `mem://`, `surrealkv://`, `ws://`, and `wss://` engine features;
-- async UniFFI API for connect, query, namespace/database selection, token authentication, root/database sign-in, invalidation, and close;
+- async UniFFI API for connect, query, native transactions, namespace/database selection, token authentication, root/database sign-in, invalidation, and close;
+- callback and manually managed JavaScript transaction handles backed by
+  SurrealDB's native transaction IDs, with individual queries, one commit, and
+  automatic rollback when a callback throws;
 - pull-based live-query handles with backpressure, async iteration, explicit cancellation, and automatic cancellation when the database closes;
 - versioned JSON wire values that preserve 64-bit integers, decimals, bytes, UUIDs, record IDs, `NONE`, sets, and other non-JSON SurrealDB values;
 - checked-in UniFFI/JSI generated bindings and a hand-written TypeScript facade for React Native's New Architecture;
-- host tests for queries, live notifications, Hermes-safe integer transport, idempotent close, and SurrealKV persistence/reopen;
+- host tests for queries, transaction commit/rollback, database-close
+  transaction cancellation, live notifications, Hermes-safe integer transport,
+  idempotent close, and SurrealKV persistence/reopen;
 - a `react-native-test-app` host with React Native Harness integration tests passing on React Native 0.86/Hermes V1 with an iPhone 17 Pro simulator and an Android API 36 arm64 Pixel 9 emulator;
 - authenticated remote WebSocket live-query integration tested against a real SurrealDB server;
 - size-oriented Rust LTO plus a separately packaged Android Rust `cdylib`, reducing the measured arm64 RNTA app increment from 61.88 MiB to 24.31 MiB while preserving 16 KB page-size support (NDK 27, API 24 minimum);
-- the complete default crud-bench workload matrix as 141 device-side metrics, with smoke/canonical/upstream profiles, an RNTA manual benchmark lab, raw samples, and compatible-baseline regression checks.
+- the complete default crud-bench workload matrix as 141 device-side metrics, with smoke/canonical/upstream profiles, an RNTA manual benchmark lab, raw samples, and compatible-baseline regression checks;
+- a paired `sqlite-bench` adaptation that runs SurrealDB and op-sqlite in the
+  same Harness binary, including 1,000 awaited JavaScript calls through each
+  library's transaction handle before one commit.
 
 Automatic WebSocket re-subscription and event deduplication across reconnects remain future work; the current subscription terminates when its SDK stream terminates.
 
