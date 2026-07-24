@@ -31,6 +31,19 @@ export type StartupLoadReport = {
   };
 };
 
+export type StartupRenderEntry = {
+  sequence: string;
+  label: string;
+  bucket: string;
+  active: boolean;
+  score: string;
+};
+
+export type StartupLoadResult = {
+  report: StartupLoadReport;
+  entries: StartupRenderEntry[];
+};
+
 type StartupLoadOptions = {
   signal?: AbortSignal;
   onProgress?: (progress: StartupLoadProgress) => void;
@@ -46,7 +59,7 @@ type StartupLoadRow = {
 
 export async function runStartupLoadBenchmark(
   options: StartupLoadOptions = {},
-): Promise<StartupLoadReport> {
+): Promise<StartupLoadResult> {
   const { signal, onProgress } = options;
   const startedAt = performance.now();
   assertActive(signal);
@@ -134,7 +147,7 @@ export async function runStartupLoadBenchmark(
     }
 
     const materializeStartedAt = performance.now();
-    const checksum = materializeRows(rows);
+    const { checksum, entries } = materializeRows(rows);
     const materializeMs = performance.now() - materializeStartedAt;
     const readyMs = performance.now() - startedAt;
     onProgress?.({
@@ -144,32 +157,38 @@ export async function runStartupLoadBenchmark(
     });
 
     return {
-      schemaVersion: 1,
-      measuredAt: new Date().toISOString(),
-      configuration: {
-        records: STARTUP_LOAD_RECORD_COUNT,
-        batchSize: STARTUP_LOAD_BATCH_SIZE,
-        engine: 'memory',
-        fullyMaterialized: true,
+      report: {
+        schemaVersion: 1,
+        measuredAt: new Date().toISOString(),
+        configuration: {
+          records: STARTUP_LOAD_RECORD_COUNT,
+          batchSize: STARTUP_LOAD_BATCH_SIZE,
+          engine: 'memory',
+          fullyMaterialized: true,
+        },
+        rowsLoaded: rows.length,
+        checksum,
+        timingsMs: {
+          open: openMs,
+          seed: seedMs,
+          queryAndDecode: queryAndDecodeMs,
+          materialize: materializeMs,
+          ready: readyMs,
+        },
       },
-      rowsLoaded: rows.length,
-      checksum,
-      timingsMs: {
-        open: openMs,
-        seed: seedMs,
-        queryAndDecode: queryAndDecodeMs,
-        materialize: materializeMs,
-        ready: readyMs,
-      },
+      entries,
     };
   } finally {
     await database.close();
   }
 }
 
-function materializeRows(rows: unknown[]): string {
+function materializeRows(rows: unknown[]): {
+  checksum: string;
+  entries: StartupRenderEntry[];
+} {
   let checksum = 0n;
-  rows.forEach((value, index) => {
+  const entries = rows.map((value, index) => {
     if (!isStartupLoadRow(value)) {
       throw new Error(`Startup load returned an invalid row at index ${index}`);
     }
@@ -179,8 +198,15 @@ function materializeRows(rows: unknown[]): string {
       value.bucket +
       value.score +
       (value.active ? 1n : 0n);
+    return {
+      sequence: value.sequence.toString(),
+      label: value.label,
+      bucket: value.bucket.toString(),
+      active: value.active,
+      score: value.score.toString(),
+    };
   });
-  return checksum.toString();
+  return { checksum: checksum.toString(), entries };
 }
 
 function isStartupLoadRow(value: unknown): value is StartupLoadRow {

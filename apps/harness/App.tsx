@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Profiler,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -31,6 +38,7 @@ import {
   STARTUP_LOAD_RECORD_COUNT,
   type StartupLoadProgress,
   type StartupLoadReport,
+  type StartupRenderEntry,
 } from './benchmarks/startup-load';
 
 const PROFILES = {
@@ -50,6 +58,11 @@ const PROFILES = {
     options: UPSTREAM_BENCHMARK_OPTIONS,
   },
 } as const;
+
+type StartupRenderTiming = {
+  reactRenderMs: number;
+  renderToLayoutMs: number;
+};
 
 function App() {
   const isDark = useColorScheme() === 'dark';
@@ -72,9 +85,44 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
   const [startupProgress, setStartupProgress] =
     useState<StartupLoadProgress>();
   const [startupReport, setStartupReport] = useState<StartupLoadReport>();
+  const [startupEntries, setStartupEntries] = useState<StartupRenderEntry[]>([]);
+  const [startupRenderTiming, setStartupRenderTiming] =
+    useState<StartupRenderTiming>();
   const [startupError, setStartupError] = useState<string>();
   const [startupRunning, setStartupRunning] = useState(false);
+  const renderRequestedAt = useRef<number>();
+  const reactRenderMs = useRef<number>();
+  const renderToLayoutMs = useRef<number>();
   const colors = isDark ? darkColors : lightColors;
+
+  const finishRenderTiming = useCallback(
+    (report: StartupLoadReport | undefined) => {
+      if (
+        !report ||
+        reactRenderMs.current === undefined ||
+        renderToLayoutMs.current === undefined
+      ) {
+        return;
+      }
+      const timing = {
+        reactRenderMs: reactRenderMs.current,
+        renderToLayoutMs: renderToLayoutMs.current,
+      };
+      setStartupRenderTiming(timing);
+      console.warn(
+        `SURREALDB_STARTUP_TIMING=${JSON.stringify({
+          platform: Platform.OS,
+          records: report.rowsLoaded,
+          fetchMs: report.timingsMs.queryAndDecode,
+          reactRenderMs: timing.reactRenderMs,
+          renderToLayoutMs: timing.renderToLayoutMs,
+          seedMs: report.timingsMs.seed,
+          readyBeforeRenderMs: report.timingsMs.ready,
+        })}`,
+      );
+    },
+    [],
+  );
 
   const runStartup = useCallback(async () => {
     const abortController = new AbortController();
@@ -83,14 +131,23 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
     setStartupRunning(true);
     setStartupError(undefined);
     setStartupReport(undefined);
+    setStartupEntries([]);
+    setStartupRenderTiming(undefined);
     setStartupProgress({ stage: 'open', completed: 0, total: 1 });
+    renderRequestedAt.current = undefined;
+    reactRenderMs.current = undefined;
+    renderToLayoutMs.current = undefined;
 
     try {
       const result = await runStartupLoadBenchmark({
         signal: abortController.signal,
         onProgress: setStartupProgress,
       });
-      if (!abortController.signal.aborted) setStartupReport(result);
+      if (!abortController.signal.aborted) {
+        renderRequestedAt.current = performance.now();
+        setStartupReport(result.report);
+        setStartupEntries(result.entries);
+      }
     } catch (cause) {
       if (!abortController.signal.aborted) {
         setStartupError(cause instanceof Error ? cause.message : String(cause));
@@ -105,6 +162,36 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
       }
     }
   }, []);
+
+  const onStartupRender = useCallback(
+    (
+      _id: string,
+      phase: 'mount' | 'update' | 'nested-update',
+      actualDuration: number,
+    ) => {
+      if (
+        phase === 'mount' &&
+        startupEntries.length === STARTUP_LOAD_RECORD_COUNT &&
+        reactRenderMs.current === undefined
+      ) {
+        reactRenderMs.current = actualDuration;
+        finishRenderTiming(startupReport);
+      }
+    },
+    [finishRenderTiming, startupEntries.length, startupReport],
+  );
+
+  const onStartupLayout = useCallback(() => {
+    if (
+      startupEntries.length !== STARTUP_LOAD_RECORD_COUNT ||
+      renderRequestedAt.current === undefined ||
+      renderToLayoutMs.current !== undefined
+    ) {
+      return;
+    }
+    renderToLayoutMs.current = performance.now() - renderRequestedAt.current;
+    finishRenderTiming(startupReport);
+  }, [finishRenderTiming, startupEntries.length, startupReport]);
 
   useEffect(() => {
     void runStartup();
@@ -197,8 +284,28 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
           percent={startupPercent}
           progress={startupProgress}
           report={startupReport}
+          renderTiming={startupRenderTiming}
           running={startupRunning}
         />
+
+        {startupEntries.length ? (
+          <Profiler id="startup-10k-render" onRender={onStartupRender}>
+            <View
+              accessibilityElementsHidden
+              importantForAccessibility="no-hide-descendants"
+              onLayout={onStartupLayout}
+              pointerEvents="none"
+              style={styles.renderProbe}
+            >
+              {startupEntries.map(entry => (
+                <Text key={entry.sequence} style={styles.renderProbeText}>
+                  {entry.sequence} · {entry.label} · {entry.bucket} ·{' '}
+                  {entry.active ? 'active' : 'inactive'} · {entry.score}
+                </Text>
+              ))}
+            </View>
+          </Profiler>
+        ) : null}
 
         <View style={styles.profileGrid}>
           {(Object.keys(PROFILES) as MobileBenchmarkProfile[]).map(key => {
@@ -338,6 +445,7 @@ function StartupLoadCard({
   percent,
   progress,
   report,
+  renderTiming,
   running,
 }: {
   colors: typeof lightColors;
@@ -346,6 +454,7 @@ function StartupLoadCard({
   percent: number;
   progress?: StartupLoadProgress;
   report?: StartupLoadReport;
+  renderTiming?: StartupRenderTiming;
   running: boolean;
 }) {
   const status =
@@ -423,6 +532,26 @@ function StartupLoadCard({
           <MetricNumber
             label="materialize"
             value={`${report.timingsMs.materialize.toFixed(1)} ms`}
+            color={colors.text}
+            muted={colors.muted}
+          />
+          <MetricNumber
+            label="React render"
+            value={
+              renderTiming
+                ? `${renderTiming.reactRenderMs.toFixed(1)} ms`
+                : 'measuring…'
+            }
+            color={colors.text}
+            muted={colors.muted}
+          />
+          <MetricNumber
+            label="render → layout"
+            value={
+              renderTiming
+                ? `${renderTiming.renderToLayoutMs.toFixed(1)} ms`
+                : 'measuring…'
+            }
             color={colors.text}
             muted={colors.muted}
           />
@@ -643,6 +772,14 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  renderProbe: {
+    position: 'absolute',
+    width: 320,
+    height: 1,
+    opacity: 0,
+    overflow: 'hidden',
+  },
+  renderProbeText: { fontSize: 12, lineHeight: 16 },
   metricLabel: { fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.8 },
   metricValue: {
     fontSize: 14,
