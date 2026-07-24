@@ -125,18 +125,22 @@ ready time. Use its rerun button to repeat the same workload without restarting
 the native app. Completed runs also emit `SURREALDB_STARTUP_TIMING=` JSON to the
 device log for collection on Android and iOS.
 
-The app also includes an opt-in adaptation of Oscar Franco's open-source
+The app and performance Harness also include an opt-in adaptation of Oscar
+Franco's open-source
 [`ospfranco/sqlite-bench`](https://github.com/ospfranco/sqlite-bench), pinned to
 revision `4c022c9a38294b66af2cd79fae64f0e91f25353b`. It preserves the upstream
 1,000 awaited async inserts, 1,000 transaction inserts, and 1,000 full-table
 selects of 1,000 rows with every selected property read, plus the 2,500 ms
-cooldown between workloads. This adaptation uses the in-memory SurrealDB engine,
-whereas the upstream libraries open named SQLite database files. SurrealDB's
+cooldown between workloads. The performance Harness runs both SurrealDB and the
+upstream benchmark's exact op-sqlite `17.1.1` dependency in the same native app
+on the same device. Both use in-memory databases for engine parity; this is the
+only intentional change to op-sqlite's comparable workloads from the upstream
+named-file configuration. It collects two samples in opposite library orders
+to balance first-run and thermal effects. SurrealDB's
 transaction leg sends the 1,000 statements in one transaction query because
 this package does not expose a JavaScript transaction handle. The synchronous
-insert and HostObject/
-HybridObject variants are excluded because the SurrealDB client API is
-asynchronous and eagerly decodes results.
+insert and HostObject select are retained as op-sqlite-only measurements because
+the SurrealDB client API is asynchronous and eagerly decodes results.
 
 Run that profile with:
 

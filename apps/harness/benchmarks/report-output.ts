@@ -10,10 +10,12 @@ const REPORT_RECEIVER_PORT = 18_082;
  * Emits a report in lines small enough for Android's native log buffer.
  * The host runner reconstructs the JSON from the numbered chunks.
  */
-export async function emitBenchmarkReport(report: {
-  measuredAt: string;
-  metrics: readonly unknown[];
-}) {
+export async function emitBenchmarkReport<
+  Report extends {
+    measuredAt: string;
+    metrics: readonly unknown[];
+  },
+>(report: Report) {
   const encoded = JSON.stringify(report);
   const runId = Date.parse(report.measuredAt);
   if (!Number.isSafeInteger(runId)) {
