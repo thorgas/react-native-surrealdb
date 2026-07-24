@@ -136,11 +136,13 @@ upstream benchmark's exact op-sqlite `17.1.1` dependency in the same native app
 on the same device. Both use in-memory databases for engine parity; this is the
 only intentional change to op-sqlite's comparable workloads from the upstream
 named-file configuration. It collects two samples in opposite library orders
-to balance first-run and thermal effects. SurrealDB's
-transaction leg sends the 1,000 statements in one transaction query because
-this package does not expose a JavaScript transaction handle. The synchronous
-insert and HostObject select are retained as op-sqlite-only measurements because
-the SurrealDB client API is asynchronous and eagerly decodes results.
+to balance first-run and thermal effects. Both transaction legs make 1,000
+awaited JavaScript calls through a transaction handle before committing once.
+For SurrealDB, those calls execute against one native SDK transaction ID; the
+workload no longer substitutes a single concatenated 1,000-statement query.
+The synchronous insert and HostObject select are retained as op-sqlite-only
+measurements because the SurrealDB client API is asynchronous and eagerly
+decodes results.
 
 Run that profile with:
 

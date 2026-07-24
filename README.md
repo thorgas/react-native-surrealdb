@@ -34,6 +34,8 @@ own workload.
 - Remote `ws://` and `wss://` connections
 - SurrealQL queries, variables, namespace/database selection, authentication,
   invalidation, and close
+- Callback and manually managed native transaction handles with commit,
+  cancellation, and automatic rollback when a callback throws
 - Cancellable live queries as pull-based async iterators
 - Multicast live-query subscriptions and an optional TanStack Query-style React
   hook
@@ -42,6 +44,7 @@ own workload.
 - React Native's New Architecture and Hermes on iOS and Android
 - Prebuilt native artifacts for supported release architectures
 - Device-side correctness, persistence, lifecycle, size, and performance testing
+- Paired SurrealDB/OP-SQLite workloads adapted from `sqlite-bench`
 
 The current package targets React Native 0.82 or newer, iOS 15.1 or newer, and
 Android API 24 or newer. It contains custom native code, so it requires a native

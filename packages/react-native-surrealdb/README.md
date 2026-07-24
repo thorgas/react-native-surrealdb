@@ -34,8 +34,44 @@ const [result] = await db.query("RETURN $person", {
   person: new SurrealRecordId("person:ada"),
 });
 
+await db.transaction(async (transaction) => {
+  await transaction.query("CREATE person:ada SET name = $name", {
+    name: "Ada",
+  });
+  await transaction.query("CREATE person:lin SET name = $name", {
+    name: "Lin",
+  });
+});
+
 await db.close();
 ```
+
+`transaction()` begins one native SurrealDB transaction, passes a JavaScript
+handle to the callback, and commits once the callback resolves. Each
+`transaction.query()` is executed immediately inside that transaction. If the
+callback throws, the transaction is cancelled and the original error is
+re-thrown. For manual lifecycle control, use `beginTransaction()`, then call
+`commit()` or `cancel()` on the returned handle.
+
+```ts
+const transaction = await db.beginTransaction();
+try {
+  await transaction.query("UPDATE account:one SET balance -= $amount", {
+    amount: 10,
+  });
+  await transaction.query("UPDATE account:two SET balance += $amount", {
+    amount: 10,
+  });
+  await transaction.commit();
+} catch (error) {
+  await transaction.cancel();
+  throw error;
+}
+```
+
+Transaction queries are sent individually and share the native transaction ID;
+they are not buffered into one concatenated SurrealQL request. Await operations
+in sequence, and do not reuse a handle after `commit()` or `cancel()`.
 
 The alpha supports embedded `memory` and experimental `surrealkv://...`
 endpoints, plus remote `ws://` and `wss://` endpoints. Remote connections can
@@ -104,6 +140,17 @@ Closing is idempotent and cancels the server-side live query. Automatic
 reconnection, re-subscription, and duplicate-event suppression are not yet
 implemented; applications using remote live queries must currently handle a
 dropped connection.
+
+Closing the database also closes its live queries and cancels its open
+transactions.
+
+## Cancellation and limitations
+
+Async operations accept `{ signal }` as their final options argument. The
+package requires Hermes and React Native's New Architecture and cannot run in
+Expo Go. Persistent SurrealKV support is experimental. Transaction callbacks
+must finish before the database is closed, and remote connection recovery is
+currently application-managed.
 
 ## Value transport
 
