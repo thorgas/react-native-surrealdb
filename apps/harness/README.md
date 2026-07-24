@@ -125,6 +125,39 @@ ready time. Use its rerun button to repeat the same workload without restarting
 the native app. Completed runs also emit `SURREALDB_STARTUP_TIMING=` JSON to the
 device log for collection on Android and iOS.
 
+The app also includes an opt-in adaptation of Oscar Franco's open-source
+[`ospfranco/sqlite-bench`](https://github.com/ospfranco/sqlite-bench), pinned to
+revision `4c022c9a38294b66af2cd79fae64f0e91f25353b`. It preserves the upstream
+1,000 awaited async inserts, 1,000 transaction inserts, and 1,000 full-table
+selects of 1,000 rows with every selected property read, plus the 2,500 ms
+cooldown between workloads. This adaptation uses the in-memory SurrealDB engine,
+whereas the upstream libraries open named SQLite database files. SurrealDB's
+transaction leg sends the 1,000 statements in one transaction query because
+this package does not expose a JavaScript transaction handle. The synchronous
+insert and HostObject/
+HybridObject variants are excluded because the SurrealDB client API is
+asynchronous and eagerly decodes results.
+
+Run that profile with:
+
+```sh
+pnpm --filter SurrealDbHarness run benchmark:android:sqlite
+pnpm --filter SurrealDbHarness run benchmark:ios:sqlite
+```
+
+The comparison card retains the values from the
+[result image supplied by the benchmark author](https://pbs.twimg.com/media/HLwBJGpWcAAV_Fl?format=jpg&name=4096x4096):
+
+| Library      | Async insert 1k | Transaction insert 1k | Select 1k × 1k |
+| ------------ | --------------: | --------------------: | -------------: |
+| op-sqlite    |      1,457.3 ms |              152.8 ms |       534.2 ms |
+| nitro-sqlite |      1,448.6 ms |              124.1 ms |     1,843.5 ms |
+| expo-sqlite  |      2,046.3 ms |              551.3 ms |     3,344.3 ms |
+
+The image does not state its device, OS, or build configuration. Those published
+numbers are therefore shown as external context, not treated as a directly
+comparable baseline or used by the regression gate.
+
 Reports and raw Harness logs are written below `performance-results/`. To gate
 a run, supply a report from the same device and exact configuration:
 

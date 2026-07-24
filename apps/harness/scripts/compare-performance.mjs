@@ -82,6 +82,8 @@ function assertCompatible(left, right) {
     'surrealDb',
     'profile',
     'records',
+    'iterations',
+    'cooldownMs',
     'samples',
     'warmups',
     'batchIterations',
@@ -91,6 +93,7 @@ function assertCompatible(left, right) {
     'buildType',
     'fullyMaterialized',
     'clients',
+    'syncApiAvailable',
   ];
   for (const field of fields) {
     if (

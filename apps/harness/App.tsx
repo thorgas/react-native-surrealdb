@@ -8,6 +8,7 @@ import {
 } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Platform,
   Pressable,
   ScrollView,
@@ -18,10 +19,7 @@ import {
   useColorScheme,
   View,
 } from 'react-native';
-import {
-  SafeAreaProvider,
-  SafeAreaView,
-} from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 
 import {
   CANONICAL_BENCHMARK_OPTIONS,
@@ -33,6 +31,15 @@ import {
   type MobileBenchmarkProgress,
   type MobileBenchmarkReport,
 } from './benchmarks/surreal-crud';
+import {
+  runSQLiteBenchBenchmark,
+  SQLITE_BENCH_COOLDOWN_MS,
+  SQLITE_BENCH_ITERATIONS,
+  SQLITE_BENCH_PUBLISHED_RESULTS,
+  SQLITE_BENCH_SOURCE,
+  type SQLiteBenchProgress,
+  type SQLiteBenchReport,
+} from './benchmarks/sqlite-bench';
 import {
   runStartupLoadBenchmark,
   STARTUP_LOAD_RECORD_COUNT,
@@ -82,23 +89,31 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
   const [running, setRunning] = useState(false);
   const controller = useRef<AbortController | undefined>(undefined);
   const startupController = useRef<AbortController | undefined>(undefined);
-  const [startupProgress, setStartupProgress] =
-    useState<StartupLoadProgress>();
+  const sqliteBenchController = useRef<AbortController | undefined>(undefined);
+  const [startupProgress, setStartupProgress] = useState<StartupLoadProgress>();
   const [startupReport, setStartupReport] = useState<StartupLoadReport>();
-  const [startupEntries, setStartupEntries] = useState<StartupRenderEntry[]>([]);
+  const [startupEntries, setStartupEntries] = useState<StartupRenderEntry[]>(
+    [],
+  );
   const [startupRenderTiming, setStartupRenderTiming] =
     useState<StartupRenderTiming>();
   const [startupError, setStartupError] = useState<string>();
   const [startupRunning, setStartupRunning] = useState(false);
-  const renderRequestedAt = useRef<number>();
-  const reactRenderMs = useRef<number>();
-  const renderToLayoutMs = useRef<number>();
+  const [sqliteBenchProgress, setSQLiteBenchProgress] =
+    useState<SQLiteBenchProgress>();
+  const [sqliteBenchReport, setSQLiteBenchReport] =
+    useState<SQLiteBenchReport>();
+  const [sqliteBenchError, setSQLiteBenchError] = useState<string>();
+  const [sqliteBenchRunning, setSQLiteBenchRunning] = useState(false);
+  const renderRequestedAt = useRef<number | undefined>(undefined);
+  const reactRenderMs = useRef<number | undefined>(undefined);
+  const renderToLayoutMs = useRef<number | undefined>(undefined);
   const colors = isDark ? darkColors : lightColors;
 
   const finishRenderTiming = useCallback(
-    (report: StartupLoadReport | undefined) => {
+    (startupLoadReport: StartupLoadReport | undefined) => {
       if (
-        !report ||
+        !startupLoadReport ||
         reactRenderMs.current === undefined ||
         renderToLayoutMs.current === undefined
       ) {
@@ -112,12 +127,12 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
       console.warn(
         `SURREALDB_STARTUP_TIMING=${JSON.stringify({
           platform: Platform.OS,
-          records: report.rowsLoaded,
-          fetchMs: report.timingsMs.queryAndDecode,
+          records: startupLoadReport.rowsLoaded,
+          fetchMs: startupLoadReport.timingsMs.queryAndDecode,
           reactRenderMs: timing.reactRenderMs,
           renderToLayoutMs: timing.renderToLayoutMs,
-          seedMs: report.timingsMs.seed,
-          readyBeforeRenderMs: report.timingsMs.ready,
+          seedMs: startupLoadReport.timingsMs.seed,
+          readyBeforeRenderMs: startupLoadReport.timingsMs.ready,
         })}`,
       );
     },
@@ -193,9 +208,61 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
     finishRenderTiming(startupReport);
   }, [finishRenderTiming, startupEntries.length, startupReport]);
 
+  const runSQLiteBench = useCallback(async () => {
+    const abortController = new AbortController();
+    sqliteBenchController.current?.abort();
+    sqliteBenchController.current = abortController;
+    setSQLiteBenchRunning(true);
+    setSQLiteBenchError(undefined);
+    setSQLiteBenchReport(undefined);
+    setStartupEntries([]);
+    setSQLiteBenchProgress({
+      completed: 0,
+      total: 3,
+      metric: 'database setup',
+      stage: 'setup',
+    });
+
+    try {
+      const result = await runSQLiteBenchBenchmark({
+        platform: Platform.OS === 'ios' ? 'ios' : 'android',
+        device:
+          Platform.OS === 'android'
+            ? Platform.constants.Model
+            : 'iPhone simulator',
+        os: String(Platform.Version),
+        reactNative: '0.86.0',
+        surrealDb: '3.2.1',
+        signal: abortController.signal,
+        onProgress: setSQLiteBenchProgress,
+      });
+      if (!abortController.signal.aborted) {
+        setSQLiteBenchReport(result);
+        console.warn(`SURREALDB_SQLITE_BENCH_TIMING=${JSON.stringify(result)}`);
+      }
+    } catch (cause) {
+      if (!abortController.signal.aborted) {
+        setSQLiteBenchError(
+          cause instanceof Error ? cause.message : String(cause),
+        );
+      }
+    } finally {
+      if (
+        sqliteBenchController.current === abortController &&
+        !abortController.signal.aborted
+      ) {
+        sqliteBenchController.current = undefined;
+        setSQLiteBenchRunning(false);
+      }
+    }
+  }, []);
+
   useEffect(() => {
-    void runStartup();
-    return () => startupController.current?.abort();
+    runStartup().catch(() => undefined);
+    return () => {
+      startupController.current?.abort();
+      sqliteBenchController.current?.abort();
+    };
   }, [runStartup]);
 
   const percent = useMemo(() => {
@@ -306,6 +373,15 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
             </View>
           </Profiler>
         ) : null}
+
+        <SQLiteBenchCard
+          colors={colors}
+          error={sqliteBenchError}
+          onRun={runSQLiteBench}
+          progress={sqliteBenchProgress}
+          report={sqliteBenchReport}
+          running={sqliteBenchRunning}
+        />
 
         <View style={styles.profileGrid}>
           {(Object.keys(PROFILES) as MobileBenchmarkProfile[]).map(key => {
@@ -435,6 +511,135 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
         </View>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function SQLiteBenchCard({
+  colors,
+  error,
+  onRun,
+  progress,
+  report,
+  running,
+}: {
+  colors: typeof lightColors;
+  error?: string;
+  onRun: () => void;
+  progress?: SQLiteBenchProgress;
+  report?: SQLiteBenchReport;
+  running: boolean;
+}) {
+  const percent = progress ? (progress.completed / progress.total) * 100 : 0;
+
+  return (
+    <View
+      style={[
+        styles.panel,
+        { backgroundColor: colors.card, borderColor: colors.border },
+      ]}
+    >
+      <View style={styles.panelRow}>
+        <View style={styles.panelCopy}>
+          <Text style={[styles.panelTitle, { color: colors.text }]}>
+            SQLite benchmark adaptation
+          </Text>
+          <Text style={[styles.panelDetail, { color: colors.muted }]}>
+            In-memory SurrealDB · {SQLITE_BENCH_ITERATIONS.toLocaleString()}{' '}
+            async inserts, transaction inserts, and full-table selects ·{' '}
+            {SQLITE_BENCH_COOLDOWN_MS.toLocaleString()} ms cooldown
+          </Text>
+          <Text
+            accessibilityRole="link"
+            onPress={() => {
+              Linking.openURL(SQLITE_BENCH_SOURCE.url).catch(() => undefined);
+            }}
+            style={[styles.sourceLink, { color: colors.accent }]}
+          >
+            Adapted from ospfranco/sqlite-bench @{' '}
+            {SQLITE_BENCH_SOURCE.revision.slice(0, 7)}
+          </Text>
+        </View>
+        {running ? <ActivityIndicator color={colors.accent} /> : null}
+      </View>
+
+      {progress ? (
+        <Text style={[styles.progressText, { color: colors.muted }]}>
+          {error ??
+            (progress.stage === 'complete'
+              ? 'Complete'
+              : `${progress.metric} · ${progress.completed} / ${progress.total}`)}
+        </Text>
+      ) : null}
+
+      {running ? (
+        <View style={[styles.track, { backgroundColor: colors.track }]}>
+          <View
+            style={[
+              styles.fill,
+              { backgroundColor: colors.accent, width: `${percent}%` },
+            ]}
+          />
+        </View>
+      ) : null}
+
+      {report ? (
+        <>
+          <Text style={[styles.comparisonTitle, { color: colors.text }]}>
+            SurrealDB on this device
+          </Text>
+          <View style={styles.startupMetrics}>
+            {report.metrics.map(metric => (
+              <MetricNumber
+                color={colors.text}
+                key={metric.name}
+                label={metric.upstreamCase}
+                muted={colors.muted}
+                value={`${metric.summary.medianMs.toFixed(1)} ms`}
+              />
+            ))}
+          </View>
+
+          <Text style={[styles.comparisonTitle, { color: colors.text }]}>
+            Comparable published SQLite rows
+          </Text>
+          <Text style={[styles.referenceNote, { color: colors.muted }]}>
+            Different, unspecified environment — context only, not a regression
+            baseline.
+          </Text>
+          {SQLITE_BENCH_PUBLISHED_RESULTS.libraries.map(library => (
+            <Text
+              key={library.name}
+              style={[styles.referenceRow, { color: colors.muted }]}
+            >
+              <Text style={[styles.referenceLibrary, { color: colors.text }]}>
+                {library.name}
+              </Text>
+              {' · '}async {library.asyncInsertMs.toFixed(1)} ms · tx{' '}
+              {library.transactionInsertMs.toFixed(1)} ms · select{' '}
+              {library.selectAndReadMs.toFixed(1)} ms
+            </Text>
+          ))}
+        </>
+      ) : null}
+
+      {!running ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={onRun}
+          style={({ pressed }) => [
+            styles.secondaryButton,
+            {
+              borderColor: colors.accent,
+              backgroundColor: pressed ? colors.selected : 'transparent',
+            },
+          ]}
+        >
+          <Text style={[styles.shareText, { color: colors.accent }]}>
+            {report ? 'Run SQLite adaptation again' : 'Run SQLite adaptation'}
+          </Text>
+        </Pressable>
+      ) : null}
+    </View>
   );
 }
 
@@ -790,6 +995,11 @@ const styles = StyleSheet.create({
   note: { borderTopWidth: 1, paddingTop: 16, gap: 5 },
   noteTitle: { fontSize: 14, fontWeight: '700' },
   noteBody: { fontSize: 12, lineHeight: 18 },
+  sourceLink: { fontSize: 12, fontWeight: '700', marginTop: 4 },
+  comparisonTitle: { fontSize: 13, fontWeight: '800', marginTop: 2 },
+  referenceNote: { fontSize: 11, lineHeight: 16 },
+  referenceLibrary: { fontWeight: '700' },
+  referenceRow: { fontSize: 11, lineHeight: 18, fontVariant: ['tabular-nums'] },
 });
 
 export default App;

@@ -23,11 +23,14 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 if [[ "$PLATFORM" != "android" && "$PLATFORM" != "ios" ]]; then
-  echo "Usage: $0 <android|ios> <smoke|canonical|upstream>" >&2
+  echo "Usage: $0 <android|ios> <smoke|canonical|upstream|sqlite>" >&2
   exit 2
 fi
-if [[ "$PROFILE" != "smoke" && "$PROFILE" != "canonical" && "$PROFILE" != "upstream" ]]; then
-  echo "Usage: $0 <android|ios> <smoke|canonical|upstream>" >&2
+if [[ "$PROFILE" != "smoke" &&
+  "$PROFILE" != "canonical" &&
+  "$PROFILE" != "upstream" &&
+  "$PROFILE" != "sqlite" ]]; then
+  echo "Usage: $0 <android|ios> <smoke|canonical|upstream|sqlite>" >&2
   exit 2
 fi
 mkdir -p "$RESULTS_DIR"
@@ -72,7 +75,10 @@ else
   DEVICE_LOG_PID=$!
 fi
 
-if [[ "$PROFILE" == "upstream" ]]; then
+if [[ "$PROFILE" == "sqlite" ]]; then
+  TEST_PATH="__benchmarks__/sqlite-bench.performance.harness.ts"
+  TEST_TIMEOUT=600000
+elif [[ "$PROFILE" == "upstream" ]]; then
   TEST_PATH="__benchmarks__/surreal-crud.upstream.performance.harness.ts"
   TEST_TIMEOUT=600000
 elif [[ "$PROFILE" == "canonical" ]]; then
