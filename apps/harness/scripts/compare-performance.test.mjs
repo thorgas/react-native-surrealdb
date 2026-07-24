@@ -4,8 +4,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
-const script = new URL('compare-performance.mjs', import.meta.url);
+const script = fileURLToPath(
+  new URL('compare-performance.mjs', import.meta.url),
+);
 
 test('accepts compatible results inside both regression thresholds', async () => {
   const result = await compare(report(1), report(1.05));
@@ -38,6 +41,19 @@ test('rejects missing candidate metrics', async () => {
   assert.match(result.stderr, /metric names differ/);
 });
 
+test('rejects sqlite-bench results with different cooldowns', async () => {
+  const baseline = report(1);
+  const candidate = report(1);
+  baseline.configuration.cooldownMs = 2_500;
+  candidate.configuration.cooldownMs = 0;
+  const result = await compare(baseline, candidate);
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /Incompatible benchmark configuration for cooldownMs/,
+  );
+});
+
 async function compare(baseline, candidate) {
   const directory = await mkdtemp(join(tmpdir(), 'surreal-benchmark-'));
   const baselinePath = join(directory, 'baseline.json');
@@ -46,11 +62,7 @@ async function compare(baseline, candidate) {
   await writeFile(candidatePath, JSON.stringify(candidate));
   return spawnSync(
     process.execPath,
-    [
-      script.pathname,
-      `--baseline=${baselinePath}`,
-      `--candidate=${candidatePath}`,
-    ],
+    [script, `--baseline=${baselinePath}`, `--candidate=${candidatePath}`],
     { encoding: 'utf8' },
   );
 }
