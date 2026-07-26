@@ -6,7 +6,8 @@ on:
     paths:
       - "crates/surrealdb-rn-core/**"
       - "packages/react-native-surrealdb/**"
-      - "apps/harness/**"
+      - "apps/harness-rn86/**"
+      - "apps/harness-shared/**"
       - ".github/workflows/native-size.yml"
 
 concurrency:
@@ -33,9 +34,9 @@ jobs:
       - run: cargo install cargo-ndk --version 4.1.2 --locked
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter react-native-surrealdb run ubrn:android:size
-      - run: pnpm --filter SurrealDbHarness run size:android:benchmark
+      - run: pnpm --filter surrealdb-harness-rn86 run size:android:benchmark
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: android-size-report
-          path: apps/harness/size-results/android
+          path: apps/harness-rn86/size-results/android

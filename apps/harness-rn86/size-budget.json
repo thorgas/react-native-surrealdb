@@ -1,0 +1,18 @@
+{
+  "android": {
+    "baselineBytes": 19488849,
+    "baselineDescription": "RNTA 5.4.5, React Native 0.86.0, Hermes, New Architecture, arm64-v8a Release APK",
+    "baselineMeasuredAt": "2026-07-12",
+    "baselineMeasuredOn": "macOS with Xcode 26.1.1 and Android NDK 27.1.12297006",
+    "baselineCommand": "pnpm --filter surrealdb-harness-rn86 run size:android:baseline",
+    "baselineSource": "apps/harness-rn86 with react-native-surrealdb Android autolinking disabled by SURREALDB_SIZE_BASELINE=1",
+    "comparisonCommand": "pnpm --filter surrealdb-harness-rn86 run size:android:benchmark",
+    "maxDeltaBytes": 29360128,
+    "maxSurrealNativeBytes": 29360128,
+    "optimizedCandidateBytes": 44979008,
+    "optimizedDeltaBytes": 25490159,
+    "optimizedSurrealNativeBytes": 25455176,
+    "optimizedMeasuredAt": "2026-07-13",
+    "optimizedSource": "RNTA 5.4.5 arm64-v8a Release APK after Rust fat LTO with opt-level z and Android cdylib packaging"
+  }
+}

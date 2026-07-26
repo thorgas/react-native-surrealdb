@@ -20,13 +20,14 @@ Run the paired measurement with:
 
 ```sh
 pnpm --filter react-native-surrealdb run ubrn:android:size
-pnpm --filter SurrealDbHarness run size:android:benchmark
+pnpm --filter surrealdb-harness-rn86 run size:android:benchmark
 ```
 
 The report records the stock baseline, exact native libraries, optimized
 reference, commands, dates, and hard budgets in
-`apps/harness/size-results/android/report.json`. Generated results are ignored;
-the reference metadata remains in `apps/harness/size-budget.json`.
+`apps/harness-rn86/size-results/android/report.json`. Generated results are
+ignored; the reference metadata remains in
+`apps/harness-rn86/size-budget.json`.
 
 ## Changes retained
 

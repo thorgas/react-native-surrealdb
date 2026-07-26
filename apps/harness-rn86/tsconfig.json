@@ -1,0 +1,22 @@
+{
+  "extends": "@react-native/typescript-config",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react-native": ["./node_modules/react-native"],
+      "react-native-harness": ["./node_modules/react-native-harness"],
+      "react-native-surrealdb": ["./node_modules/react-native-surrealdb"],
+      "react-native-safe-area-context": [
+        "./node_modules/react-native-safe-area-context"
+      ]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "../harness-shared/**/*.ts",
+    "../harness-shared/**/*.tsx"
+  ],
+  "exclude": ["**/node_modules", "**/Pods"]
+}

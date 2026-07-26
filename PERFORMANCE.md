@@ -309,8 +309,9 @@ The first performance milestone should produce a reproducible `kv-mem` baseline 
 
 ## Implemented mobile benchmark profile
 
-The executable runner lives in `apps/harness/benchmarks/` and is used by both
-the opt-in Harness suites in `apps/harness/__benchmarks__/` and the manual RNTA
+The executable runner lives in `apps/harness-shared/benchmarks/` and is used by
+both the opt-in Harness suites in `apps/harness-shared/__benchmarks__/` and the
+manual RNTA
 benchmark screen. It maps the full default `config/bench.toml` workload at
 crud-bench revision `18eb1fc8d8edcfd3d6ba8328149789ffa7866659`: single and
 batch CRUD, every default heap/indexed scan and mixed-write ratio, index

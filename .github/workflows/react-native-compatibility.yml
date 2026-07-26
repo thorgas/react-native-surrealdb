@@ -1,0 +1,205 @@
+name: React Native compatibility
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "crates/surrealdb-rn-core/**"
+      - "packages/react-native-surrealdb/**"
+      - "apps/harness-rn*/**"
+      - "apps/harness-shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/react-native-compatibility.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "rust-toolchain.toml"
+      - "crates/surrealdb-rn-core/**"
+      - "packages/react-native-surrealdb/**"
+      - "apps/harness-rn*/**"
+      - "apps/harness-shared/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/react-native-compatibility.yml"
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: react-native-compatibility-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PNPM_VERSION: 11.5.0
+  NODE_VERSION: 22
+  RUST_VERSION: 1.96.1
+
+jobs:
+  android-native:
+    name: Android native library
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "ndk;27.1.12297006"
+      - run: cargo install cargo-ndk --version 4.1.2 --locked
+      - run: pnpm install --frozen-lockfile
+      - id: native-cache
+        uses: actions/cache@v4
+        with:
+          path: packages/react-native-surrealdb/android/src/main/jniLibs
+          key: surrealdb-android-all-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', 'crates/surrealdb-rn-core/**', 'packages/react-native-surrealdb/ubrn.config.yaml') }}
+      - if: steps.native-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter react-native-surrealdb run ubrn:android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surrealdb-android-all
+          path: packages/react-native-surrealdb/android/src/main/jniLibs
+          retention-days: 1
+
+  ios-native:
+    name: iOS native framework
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+      - run: pnpm install --frozen-lockfile
+      - id: native-cache
+        uses: actions/cache@v4
+        with:
+          path: packages/react-native-surrealdb/SurrealDbRnFramework.xcframework
+          key: surrealdb-ios-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', 'crates/surrealdb-rn-core/**', 'packages/react-native-surrealdb/ubrn.config.yaml') }}
+      - if: steps.native-cache.outputs.cache-hit != 'true'
+        run: pnpm --filter react-native-surrealdb run ubrn:ios
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surrealdb-ios-xcframework
+          path: packages/react-native-surrealdb/SurrealDbRnFramework.xcframework
+          retention-days: 1
+
+  android:
+    name: Android / ${{ matrix.react-native }}
+    needs: android-native
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: harness-rn82
+            react-native: "0.82.1"
+          - host: harness-rn83
+            react-native: "0.83.10"
+          - host: harness-rn84
+            react-native: "0.84.1"
+          - host: harness-rn85
+            react-native: "0.85.3"
+          - host: harness-rn86
+            react-native: "0.86.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: surrealdb-android-all
+          path: packages/react-native-surrealdb/android/src/main/jniLibs
+      - uses: callstackincubator/android@599c4a7f0f78cbb1b3fdcd3aea220ee9fbb7e973
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: apps/${{ matrix.host }}
+          variant: debug
+          comment-bot: false
+
+  ios:
+    name: iOS / ${{ matrix.react-native }}
+    needs: ios-native
+    runs-on: macos-latest
+    timeout-minutes: 60
+    env:
+      BUNDLE_GEMFILE: ${{ github.workspace }}/apps/harness-rn86/Gemfile
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - host: harness-rn82
+            react-native: "0.82.1"
+          - host: harness-rn83
+            react-native: "0.83.10"
+          - host: harness-rn84
+            react-native: "0.84.1"
+          - host: harness-rn85
+            react-native: "0.85.3"
+          - host: harness-rn86
+            react-native: "0.86.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: surrealdb-ios-xcframework
+          path: packages/react-native-surrealdb/SurrealDbRnFramework.xcframework
+      - name: Create RNTA bundle resources
+        run: pnpm --filter surrealdb-${{ matrix.host }} run build:ios
+      - name: Install iOS dependencies
+        working-directory: apps/${{ matrix.host }}/ios
+        run: |
+          bundle exec pod install
+      - uses: callstackincubator/ios@623ebea314454cbe2b405dad5d1c6c42a9a89109
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: apps/${{ matrix.host }}
+          destination: simulator
+          scheme: ReactTestApp
+          configuration: Debug
+          comment-bot: false
