@@ -11,6 +11,7 @@
     "build": "pnpm --recursive --if-present run build",
     "format": "pnpm --recursive --if-present run format && cargo fmt --all --check",
     "lint": "pnpm --recursive --if-present run lint",
-    "test": "pnpm --recursive --if-present run test"
+    "test": "pnpm --recursive --if-present run test",
+    "typecheck:react-native-matrix": "pnpm --filter \"./apps/harness-rn*\" --workspace-concurrency=1 run typecheck"
   }
 }
