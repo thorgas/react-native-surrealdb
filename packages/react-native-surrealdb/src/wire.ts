@@ -72,6 +72,7 @@ export type SurrealValue =
   | { [key: string]: SurrealValue };
 
 export type QueryVariables = Record<string, unknown>;
+export type SurrealDecodeMode = "copy" | "in-place";
 
 type Tagged = {
   [TAG]: string;
@@ -87,8 +88,12 @@ export function encodeQueryVariables(variables: QueryVariables): string {
   return JSON.stringify(encodeValue(variables, new WeakSet<object>()));
 }
 
-export function decodeSurrealValue(json: string): SurrealValue {
-  return decodeValue(JSON.parse(json) as unknown);
+export function decodeSurrealValue(
+  json: string,
+  mode: SurrealDecodeMode = "in-place",
+): SurrealValue {
+  const parsed = JSON.parse(json) as unknown;
+  return mode === "copy" ? decodeValueCopy(parsed) : decodeValueInPlace(parsed);
 }
 
 function encodeValue(value: unknown, ancestors: WeakSet<object>): unknown {
@@ -160,7 +165,7 @@ function encodeContainer<T>(
   }
 }
 
-function decodeValue(value: unknown): SurrealValue {
+function decodeValueCopy(value: unknown): SurrealValue {
   if (
     value === null ||
     typeof value === "string" ||
@@ -169,18 +174,47 @@ function decodeValue(value: unknown): SurrealValue {
   ) {
     return value;
   }
-  if (Array.isArray(value)) return value.map(decodeValue);
+  if (Array.isArray(value)) return value.map(decodeValueCopy);
   if (!isPlainObject(value))
     throw new TypeError("invalid SurrealDB wire value");
 
-  if (TAG in value) return decodeTagged(value as Tagged);
+  if (TAG in value) return decodeTagged(value as Tagged, decodeValueCopy);
 
   return Object.fromEntries(
-    Object.entries(value).map(([key, item]) => [key, decodeValue(item)]),
+    Object.entries(value).map(([key, item]) => [key, decodeValueCopy(item)]),
   );
 }
 
-function decodeTagged(value: Tagged): SurrealValue {
+function decodeValueInPlace(value: unknown): SurrealValue {
+  if (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    typeof value === "number"
+  ) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    for (let index = 0; index < value.length; index += 1) {
+      value[index] = decodeValueInPlace(value[index]);
+    }
+    return value as SurrealValue[];
+  }
+  if (!isPlainObject(value))
+    throw new TypeError("invalid SurrealDB wire value");
+
+  if (TAG in value) return decodeTagged(value as Tagged, decodeValueInPlace);
+
+  for (const key of Object.keys(value)) {
+    value[key] = decodeValueInPlace(value[key]);
+  }
+  return value as { [key: string]: SurrealValue };
+}
+
+function decodeTagged(
+  value: Tagged,
+  decodeNested: (value: unknown) => SurrealValue,
+): SurrealValue {
   switch (value[TAG]) {
     case "none":
       return NONE;
@@ -202,7 +236,7 @@ function decodeTagged(value: Tagged): SurrealValue {
     case "set":
       if (!Array.isArray(value.values))
         throw new TypeError("tagged set requires values");
-      return new Set(value.values.map(decodeValue));
+      return new Set(value.values.map(decodeNested));
     case "datetime":
     case "duration":
     case "file":

@@ -234,6 +234,12 @@ interface NativeModuleInterface {
     surql: Uint8Array,
     variablesJson: Uint8Array,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query_profiled_with_encoding(
+    uniffiSelf: bigint,
+    surql: Uint8Array,
+    variablesJson: Uint8Array,
+    outputEncoding: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_sign_in_database(
     uniffiSelf: bigint,
     namespace: Uint8Array,
@@ -257,6 +263,11 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_commit(
     uniffiSelf: bigint,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_execute_batch(
+    uniffiSelf: bigint,
+    surql: Uint8Array,
+    variablesJson: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_is_closed(
     uniffiSelf: bigint,
     uniffi_out_err: UniffiRustCallStatus,
@@ -266,10 +277,20 @@ interface NativeModuleInterface {
     surql: Uint8Array,
     variablesJson: Uint8Array,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query_batch(
+    uniffiSelf: bigint,
+    queries: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query_profiled(
     uniffiSelf: bigint,
     surql: Uint8Array,
     variablesJson: Uint8Array,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query_profiled_with_encoding(
+    uniffiSelf: bigint,
+    surql: Uint8Array,
+    variablesJson: Uint8Array,
+    outputEncoding: Uint8Array,
   ): bigint;
   ubrn_ffi_surrealdb_rn_core_uniffi_contract_version(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop(): number;
@@ -285,14 +306,18 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_live_query(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query_profiled(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query_profiled_with_encoding(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_database(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_root(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_use_namespace_database(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_cancel(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_commit(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_execute_batch(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_is_closed(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_batch(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled_with_encoding(): number;
   ubrn_uniffi_internal_fn_method_livequery_ffi__bless_pointer(
     pointer: bigint,
     uniffi_out_err: UniffiRustCallStatus,

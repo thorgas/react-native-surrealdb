@@ -2,6 +2,7 @@ import { describe, expect, test } from 'react-native-harness';
 import { Platform } from 'react-native';
 
 import { emitBenchmarkReport } from '../benchmarks/report-output';
+import { runGlueOptimizationBenchmark } from '../benchmarks/glue-optimization';
 import {
   OP_SQLITE_VERSION,
   runOpSQLiteBenchBenchmark,
@@ -52,9 +53,8 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
       ...environment,
       surrealDb: '3.2.1',
     });
-    const firstOrderOpSQLiteReport = await runOpSQLiteBenchBenchmark(
-      environment,
-    );
+    const firstOrderOpSQLiteReport =
+      await runOpSQLiteBenchBenchmark(environment);
     firstOrderContext = {
       firstOrderSurrealReport,
       firstOrderOpSQLiteReport,
@@ -67,9 +67,8 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
     }
     const { firstOrderSurrealReport, firstOrderOpSQLiteReport } =
       firstOrderContext;
-    const secondOrderOpSQLiteReport = await runOpSQLiteBenchBenchmark(
-      environment,
-    );
+    const secondOrderOpSQLiteReport =
+      await runOpSQLiteBenchBenchmark(environment);
     const secondOrderSurrealReport = await runSQLiteBenchBenchmark({
       ...environment,
       surrealDb: '3.2.1',
@@ -202,6 +201,7 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
       surrealMetrics,
       opSQLiteMetrics,
     );
+    const glueOptimizations = await runGlueOptimizationBenchmark();
 
     await emitBenchmarkReport({
       schemaVersion: 4,
@@ -246,6 +246,7 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
           requireBatchSweep(secondAttributionReport),
         ],
       },
+      glueOptimizations,
       comparisons,
       metrics: [...surrealMetrics, ...opSQLiteMetrics],
     });
@@ -312,8 +313,8 @@ function medianAttribution(
     engineMs > packagePathMs
       ? 'engine-sdk'
       : packagePathMs > engineMs
-      ? 'package-path'
-      : 'tie';
+        ? 'package-path'
+        : 'tie';
   return {
     engineMs,
     packagePathMs,
