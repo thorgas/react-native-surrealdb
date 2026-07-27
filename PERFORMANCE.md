@@ -377,6 +377,23 @@ batch-size sweep so per-call overhead can be distinguished from engine scaling.
 Those diagnostics run separately after the two opposite-order comparison
 samples; their clocks and larger native return values are never included in the
 SurrealDB/op-sqlite factor calculations.
+The report additionally contains controlled glue-optimization diagnostics:
+
+- a repeated-template batch comparison where both libraries receive one query
+  template, 1,000 parameter sets, one asynchronous batch payload, a complete
+  transaction lifecycle, opposite execution orders, and checksum-equivalent
+  materialized rows;
+- a factorial codec comparison over the same 100 fully materialized
+  1,000-row reads: legacy tree serializer plus copying decoder, decoder-only,
+  serializer-only, and both optimizations combined;
+- per-variant native encoding and JavaScript decoding totals, so each
+  optimization is evaluated independently before considering a custom JSI
+  result bridge.
+
+The batch diagnostic does not replace the original 1,000-call comparison.
+They answer different questions: the original preserves per-operation API
+semantics, while the batch diagnostic compares equivalent public bulk
+operations.
 Each comparison retains both median durations and the unrounded slower/faster
 ratio; lower median duration is faster. Synchronous insertion and HostObject
 selection remain op-sqlite-only workloads, are labelled as such, and are

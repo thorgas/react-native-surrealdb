@@ -1,11 +1,13 @@
 import {
   LiveAction as NativeLiveAction,
+  NativeOutputEncoding,
   SurrealRnError,
   SurrealRnError_Tags,
   benchmarkBoundaryNoop as nativeBenchmarkBoundaryNoop,
   connect as nativeConnect,
   type ConnectOptions,
   type LiveQueryLike,
+  type NativeBatchQuery,
   type NativeProfiledQueryResult,
   type SurrealDatabaseLike,
   type SurrealTransactionLike as NativeSurrealTransactionLike,
@@ -14,6 +16,7 @@ import {
   decodeSurrealValue,
   encodeQueryVariables,
   type QueryVariables,
+  type SurrealDecodeMode,
   type SurrealValue,
 } from "./wire";
 
@@ -21,10 +24,25 @@ export { SurrealRnError, SurrealRnError_Tags };
 export type { ConnectOptions };
 
 export type CallOptions = { signal: AbortSignal };
+export type QueryProfileOptions = {
+  signal?: AbortSignal;
+  decodeMode?: SurrealDecodeMode;
+  nativeOutputEncoding?: "tree" | "streaming";
+};
 
 export type QueryStatement<T = SurrealValue> = {
   statementIndex: number;
   value: T;
+};
+
+export type BatchQuery = {
+  surql: string;
+  variables?: QueryVariables;
+};
+
+export type BatchQueryResult<T = SurrealValue> = {
+  queryIndex: number;
+  results: Array<QueryStatement<T>>;
 };
 
 export type QueryProfile = {
@@ -119,24 +137,70 @@ export class SurrealTransaction {
     return decodeQueryResults<T>(results);
   }
 
+  /**
+   * Execute multiple parameterized queries inside this transaction using one
+   * asynchronous native call. Query order and per-query statement results are
+   * preserved.
+   */
+  async queryBatch<T = SurrealValue>(
+    queries: readonly BatchQuery[],
+  ): Promise<Array<BatchQueryResult<T>>> {
+    const nativeQueries: NativeBatchQuery[] = queries.map(
+      ({ surql, variables }) => ({
+        surql,
+        variablesJson:
+          variables === undefined ? undefined : encodeQueryVariables(variables),
+      }),
+    );
+    const batchResults = await this.#native.queryBatch(
+      nativeQueries,
+      this.#options,
+    );
+    return batchResults.map(({ queryIndex, results }) => ({
+      queryIndex,
+      results: decodeQueryResults<T>(results),
+    }));
+  }
+
+  /**
+   * Execute one parameterized query for every variables object using one
+   * asynchronous native call. Intended for `RETURN NONE` bulk writes.
+   */
+  executeBatch(
+    surql: string,
+    variables: readonly QueryVariables[],
+  ): Promise<number> {
+    return this.#native.executeBatch(
+      surql,
+      variables.map(encodeQueryVariables),
+      this.#options,
+    );
+  }
+
   /** Execute a query with benchmark attribution; do not use for production telemetry. */
   async queryProfiled<T = SurrealValue>(
     surql: string,
     variables?: QueryVariables,
-    options?: CallOptions,
+    options?: QueryProfileOptions,
   ): Promise<ProfiledQuery<T>> {
     const inputStarted = performance.now();
     const encodedVariables =
       variables === undefined ? undefined : encodeQueryVariables(variables);
     const inputEncodeMs = performance.now() - inputStarted;
     const nativeStarted = performance.now();
-    const profiled = await this.#native.queryProfiled(
+    const profiled = await this.#native.queryProfiledWithEncoding(
       surql,
       encodedVariables,
-      options ?? this.#options,
+      nativeOutputEncoding(options?.nativeOutputEncoding),
+      options?.signal ? { signal: options.signal } : this.#options,
     );
     const nativeCallMs = performance.now() - nativeStarted;
-    return decodeProfiledQuery<T>(profiled, inputEncodeMs, nativeCallMs);
+    return decodeProfiledQuery<T>(
+      profiled,
+      inputEncodeMs,
+      nativeCallMs,
+      options?.decodeMode,
+    );
   }
 
   commit(options?: CallOptions) {
@@ -183,20 +247,26 @@ export class SurrealClient {
   async queryProfiled<T = SurrealValue>(
     surql: string,
     variables?: QueryVariables,
-    options?: CallOptions,
+    options?: QueryProfileOptions,
   ): Promise<ProfiledQuery<T>> {
     const inputStarted = performance.now();
     const encodedVariables =
       variables === undefined ? undefined : encodeQueryVariables(variables);
     const inputEncodeMs = performance.now() - inputStarted;
     const nativeStarted = performance.now();
-    const profiled = await this.#native.queryProfiled(
+    const profiled = await this.#native.queryProfiledWithEncoding(
       surql,
       encodedVariables,
-      options,
+      nativeOutputEncoding(options?.nativeOutputEncoding),
+      options?.signal ? { signal: options.signal } : undefined,
     );
     const nativeCallMs = performance.now() - nativeStarted;
-    return decodeProfiledQuery<T>(profiled, inputEncodeMs, nativeCallMs);
+    return decodeProfiledQuery<T>(
+      profiled,
+      inputEncodeMs,
+      nativeCallMs,
+      options?.decodeMode,
+    );
   }
 
   /** Begin a manually managed transaction that must be committed or cancelled. */
@@ -288,10 +358,11 @@ export class SurrealClient {
 
 function decodeQueryResults<T>(
   results: ReadonlyArray<{ statementIndex: number; valueJson: string }>,
+  decodeMode: SurrealDecodeMode = "in-place",
 ): Array<QueryStatement<T>> {
   return results.map(({ statementIndex, valueJson }) => ({
     statementIndex,
-    value: decodeSurrealValue(valueJson) as T,
+    value: decodeSurrealValue(valueJson, decodeMode) as T,
   }));
 }
 
@@ -299,9 +370,10 @@ function decodeProfiledQuery<T>(
   profiled: NativeProfiledQueryResult,
   inputEncodeMs: number,
   nativeCallMs: number,
+  decodeMode: SurrealDecodeMode = "in-place",
 ): ProfiledQuery<T> {
   const outputStarted = performance.now();
-  const results = decodeQueryResults<T>(profiled.results);
+  const results = decodeQueryResults<T>(profiled.results, decodeMode);
   const outputDecodeMs = performance.now() - outputStarted;
   const nativeInputDecodeMs = nanosecondsToMilliseconds(
     profiled.timing.inputDecodeNs,
@@ -331,6 +403,14 @@ function decodeProfiledQuery<T>(
 
 function nanosecondsToMilliseconds(value: bigint): number {
   return Number(value) / 1_000_000;
+}
+
+function nativeOutputEncoding(
+  encoding: QueryProfileOptions["nativeOutputEncoding"] = "streaming",
+): NativeOutputEncoding {
+  return encoding === "tree"
+    ? NativeOutputEncoding.Tree
+    : NativeOutputEncoding.Streaming;
 }
 
 /** Measure the minimum async UniFFI/JSI round-trip cost without database work. */

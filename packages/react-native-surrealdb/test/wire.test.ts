@@ -63,6 +63,17 @@ describe("SurrealDB wire codec", () => {
     );
   });
 
+  it("produces equivalent values with copy and in-place decoding", () => {
+    const json =
+      '{"rows":[{"sequence":{"$surreal":"int","value":"42"},' +
+      '"name":"answer","nested":{"values":[true,{"$surreal":"none"}]}}],' +
+      '"set":{"$surreal":"set","values":[{"$surreal":"int","value":"7"},"x"]}}';
+
+    expect(decodeSurrealValue(json, "in-place")).toEqual(
+      decodeSurrealValue(json, "copy"),
+    );
+  });
+
   it("rejects cyclic, undefined, and unsupported variables", () => {
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;

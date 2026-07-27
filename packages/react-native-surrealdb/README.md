@@ -69,9 +69,24 @@ try {
 }
 ```
 
-Transaction queries are sent individually and share the native transaction ID;
-they are not buffered into one concatenated SurrealQL request. Await operations
-in sequence, and do not reuse a handle after `commit()` or `cancel()`.
+`transaction.query()` calls are sent individually and share the native
+transaction ID. For bulk work, `transaction.queryBatch()` executes independently
+parameterized queries in one asynchronous native call and preserves every
+result. `transaction.executeBatch()` is the lower-overhead write variant: it
+repeats one parameterized query, discards `RETURN NONE` results, and returns the
+executed count.
+
+```ts
+await db.transaction((transaction) =>
+  transaction.executeBatch(
+    "CREATE person CONTENT { name: $name } RETURN NONE",
+    [{ name: "Ada" }, { name: "Lin" }],
+  ),
+);
+```
+
+Await transaction operations in sequence, and do not reuse a handle after
+`commit()` or `cancel()`.
 
 The alpha supports embedded `memory` and experimental `surrealkv://...`
 endpoints, plus remote `ws://` and `wss://` endpoints. Remote connections can
@@ -122,7 +137,9 @@ binding/scheduling residual, and JavaScript output decoding.
 `benchmarkNativeBoundary()` measures an async UniFFI/JSI no-op round trip.
 These APIs are intended for controlled benchmarks rather than production
 telemetry; ordinary `query()` calls contain no diagnostic clocks or additional
-return fields.
+return fields. Normal result transport streams the lossless wire format
+directly from SurrealDB values and decodes parsed arrays/objects in place,
+avoiding the previous pair of full intermediate value trees.
 
 ## Native development
 

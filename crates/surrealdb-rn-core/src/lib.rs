@@ -19,7 +19,7 @@ use tokio::sync::{Mutex as AsyncMutex, RwLock as AsyncRwLock, watch};
 
 use futures::StreamExt;
 
-use crate::wire::{decode_variables, encode_value};
+use crate::wire::{decode_variables, encode_value, encode_value_tree};
 
 uniffi::setup_scaffolding!();
 
@@ -37,6 +37,18 @@ pub struct QueryStatementResult {
 }
 
 #[derive(Debug, Clone, uniffi::Record)]
+pub struct NativeBatchQuery {
+    pub surql: String,
+    pub variables_json: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct NativeBatchQueryResult {
+    pub query_index: u32,
+    pub results: Vec<QueryStatementResult>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
 pub struct NativeQueryTiming {
     pub input_decode_ns: u64,
     pub engine_ns: u64,
@@ -47,6 +59,12 @@ pub struct NativeQueryTiming {
 pub struct NativeProfiledQueryResult {
     pub results: Vec<QueryStatementResult>,
     pub timing: NativeQueryTiming,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum NativeOutputEncoding {
+    Tree,
+    Streaming,
 }
 
 #[derive(Debug, Clone, uniffi::Enum)]
@@ -247,6 +265,58 @@ impl SurrealTransaction {
         query_results(response)
     }
 
+    /// Execute multiple independently parameterized queries in one native call.
+    pub async fn query_batch(
+        &self,
+        queries: Vec<NativeBatchQuery>,
+    ) -> Result<Vec<NativeBatchQueryResult>, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SurrealRnError::Closed);
+        }
+        let slot = self.inner.lock().await;
+        let transaction = slot.as_ref().ok_or(SurrealRnError::Closed)?;
+        let mut batch_results = Vec::with_capacity(queries.len());
+
+        for (query_index, query) in queries.into_iter().enumerate() {
+            let variables: Object = decode_variables(query.variables_json.as_deref())?;
+            let response = transaction
+                .query(query.surql)
+                .bind(variables)
+                .await?
+                .check()?;
+            batch_results.push(NativeBatchQueryResult {
+                query_index: u32::try_from(query_index).map_err(|_| SurrealRnError::Internal {
+                    message: "batch query index exceeds u32".into(),
+                })?,
+                results: query_results(response)?,
+            });
+        }
+
+        Ok(batch_results)
+    }
+
+    /// Execute one parameterized query repeatedly and discard `RETURN NONE` results.
+    pub async fn execute_batch(
+        &self,
+        surql: String,
+        variables_json: Vec<String>,
+    ) -> Result<u32, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SurrealRnError::Closed);
+        }
+        let slot = self.inner.lock().await;
+        let transaction = slot.as_ref().ok_or(SurrealRnError::Closed)?;
+
+        for variables_json in &variables_json {
+            let variables: Object = decode_variables(Some(variables_json))?;
+            transaction.query(&surql).bind(variables).await?.check()?;
+        }
+
+        u32::try_from(variables_json.len()).map_err(|_| SurrealRnError::Internal {
+            message: "batch query count exceeds u32".into(),
+        })
+    }
+
     /// Benchmark-only query variant that separates SDK execution from codecs.
     pub async fn query_profiled(
         &self,
@@ -265,6 +335,27 @@ impl SurrealTransaction {
         let response = transaction.query(surql).bind(variables).await?.check()?;
         let engine_ns = elapsed_ns(engine_started);
         profiled_query_results(response, input_decode_ns, engine_ns)
+    }
+
+    /// Benchmark-only query variant selecting the native result serializer.
+    pub async fn query_profiled_with_encoding(
+        &self,
+        surql: String,
+        variables_json: Option<String>,
+        output_encoding: NativeOutputEncoding,
+    ) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SurrealRnError::Closed);
+        }
+        let input_started = Instant::now();
+        let variables: Object = decode_variables(variables_json.as_deref())?;
+        let input_decode_ns = elapsed_ns(input_started);
+        let slot = self.inner.lock().await;
+        let transaction = slot.as_ref().ok_or(SurrealRnError::Closed)?;
+        let engine_started = Instant::now();
+        let response = transaction.query(surql).bind(variables).await?.check()?;
+        let engine_ns = elapsed_ns(engine_started);
+        profiled_query_results_with_encoding(response, input_decode_ns, engine_ns, output_encoding)
     }
 
     /// Commit once, persisting all queries executed through this handle.
@@ -408,6 +499,23 @@ impl SurrealDatabase {
         profiled_query_results(response, input_decode_ns, engine_ns)
     }
 
+    /// Benchmark-only query variant selecting the native result serializer.
+    pub async fn query_profiled_with_encoding(
+        &self,
+        surql: String,
+        variables_json: Option<String>,
+        output_encoding: NativeOutputEncoding,
+    ) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+        let client = self.client().await?;
+        let input_started = Instant::now();
+        let variables: Object = decode_variables(variables_json.as_deref())?;
+        let input_decode_ns = elapsed_ns(input_started);
+        let engine_started = Instant::now();
+        let response = client.query(surql).bind(variables).await?.check()?;
+        let engine_ns = elapsed_ns(engine_started);
+        profiled_query_results_with_encoding(response, input_decode_ns, engine_ns, output_encoding)
+    }
+
     /// Start a single live SurrealQL statement and return a pull-based stream.
     ///
     /// Pulling avoids invoking JavaScript from a Rust worker thread, provides
@@ -547,6 +655,13 @@ impl SurrealDatabase {
 fn query_results(
     mut response: surrealdb::IndexedResults,
 ) -> Result<Vec<QueryStatementResult>, SurrealRnError> {
+    query_results_with_encoding(&mut response, NativeOutputEncoding::Streaming)
+}
+
+fn query_results_with_encoding(
+    response: &mut surrealdb::IndexedResults,
+    output_encoding: NativeOutputEncoding,
+) -> Result<Vec<QueryStatementResult>, SurrealRnError> {
     let statement_count = response.num_statements();
     let mut results = Vec::with_capacity(statement_count);
 
@@ -554,7 +669,10 @@ fn query_results(
         let value: Value = response.take(index)?;
         results.push(QueryStatementResult {
             statement_index: index as u32,
-            value_json: encode_value(value)?,
+            value_json: match output_encoding {
+                NativeOutputEncoding::Tree => encode_value_tree(value)?,
+                NativeOutputEncoding::Streaming => encode_value(value)?,
+            },
         });
     }
 
@@ -566,8 +684,22 @@ fn profiled_query_results(
     input_decode_ns: u64,
     engine_ns: u64,
 ) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+    profiled_query_results_with_encoding(
+        response,
+        input_decode_ns,
+        engine_ns,
+        NativeOutputEncoding::Streaming,
+    )
+}
+
+fn profiled_query_results_with_encoding(
+    mut response: surrealdb::IndexedResults,
+    input_decode_ns: u64,
+    engine_ns: u64,
+    output_encoding: NativeOutputEncoding,
+) -> Result<NativeProfiledQueryResult, SurrealRnError> {
     let output_started = Instant::now();
-    let results = query_results(response)?;
+    let results = query_results_with_encoding(&mut response, output_encoding)?;
     Ok(NativeProfiledQueryResult {
         results,
         timing: NativeQueryTiming {
@@ -760,6 +892,75 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result[0].value_json, "false");
+    }
+
+    #[tokio::test]
+    async fn transaction_batch_preserves_query_order_and_variables() {
+        let database = connect(ConnectOptions {
+            endpoint: "memory".into(),
+            namespace: Some("batch".into()),
+            database: Some("batch".into()),
+        })
+        .await
+        .unwrap();
+        let transaction = database.begin_transaction().await.unwrap();
+        let results = transaction
+            .query_batch(vec![
+                NativeBatchQuery {
+                    surql: "RETURN $value".into(),
+                    variables_json: Some(r#"{"value":"first"}"#.into()),
+                },
+                NativeBatchQuery {
+                    surql: "RETURN $value".into(),
+                    variables_json: Some(r#"{"value":"second"}"#.into()),
+                },
+            ])
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].query_index, 0);
+        assert_eq!(results[0].results[0].value_json, r#""first""#);
+        assert_eq!(results[1].query_index, 1);
+        assert_eq!(results[1].results[0].value_json, r#""second""#);
+        let executed = transaction
+            .execute_batch(
+                "CREATE event CONTENT { sequence: $sequence } RETURN NONE".into(),
+                vec![r#"{"sequence":1}"#.into(), r#"{"sequence":2}"#.into()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(executed, 2);
+        transaction.commit().await.unwrap();
+        let events = database
+            .query(
+                "SELECT VALUE sequence FROM event ORDER BY sequence".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            events[0].value_json,
+            r#"[{"$surreal":"int","value":"1"},{"$surreal":"int","value":"2"}]"#
+        );
+        database
+            .query(
+                "INSERT INTO bulk_event $records RETURN NONE".into(),
+                Some(r#"{"records":[{"sequence":1},{"sequence":2}]}"#.into()),
+            )
+            .await
+            .unwrap();
+        let bulk_events = database
+            .query(
+                "SELECT VALUE sequence FROM bulk_event ORDER BY sequence".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            bulk_events[0].value_json,
+            r#"[{"$surreal":"int","value":"1"},{"$surreal":"int","value":"2"}]"#
+        );
     }
 
     #[tokio::test]

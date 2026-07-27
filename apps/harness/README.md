@@ -152,6 +152,13 @@ baseline, and a 1/10/100/1,000-statement transaction batch-size sweep.
 Attribution is collected in two dedicated SurrealDB runs after the paired
 comparison, so extra clocks and diagnostic return fields do not alter the
 durations used for the SurrealDB/op-sqlite speed factors.
+The same report also includes a separate glue-optimization section. Its batch
+case gives both libraries one parameterized template, 1,000 parameter sets,
+one asynchronous batch payload, and a full transaction lifecycle in opposite
+orders. Its codec case runs the same 100 materialized 1,000-row reads with a
+2×2 legacy/optimized serializer and decoder matrix. Checksums must match across
+both databases and all codec variants. These diagnostics never replace or
+modify the original per-call comparison.
 The synchronous insert and HostObject select are retained as op-sqlite-only
 measurements because the SurrealDB client API is asynchronous and eagerly
 decodes results.

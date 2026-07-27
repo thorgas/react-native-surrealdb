@@ -14,4 +14,8 @@ All notable changes to this package are documented here.
 - Add opt-in benchmark diagnostics that separate embedded SDK execution,
   package codecs/bindings, and JavaScript result decoding without adding
   timing overhead to normal queries.
+- Add transaction `queryBatch()` and repeated-template `executeBatch()` APIs
+  that send bulk work through one asynchronous native call.
+- Stream lossless result JSON directly from SurrealDB values and decode parsed
+  containers in place, with controlled legacy/optimized benchmark variants.
 - Ship prebuilt native archives for supported iOS and Android architectures.
