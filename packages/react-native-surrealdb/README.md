@@ -158,6 +158,17 @@ The JavaScript/Rust boundary preserves 64-bit integers, decimals, record IDs,
 UUIDs, bytes, sets, `NONE`, and other SurrealQL-only values rather than losing
 them through ordinary JSON conversion.
 
+## Benchmark diagnostics
+
+`queryProfiled()` is an opt-in benchmark variant available on database and
+transaction handles. It returns the ordinary query results plus timing for
+JavaScript input encoding, embedded SDK execution, Rust output encoding,
+binding/scheduling residual, and JavaScript output decoding.
+`benchmarkNativeBoundary()` measures an async UniFFI/JSI no-op round trip.
+These APIs are intended for controlled benchmarks rather than production
+telemetry; ordinary `query()` calls contain no diagnostic clocks or additional
+return fields.
+
 ## Native development
 
 The generated TypeScript/C++/platform glue is checked in. Release archives are

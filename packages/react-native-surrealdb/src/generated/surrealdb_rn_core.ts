@@ -22,6 +22,7 @@ import {
   FfiConverterObject,
   FfiConverterOptional,
   FfiConverterUInt32,
+  FfiConverterUInt64,
   FfiConverterUInt8,
   RustBuffer,
   UniffiAbstractObject,
@@ -47,6 +48,44 @@ const uniffiIsDebug =
   false;
 
 // Public interface members begin here.
+
+/**
+ * Minimal async round trip used to establish the UniFFI/JSI call baseline.
+ */
+export async function benchmarkBoundaryNoop(asyncOpts_?: {
+  signal: AbortSignal;
+}): Promise<boolean> {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop();
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_poll_i8,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_i8,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_complete_i8,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_free_i8,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterBool.lift.bind(FfiConverterBool),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
 
 export async function connect(
   options: ConnectOptions,
@@ -343,6 +382,103 @@ const FfiConverterTypeQueryStatementResult = (() => {
       return (
         FfiConverterUInt32.allocationSize(value.statementIndex) +
         FfiConverterString.allocationSize(value.valueJson)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type NativeQueryTiming = {
+  inputDecodeNs: bigint;
+  engineNs: bigint;
+  outputEncodeNs: bigint;
+};
+
+/**
+ * Generated factory for {@link NativeQueryTiming} record objects.
+ */
+export const NativeQueryTiming = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<NativeQueryTiming, ReturnType<typeof defaults>>(
+      defaults,
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<NativeQueryTiming>,
+  });
+})();
+
+const FfiConverterTypeNativeQueryTiming = (() => {
+  type TypeName = NativeQueryTiming;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        inputDecodeNs: FfiConverterUInt64.read(from),
+        engineNs: FfiConverterUInt64.read(from),
+        outputEncodeNs: FfiConverterUInt64.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterUInt64.write(value.inputDecodeNs, into);
+      FfiConverterUInt64.write(value.engineNs, into);
+      FfiConverterUInt64.write(value.outputEncodeNs, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterUInt64.allocationSize(value.inputDecodeNs) +
+        FfiConverterUInt64.allocationSize(value.engineNs) +
+        FfiConverterUInt64.allocationSize(value.outputEncodeNs)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type NativeProfiledQueryResult = {
+  results: Array<QueryStatementResult>;
+  timing: NativeQueryTiming;
+};
+
+/**
+ * Generated factory for {@link NativeProfiledQueryResult} record objects.
+ */
+export const NativeProfiledQueryResult = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      NativeProfiledQueryResult,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () =>
+      Object.freeze(defaults()) as Partial<NativeProfiledQueryResult>,
+  });
+})();
+
+const FfiConverterTypeNativeProfiledQueryResult = (() => {
+  type TypeName = NativeProfiledQueryResult;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        results: FfiConverterSequenceTypeQueryStatementResult.read(from),
+        timing: FfiConverterTypeNativeQueryTiming.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterSequenceTypeQueryStatementResult.write(value.results, into);
+      FfiConverterTypeNativeQueryTiming.write(value.timing, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterSequenceTypeQueryStatementResult.allocationSize(
+          value.results,
+        ) + FfiConverterTypeNativeQueryTiming.allocationSize(value.timing)
       );
     }
   }
@@ -911,6 +1047,14 @@ export interface SurrealTransactionLike {
     variablesJson: string | undefined,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<Array<QueryStatementResult>>;
+  /**
+   * Benchmark-only query variant that separates SDK execution from codecs.
+   */
+  queryProfiled(
+    surql: string,
+    variablesJson: string | undefined,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeProfiledQueryResult>;
 }
 /**
  * @deprecated Use `SurrealTransactionLike` instead.
@@ -1070,6 +1214,58 @@ export class SurrealTransaction
     }
   }
 
+  /**
+   * Benchmark-only query variant that separates SDK execution from codecs.
+   */
+  async queryProfiled(
+    surql: string,
+    variablesJson: string | undefined,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeProfiledQueryResult> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query_profiled(
+            uniffiTypeSurrealTransactionObjectFactory.clonePointer(this),
+            FfiConverterString.lower(surql, nativeModule().rustbuffer_alloc),
+            FfiConverterOptionalString.lower(
+              variablesJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeProfiledQueryResult.lift.bind(
+          FfiConverterTypeNativeProfiledQueryResult,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeSurrealRnError.lift.bind(
+          FfiConverterTypeSurrealRnError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
   uniffiDestroy(): void {
     const ptr = (this as any)[destructorGuardSymbol];
     if (ptr !== undefined) {
@@ -1192,6 +1388,14 @@ export interface SurrealDatabaseLike {
     variablesJson: string | undefined,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<Array<QueryStatementResult>>;
+  /**
+   * Benchmark-only query variant that separates SDK execution from codecs.
+   */
+  queryProfiled(
+    surql: string,
+    variablesJson: string | undefined,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeProfiledQueryResult>;
   signInDatabase(
     namespace: string,
     database: string,
@@ -1510,6 +1714,58 @@ export class SurrealDatabase
     }
   }
 
+  /**
+   * Benchmark-only query variant that separates SDK execution from codecs.
+   */
+  async queryProfiled(
+    surql: string,
+    variablesJson: string | undefined,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeProfiledQueryResult> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query_profiled(
+            uniffiTypeSurrealDatabaseObjectFactory.clonePointer(this),
+            FfiConverterString.lower(surql, nativeModule().rustbuffer_alloc),
+            FfiConverterOptionalString.lower(
+              variablesJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeProfiledQueryResult.lift.bind(
+          FfiConverterTypeNativeProfiledQueryResult,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeSurrealRnError.lift.bind(
+          FfiConverterTypeSurrealRnError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
   async signInDatabase(
     namespace: string,
     database: string,
@@ -1733,14 +1989,14 @@ const FfiConverterTypeSurrealDatabase = new FfiConverterObject(
 // FfiConverter for string | undefined
 const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 
-// FfiConverter for LiveNotification | undefined
-const FfiConverterOptionalTypeLiveNotification = new FfiConverterOptional(
-  FfiConverterTypeLiveNotification,
-);
-
 // FfiConverter for Array<QueryStatementResult>
 const FfiConverterSequenceTypeQueryStatementResult = new FfiConverterArray(
   FfiConverterTypeQueryStatementResult,
+);
+
+// FfiConverter for LiveNotification | undefined
+const FfiConverterOptionalTypeLiveNotification = new FfiConverterOptional(
+  FfiConverterTypeLiveNotification,
 );
 
 /**
@@ -1763,6 +2019,14 @@ function uniffiEnsureInitialized() {
     throw new UniffiInternalError.ContractVersionMismatch(
       scaffoldingContractVersion,
       bindingsContractVersion,
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop() !==
+    44091
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop",
     );
   }
   if (
@@ -1854,6 +2118,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query_profiled() !==
+    36327
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query_profiled",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_database() !==
     24084
   ) {
@@ -1909,6 +2181,14 @@ function uniffiEnsureInitialized() {
       "uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query",
     );
   }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled() !==
+    12963
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled",
+    );
+  }
 }
 
 export default Object.freeze({
@@ -1918,6 +2198,8 @@ export default Object.freeze({
     FfiConverterTypeLiveAction,
     FfiConverterTypeLiveNotification,
     FfiConverterTypeLiveQuery,
+    FfiConverterTypeNativeProfiledQueryResult,
+    FfiConverterTypeNativeQueryTiming,
     FfiConverterTypeQueryStatementResult,
     FfiConverterTypeSurrealDatabase,
     FfiConverterTypeSurrealRnError,

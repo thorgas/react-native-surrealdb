@@ -1,4 +1,9 @@
-import { connect, type SurrealClient } from 'react-native-surrealdb';
+import {
+  benchmarkNativeBoundary,
+  connect,
+  type QueryProfile,
+  type SurrealClient,
+} from 'react-native-surrealdb';
 
 import { summarize, type DistributionSummary } from './statistics';
 
@@ -62,6 +67,35 @@ export type SQLiteBenchMetric = {
   operationsPerSample: number;
   samplesMs: [number];
   summary: DistributionSummary;
+  attribution?: SQLiteBenchAttribution;
+};
+
+export type SQLiteBenchAttribution = {
+  callsProfiled: number;
+  totalWorkloadMs: number;
+  engineMs: number;
+  packagePathMs: number;
+  unattributedMs: number;
+  engineSharePercent: number;
+  packagePathSharePercent: number;
+  measuredQueryMs: number;
+  engineShareOfMeasuredQueryPercent: number;
+  packagePathShareOfMeasuredQueryPercent: number;
+  dominantMeasuredLayer: 'engine-sdk' | 'package-path' | 'tie';
+  statement: string;
+  stages: {
+    inputEncodeMs: number;
+    nativeInputDecodeMs: number;
+    nativeOutputEncodeMs: number;
+    bindingAndSchedulingMs: number;
+    outputDecodeMs: number;
+  };
+};
+
+export type SQLiteBenchBatchSweep = {
+  batchSize: number;
+  nativeCalls: number;
+  attribution: SQLiteBenchAttribution;
 };
 
 export type SQLiteBenchReport = {
@@ -85,6 +119,8 @@ export type SQLiteBenchReport = {
     clients: 1;
     syncApiAvailable: false;
   };
+  nativeBoundary?: Awaited<ReturnType<typeof benchmarkNativeBoundary>>;
+  transactionBatchSweep?: SQLiteBenchBatchSweep[];
   checksum: string;
   metrics: SQLiteBenchMetric[];
 };
@@ -97,6 +133,7 @@ export type SQLiteBenchOptions = {
   surrealDb: string;
   iterations?: number;
   cooldownMs?: number;
+  collectAttribution?: boolean;
   signal?: AbortSignal;
   onProgress?: (progress: SQLiteBenchProgress) => void;
 };
@@ -106,6 +143,7 @@ export async function runSQLiteBenchBenchmark(
 ): Promise<SQLiteBenchReport> {
   const iterations = options.iterations ?? SQLITE_BENCH_ITERATIONS;
   const cooldownMs = options.cooldownMs ?? SQLITE_BENCH_COOLDOWN_MS;
+  const collectAttribution = options.collectAttribution ?? false;
   validateOptions(iterations, cooldownMs);
   const { signal, onProgress } = options;
   assertActive(signal);
@@ -115,6 +153,9 @@ export async function runSQLiteBenchBenchmark(
     metric: 'database setup',
     stage: 'setup',
   });
+  const nativeBoundary = collectAttribution
+    ? await benchmarkNativeBoundary(iterations)
+    : undefined;
 
   const database = await connect(
     {
@@ -133,10 +174,20 @@ export async function runSQLiteBenchBenchmark(
     );
 
     await coolDown(cooldownMs, signal, onProgress, 0, 'async insert 1k');
+    const asyncInsertProfiles: QueryProfile[] = [];
     const asyncInsertMs = await measure(async () => {
       for (let index = 0; index < iterations; index += 1) {
         assertActive(signal);
-        await query(database, createStatement(index), signal);
+        if (collectAttribution) {
+          const profiled = await database.queryProfiled(
+            createStatement(index),
+            undefined,
+            signal ? { signal } : undefined,
+          );
+          asyncInsertProfiles.push(profiled.profile);
+        } else {
+          await query(database, createStatement(index), signal);
+        }
       }
     });
     onProgress?.({
@@ -148,12 +199,20 @@ export async function runSQLiteBenchBenchmark(
 
     await query(database, 'DELETE sqlite_bench RETURN NONE', signal);
     await coolDown(cooldownMs, signal, onProgress, 1, 'transaction insert 1k');
+    const transactionInsertProfiles: QueryProfile[] = [];
     const transactionInsertMs = await measure(() =>
       database.transaction(
         async transaction => {
           for (let index = 0; index < iterations; index += 1) {
             assertActive(signal);
-            await transaction.query(createStatement(index));
+            if (collectAttribution) {
+              const profiled = await transaction.queryProfiled(
+                createStatement(index),
+              );
+              transactionInsertProfiles.push(profiled.profile);
+            } else {
+              await transaction.query(createStatement(index));
+            }
           }
         },
         signal ? { signal } : undefined,
@@ -174,14 +233,26 @@ export async function runSQLiteBenchBenchmark(
       'select 1k × 1k + read props',
     );
     let checksum = 0n;
+    const selectProfiles: QueryProfile[] = [];
     const selectAndReadMs = await measure(async () => {
       for (let iteration = 0; iteration < iterations; iteration += 1) {
         assertActive(signal);
-        const results = await query(
-          database,
-          'SELECT sequence, name, value FROM sqlite_bench',
-          signal,
-        );
+        const results = collectAttribution
+          ? await database
+              .queryProfiled<unknown>(
+                'SELECT sequence, name, value FROM sqlite_bench',
+                undefined,
+                signal ? { signal } : undefined,
+              )
+              .then(profiled => {
+                selectProfiles.push(profiled.profile);
+                return profiled.results;
+              })
+          : await query(
+              database,
+              'SELECT sequence, name, value FROM sqlite_bench',
+              signal,
+            );
         const rows = results.at(-1)?.value;
         if (!Array.isArray(rows) || rows.length !== iterations) {
           throw new Error(
@@ -203,6 +274,9 @@ export async function runSQLiteBenchBenchmark(
         }
       }
     });
+    const transactionBatchSweep = collectAttribution
+      ? await runTransactionBatchSweep(database, iterations, signal)
+      : undefined;
     onProgress?.({
       completed: 3,
       total: 3,
@@ -232,6 +306,8 @@ export async function runSQLiteBenchBenchmark(
       source: SQLITE_BENCH_SOURCE,
       publishedReference: SQLITE_BENCH_PUBLISHED_RESULTS,
       configuration,
+      ...(nativeBoundary ? { nativeBoundary } : {}),
+      ...(transactionBatchSweep ? { transactionBatchSweep } : {}),
       checksum: checksum.toString(),
       metrics: [
         metric(
@@ -240,6 +316,7 @@ export async function runSQLiteBenchBenchmark(
           '1,000 awaited CREATE queries / 1,000 bridge calls',
           iterations,
           asyncInsertMs,
+          asyncInsertProfiles,
         ),
         metric(
           'sqlite-bench.transaction-insert-1k',
@@ -247,6 +324,7 @@ export async function runSQLiteBenchBenchmark(
           '1,000 awaited CREATE calls through one transaction handle',
           iterations,
           transactionInsertMs,
+          transactionInsertProfiles,
         ),
         metric(
           'sqlite-bench.select-and-read-1k-times-1k',
@@ -254,6 +332,7 @@ export async function runSQLiteBenchBenchmark(
           '1,000 SELECT queries returning 1,000 rows; read sequence, name, value',
           iterations,
           selectAndReadMs,
+          selectProfiles,
         ),
       ],
     };
@@ -268,6 +347,7 @@ function metric(
   variant: string,
   operationsPerSample: number,
   durationMs: number,
+  profiles: readonly QueryProfile[],
 ): SQLiteBenchMetric {
   return {
     name,
@@ -277,7 +357,113 @@ function metric(
     operationsPerSample,
     samplesMs: [durationMs],
     summary: summarize([durationMs], operationsPerSample),
+    ...(profiles.length > 0
+      ? { attribution: buildAttribution(durationMs, profiles) }
+      : {}),
   };
+}
+
+function buildAttribution(
+  totalWorkloadMs: number,
+  profiles: readonly QueryProfile[],
+): SQLiteBenchAttribution {
+  const stages = {
+    inputEncodeMs: sum(profiles, profile => profile.inputEncodeMs),
+    nativeInputDecodeMs: sum(profiles, profile => profile.nativeInputDecodeMs),
+    nativeOutputEncodeMs: sum(
+      profiles,
+      profile => profile.nativeOutputEncodeMs,
+    ),
+    bindingAndSchedulingMs: sum(
+      profiles,
+      profile => profile.bindingAndSchedulingMs,
+    ),
+    outputDecodeMs: sum(profiles, profile => profile.outputDecodeMs),
+  };
+  const engineMs = sum(profiles, profile => profile.engineMs);
+  const packagePathMs = Object.values(stages).reduce(
+    (total, value) => total + value,
+    0,
+  );
+  const unattributedMs = Math.max(
+    0,
+    totalWorkloadMs - engineMs - packagePathMs,
+  );
+  const measuredQueryMs = engineMs + packagePathMs;
+  const dominantMeasuredLayer =
+    engineMs > packagePathMs
+      ? 'engine-sdk'
+      : packagePathMs > engineMs
+      ? 'package-path'
+      : 'tie';
+  return {
+    callsProfiled: profiles.length,
+    totalWorkloadMs,
+    engineMs,
+    packagePathMs,
+    unattributedMs,
+    engineSharePercent: (engineMs / totalWorkloadMs) * 100,
+    packagePathSharePercent: (packagePathMs / totalWorkloadMs) * 100,
+    measuredQueryMs,
+    engineShareOfMeasuredQueryPercent: (engineMs / measuredQueryMs) * 100,
+    packagePathShareOfMeasuredQueryPercent:
+      (packagePathMs / measuredQueryMs) * 100,
+    dominantMeasuredLayer,
+    statement:
+      dominantMeasuredLayer === 'tie'
+        ? 'Embedded SDK execution and the measured package path took equal time.'
+        : `${
+            dominantMeasuredLayer === 'engine-sdk'
+              ? 'Embedded SDK execution'
+              : 'The measured package path'
+          } dominated individually profiled query time.`,
+    stages,
+  };
+}
+
+async function runTransactionBatchSweep(
+  database: SurrealClient,
+  iterations: number,
+  signal?: AbortSignal,
+): Promise<SQLiteBenchBatchSweep[]> {
+  const batchSizes = [...new Set([1, 10, 100, iterations])]
+    .filter(batchSize => batchSize <= iterations)
+    .sort((left, right) => left - right);
+  const sweep: SQLiteBenchBatchSweep[] = [];
+
+  for (const batchSize of batchSizes) {
+    await query(database, 'DELETE sqlite_bench RETURN NONE', signal);
+    const profiles: QueryProfile[] = [];
+    const totalWorkloadMs = await measure(() =>
+      database.transaction(
+        async transaction => {
+          for (let start = 0; start < iterations; start += batchSize) {
+            assertActive(signal);
+            const statements = Array.from(
+              { length: Math.min(batchSize, iterations - start) },
+              (_, offset) => createStatement(start + offset),
+            ).join(';\n');
+            const profiled = await transaction.queryProfiled(statements);
+            profiles.push(profiled.profile);
+          }
+        },
+        signal ? { signal } : undefined,
+      ),
+    );
+    sweep.push({
+      batchSize,
+      nativeCalls: profiles.length,
+      attribution: buildAttribution(totalWorkloadMs, profiles),
+    });
+  }
+  return sweep;
+}
+
+function sum(
+  profiles: readonly QueryProfile[],
+  select: (profile: QueryProfile) => number,
+): number {
+  return profiles.reduce((total, profile) => total + select(profile), 0);
 }
 
 function createStatement(index: number): string {

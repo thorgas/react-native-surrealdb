@@ -2,9 +2,11 @@ import {
   LiveAction as NativeLiveAction,
   SurrealRnError,
   SurrealRnError_Tags,
+  benchmarkBoundaryNoop as nativeBenchmarkBoundaryNoop,
   connect as nativeConnect,
   type ConnectOptions,
   type LiveQueryLike,
+  type NativeProfiledQueryResult,
   type SurrealDatabaseLike,
   type SurrealTransactionLike as NativeSurrealTransactionLike,
 } from "./native";
@@ -29,6 +31,21 @@ export type CallOptions = { signal: AbortSignal };
 export type QueryStatement<T = SurrealValue> = {
   statementIndex: number;
   value: T;
+};
+
+export type QueryProfile = {
+  inputEncodeMs: number;
+  nativeInputDecodeMs: number;
+  engineMs: number;
+  nativeOutputEncodeMs: number;
+  bindingAndSchedulingMs: number;
+  outputDecodeMs: number;
+  totalMs: number;
+};
+
+export type ProfiledQuery<T = SurrealValue> = {
+  results: Array<QueryStatement<T>>;
+  profile: QueryProfile;
 };
 
 export type LiveAction = "create" | "update" | "delete" | "error" | "unknown";
@@ -108,6 +125,26 @@ export class SurrealTransaction {
     return decodeQueryResults<T>(results);
   }
 
+  /** Execute a query with benchmark attribution; do not use for production telemetry. */
+  async queryProfiled<T = SurrealValue>(
+    surql: string,
+    variables?: QueryVariables,
+    options?: CallOptions,
+  ): Promise<ProfiledQuery<T>> {
+    const inputStarted = performance.now();
+    const encodedVariables =
+      variables === undefined ? undefined : encodeQueryVariables(variables);
+    const inputEncodeMs = performance.now() - inputStarted;
+    const nativeStarted = performance.now();
+    const profiled = await this.#native.queryProfiled(
+      surql,
+      encodedVariables,
+      options ?? this.#options,
+    );
+    const nativeCallMs = performance.now() - nativeStarted;
+    return decodeProfiledQuery<T>(profiled, inputEncodeMs, nativeCallMs);
+  }
+
   commit(options?: CallOptions) {
     return this.#native.commit(options ?? this.#options);
   }
@@ -146,6 +183,26 @@ export class SurrealClient {
     );
 
     return decodeQueryResults<T>(results);
+  }
+
+  /** Execute a query with benchmark attribution; do not use for production telemetry. */
+  async queryProfiled<T = SurrealValue>(
+    surql: string,
+    variables?: QueryVariables,
+    options?: CallOptions,
+  ): Promise<ProfiledQuery<T>> {
+    const inputStarted = performance.now();
+    const encodedVariables =
+      variables === undefined ? undefined : encodeQueryVariables(variables);
+    const inputEncodeMs = performance.now() - inputStarted;
+    const nativeStarted = performance.now();
+    const profiled = await this.#native.queryProfiled(
+      surql,
+      encodedVariables,
+      options,
+    );
+    const nativeCallMs = performance.now() - nativeStarted;
+    return decodeProfiledQuery<T>(profiled, inputEncodeMs, nativeCallMs);
   }
 
   /** Begin a manually managed transaction that must be committed or cancelled. */
@@ -256,6 +313,63 @@ function decodeQueryResults<T>(
     statementIndex,
     value: decodeSurrealValue(valueJson) as T,
   }));
+}
+
+function decodeProfiledQuery<T>(
+  profiled: NativeProfiledQueryResult,
+  inputEncodeMs: number,
+  nativeCallMs: number,
+): ProfiledQuery<T> {
+  const outputStarted = performance.now();
+  const results = decodeQueryResults<T>(profiled.results);
+  const outputDecodeMs = performance.now() - outputStarted;
+  const nativeInputDecodeMs = nanosecondsToMilliseconds(
+    profiled.timing.inputDecodeNs,
+  );
+  const engineMs = nanosecondsToMilliseconds(profiled.timing.engineNs);
+  const nativeOutputEncodeMs = nanosecondsToMilliseconds(
+    profiled.timing.outputEncodeNs,
+  );
+  const bindingAndSchedulingMs = Math.max(
+    0,
+    nativeCallMs - nativeInputDecodeMs - engineMs - nativeOutputEncodeMs,
+  );
+
+  return {
+    results,
+    profile: {
+      inputEncodeMs,
+      nativeInputDecodeMs,
+      engineMs,
+      nativeOutputEncodeMs,
+      bindingAndSchedulingMs,
+      outputDecodeMs,
+      totalMs: inputEncodeMs + nativeCallMs + outputDecodeMs,
+    },
+  };
+}
+
+function nanosecondsToMilliseconds(value: bigint): number {
+  return Number(value) / 1_000_000;
+}
+
+/** Measure the minimum async UniFFI/JSI round-trip cost without database work. */
+export async function benchmarkNativeBoundary(iterations: number): Promise<{
+  iterations: number;
+  totalMs: number;
+  averageMs: number;
+}> {
+  if (!Number.isSafeInteger(iterations) || iterations < 1) {
+    throw new RangeError("iterations must be a positive integer");
+  }
+  const started = performance.now();
+  for (let index = 0; index < iterations; index += 1) {
+    if (!(await nativeBenchmarkBoundaryNoop())) {
+      throw new Error("native benchmark boundary no-op returned false");
+    }
+  }
+  const totalMs = performance.now() - started;
+  return { iterations, totalMs, averageMs: totalMs / iterations };
 }
 
 export async function connect(
