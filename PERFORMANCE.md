@@ -367,11 +367,19 @@ handle and commit once. SurrealDB uses the native Rust SDK transaction ID for
 every call; it no longer substitutes one concatenated 1,000-statement request.
 
 The paired run uses in-memory engines, two opposite execution orders, complete
-result materialization, checksums, and structured JSON. Its schema-version-3
+result materialization, checksums, and structured JSON. Its schema-version-4
 report also includes direction-aware factors for async insertion, transaction
-insertion, and fully materialized selection. Each comparison retains both
-median durations and the unrounded slower/faster ratio; lower median duration
-is faster. Synchronous insertion and HostObject selection remain op-sqlite-only
-workloads, are labelled as such, and are deliberately excluded from those
-factors. These Debug Harness results are regression signals; the published
-third-party screenshot values remain context rather than a compatible baseline.
+insertion, and fully materialized selection. Each SurrealDB workload separates
+the embedded SDK query future from variable/result codecs, generated-binding
+and scheduling residual, JavaScript decoding, and unprofiled workload work.
+The report also captures an async native no-op baseline and a transaction
+batch-size sweep so per-call overhead can be distinguished from engine scaling.
+Those diagnostics run separately after the two opposite-order comparison
+samples; their clocks and larger native return values are never included in the
+SurrealDB/op-sqlite factor calculations.
+Each comparison retains both median durations and the unrounded slower/faster
+ratio; lower median duration is faster. Synchronous insertion and HostObject
+selection remain op-sqlite-only workloads, are labelled as such, and are
+deliberately excluded from those factors. These Debug Harness results are
+regression signals; the published third-party screenshot values remain context
+rather than a compatible baseline.

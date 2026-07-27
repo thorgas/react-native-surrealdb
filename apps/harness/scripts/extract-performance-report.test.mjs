@@ -23,7 +23,7 @@ function chunked(report, chunkLength = 20, runId = 1_720_000_000_000) {
 }
 
 test('reconstructs a report from ordered device-log chunks', () => {
-  const report = { schemaVersion: 3, metrics: [{ name: 'bridge.return-one' }] };
+  const report = { schemaVersion: 4, metrics: [{ name: 'profiled.query' }] };
   assert.deepEqual(extractPerformanceReport(chunked(report)), report);
 });
 

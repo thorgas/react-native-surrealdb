@@ -140,11 +140,18 @@ to balance first-run and thermal effects. Both transaction legs make 1,000
 awaited JavaScript calls through a transaction handle before committing once.
 For SurrealDB, those calls execute against one native SDK transaction ID; the
 workload no longer substitutes a single concatenated 1,000-statement query.
-The schema-version-3 paired report includes a `comparisons` entry for each
+The schema-version-4 paired report includes a `comparisons` entry for each
 comparable workload. Each entry records both median durations, the faster
 library, the unrounded speed factor, and a direction-aware statement such as
 “op-sqlite is 8.17× faster than SurrealDB.” Factors use median duration with
-lower treated as faster.
+lower treated as faster. Each SurrealDB metric also attributes time to the
+embedded SDK query future (`engineMs`), the package path (`packagePathMs`), and
+work outside individually profiled queries (`unattributedMs`). The report
+retains both opposite-order attribution samples, an async UniFFI/JSI no-op
+baseline, and a 1/10/100/1,000-statement transaction batch-size sweep.
+Attribution is collected in two dedicated SurrealDB runs after the paired
+comparison, so extra clocks and diagnostic return fields do not alter the
+durations used for the SurrealDB/op-sqlite speed factors.
 The synchronous insert and HostObject select are retained as op-sqlite-only
 measurements because the SurrealDB client API is asynchronous and eagerly
 decodes results.

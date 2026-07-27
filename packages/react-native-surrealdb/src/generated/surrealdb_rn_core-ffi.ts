@@ -190,6 +190,7 @@ interface NativeModuleInterface {
     ptr: bigint,
     uniffi_out_err: UniffiRustCallStatus,
   ): void;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop(): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_func_connect(options: Uint8Array): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_close(
     uniffiSelf: bigint,
@@ -228,6 +229,11 @@ interface NativeModuleInterface {
     surql: Uint8Array,
     variablesJson: Uint8Array,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query_profiled(
+    uniffiSelf: bigint,
+    surql: Uint8Array,
+    variablesJson: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_sign_in_database(
     uniffiSelf: bigint,
     namespace: Uint8Array,
@@ -260,7 +266,13 @@ interface NativeModuleInterface {
     surql: Uint8Array,
     variablesJson: Uint8Array,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query_profiled(
+    uniffiSelf: bigint,
+    surql: Uint8Array,
+    variablesJson: Uint8Array,
+  ): bigint;
   ubrn_ffi_surrealdb_rn_core_uniffi_contract_version(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_connect(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_close(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed(): number;
@@ -272,6 +284,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_is_closed(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_live_query(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query_profiled(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_database(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_root(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_use_namespace_database(): number;
@@ -279,6 +292,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_commit(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_is_closed(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled(): number;
   ubrn_uniffi_internal_fn_method_livequery_ffi__bless_pointer(
     pointer: bigint,
     uniffi_out_err: UniffiRustCallStatus,

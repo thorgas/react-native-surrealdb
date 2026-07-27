@@ -128,6 +128,9 @@ uniffi_surrealdb_rn_core_fn_method_surrealdatabase_live_query(
 /*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query(
     /*handle*/ uint64_t ptr, RustBuffer surql, RustBuffer variables_json);
 /*handle*/ uint64_t
+uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query_profiled(
+    /*handle*/ uint64_t ptr, RustBuffer surql, RustBuffer variables_json);
+/*handle*/ uint64_t
 uniffi_surrealdb_rn_core_fn_method_surrealdatabase_sign_in_database(
     /*handle*/ uint64_t ptr, RustBuffer namespace_, RustBuffer database,
     RustBuffer username, RustBuffer password);
@@ -151,6 +154,10 @@ int8_t uniffi_surrealdb_rn_core_fn_method_surrealtransaction_is_closed(
     /*handle*/ uint64_t ptr, RustCallStatus *uniffi_out_err);
 /*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query(
     /*handle*/ uint64_t ptr, RustBuffer surql, RustBuffer variables_json);
+/*handle*/ uint64_t
+uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query_profiled(
+    /*handle*/ uint64_t ptr, RustBuffer surql, RustBuffer variables_json);
+/*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop();
 /*handle*/ uint64_t
 uniffi_surrealdb_rn_core_fn_func_connect(RustBuffer options);
 RustBuffer
@@ -272,6 +279,7 @@ void ffi_surrealdb_rn_core_rust_future_free_void(
     /*handle*/ uint64_t handle);
 void ffi_surrealdb_rn_core_rust_future_complete_void(
     /*handle*/ uint64_t handle, RustCallStatus *uniffi_out_err);
+uint16_t uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_connect();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_livequery_close();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed();
@@ -286,6 +294,8 @@ uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_is_closed();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_live_query();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query();
 uint16_t
+uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query_profiled();
+uint16_t
 uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_database();
 uint16_t
 uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_root();
@@ -296,6 +306,8 @@ uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_commit();
 uint16_t
 uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_is_closed();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query();
+uint16_t
+uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled();
 uint32_t ffi_surrealdb_rn_core_uniffi_contract_version();
 }
 
@@ -1824,6 +1836,18 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                 ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query(
                     rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query_"
+        "profiled"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_method_"
+                                    "surrealdatabase_query_profiled"),
+      3,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query_profiled(
+                rt, thisVal, args, count);
+      });
   props["ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_sign_in_"
         "database"] = jsi::Function::createFromHostFunction(
       rt,
@@ -1930,6 +1954,31 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                  const jsi::Value *args, size_t count) -> jsi::Value {
             return this
                 ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query_"
+        "profiled"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_method_"
+                                    "surrealtransaction_query_profiled"),
+      3,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query_profiled(
+                rt, thisVal, args, count);
+      });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt,
+              "ubrn_uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop"),
+          0,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop(
                     rt, thisVal, args, count);
           });
   props["ubrn_uniffi_surrealdb_rn_core_fn_func_connect"] =
@@ -2474,6 +2523,19 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
             return this->cpp_ffi_surrealdb_rn_core_rust_future_complete_void(
                 rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(rt,
+                                    "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "func_benchmark_boundary_noop"),
+          0,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop(
+                    rt, thisVal, args, count);
+          });
   props["ubrn_uniffi_surrealdb_rn_core_checksum_func_connect"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -2609,6 +2671,18 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                 ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query(
                     rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query_"
+        "profiled"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "method_surrealdatabase_query_profiled"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query_profiled(
+                rt, thisVal, args, count);
+      });
   props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_"
         "database"] = jsi::Function::createFromHostFunction(
       rt,
@@ -2692,6 +2766,18 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
              const jsi::Value *args, size_t count) -> jsi::Value {
         return this
             ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query(
+                rt, thisVal, args, count);
+      });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_"
+        "query_profiled"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "method_surrealtransaction_query_profiled"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled(
                 rt, thisVal, args, count);
       });
   props["ubrn_ffi_surrealdb_rn_core_uniffi_contract_version"] =
@@ -3136,6 +3222,22 @@ jsi::Value NativeSurrealdbRnCore::
                                                          value);
 }
 jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query_profiled(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_fn_method_surrealdatabase_query_profiled(
+          uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                            args[0]),
+          uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(
+              rt, callInvoker, args[1]),
+          uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(
+              rt, callInvoker, args[2]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value NativeSurrealdbRnCore::
     cpp_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_sign_in_database(
         jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
         size_t count) {
@@ -3265,6 +3367,31 @@ jsi::Value NativeSurrealdbRnCore::
                                                               args[1]),
       uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
                                                               args[2]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query_profiled(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_fn_method_surrealtransaction_query_profiled(
+          uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                            args[0]),
+          uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(
+              rt, callInvoker, args[1]),
+          uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(
+              rt, callInvoker, args[2]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop();
 
   return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
                                                          value);
@@ -3876,6 +4003,14 @@ NativeSurrealdbRnCore::cpp_ffi_surrealdb_rn_core_rust_future_complete_void(
 
   return jsi::Value::undefined();
 }
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
 jsi::Value
 NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_checksum_func_connect(
     jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
@@ -3970,6 +4105,15 @@ jsi::Value NativeSurrealdbRnCore::
   return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }
 jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query_profiled(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_query_profiled();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
     cpp_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_sign_in_database(
         jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
         size_t count) {
@@ -4029,6 +4173,15 @@ jsi::Value NativeSurrealdbRnCore::
         size_t count) {
   auto value =
       uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled();
 
   return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }

@@ -8,7 +8,7 @@ mod wire;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect as connect_any};
@@ -34,6 +34,19 @@ pub struct ConnectOptions {
 pub struct QueryStatementResult {
     pub statement_index: u32,
     pub value_json: String,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct NativeQueryTiming {
+    pub input_decode_ns: u64,
+    pub engine_ns: u64,
+    pub output_encode_ns: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct NativeProfiledQueryResult {
+    pub results: Vec<QueryStatementResult>,
+    pub timing: NativeQueryTiming,
 }
 
 #[derive(Debug, Clone, uniffi::Enum)]
@@ -210,6 +223,12 @@ pub async fn connect(options: ConnectOptions) -> Result<Arc<SurrealDatabase>, Su
     }))
 }
 
+/// Minimal async round trip used to establish the UniFFI/JSI call baseline.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn benchmark_boundary_noop() -> bool {
+    true
+}
+
 #[uniffi::export(async_runtime = "tokio")]
 impl SurrealTransaction {
     /// Execute one or more statements inside this transaction.
@@ -226,6 +245,26 @@ impl SurrealTransaction {
         let transaction = slot.as_ref().ok_or(SurrealRnError::Closed)?;
         let response = transaction.query(surql).bind(variables).await?.check()?;
         query_results(response)
+    }
+
+    /// Benchmark-only query variant that separates SDK execution from codecs.
+    pub async fn query_profiled(
+        &self,
+        surql: String,
+        variables_json: Option<String>,
+    ) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SurrealRnError::Closed);
+        }
+        let input_started = Instant::now();
+        let variables: Object = decode_variables(variables_json.as_deref())?;
+        let input_decode_ns = elapsed_ns(input_started);
+        let slot = self.inner.lock().await;
+        let transaction = slot.as_ref().ok_or(SurrealRnError::Closed)?;
+        let engine_started = Instant::now();
+        let response = transaction.query(surql).bind(variables).await?.check()?;
+        let engine_ns = elapsed_ns(engine_started);
+        profiled_query_results(response, input_decode_ns, engine_ns)
     }
 
     /// Commit once, persisting all queries executed through this handle.
@@ -351,6 +390,22 @@ impl SurrealDatabase {
         let variables: Object = decode_variables(variables_json.as_deref())?;
         let response = client.query(surql).bind(variables).await?.check()?;
         query_results(response)
+    }
+
+    /// Benchmark-only query variant that separates SDK execution from codecs.
+    pub async fn query_profiled(
+        &self,
+        surql: String,
+        variables_json: Option<String>,
+    ) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+        let client = self.client().await?;
+        let input_started = Instant::now();
+        let variables: Object = decode_variables(variables_json.as_deref())?;
+        let input_decode_ns = elapsed_ns(input_started);
+        let engine_started = Instant::now();
+        let response = client.query(surql).bind(variables).await?.check()?;
+        let engine_ns = elapsed_ns(engine_started);
+        profiled_query_results(response, input_decode_ns, engine_ns)
     }
 
     /// Start a single live SurrealQL statement and return a pull-based stream.
@@ -506,6 +561,27 @@ fn query_results(
     Ok(results)
 }
 
+fn profiled_query_results(
+    response: surrealdb::IndexedResults,
+    input_decode_ns: u64,
+    engine_ns: u64,
+) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+    let output_started = Instant::now();
+    let results = query_results(response)?;
+    Ok(NativeProfiledQueryResult {
+        results,
+        timing: NativeQueryTiming {
+            input_decode_ns,
+            engine_ns,
+            output_encode_ns: elapsed_ns(output_started),
+        },
+    })
+}
+
+fn elapsed_ns(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
+}
+
 fn live_action(action: Action) -> LiveAction {
     match action {
         Action::Create => LiveAction::Create,
@@ -602,6 +678,30 @@ mod tests {
             database.query("RETURN 1".into(), None).await,
             Err(SurrealRnError::Closed)
         ));
+    }
+
+    #[tokio::test]
+    async fn profiled_query_reports_engine_and_codec_timings() {
+        assert!(benchmark_boundary_noop().await);
+        let database = connect(ConnectOptions {
+            endpoint: "memory".into(),
+            namespace: Some("profiled".into()),
+            database: Some("profiled".into()),
+        })
+        .await
+        .unwrap();
+
+        let profiled = database
+            .query_profiled("RETURN 42".into(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            profiled.results[0].value_json,
+            r#"{"$surreal":"int","value":"42"}"#
+        );
+        assert!(profiled.timing.engine_ns > 0);
+        assert!(profiled.timing.output_encode_ns > 0);
     }
 
     #[tokio::test]

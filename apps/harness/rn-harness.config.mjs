@@ -30,7 +30,9 @@ export default {
   ],
   defaultRunner: 'ios',
   platformReadyTimeout: 300_000,
-  bridgeTimeout: 120_000,
+  // Full paired sqlite-bench plus dedicated attribution samples can exceed
+  // the bridge's default RPC window while the device is legitimately busy.
+  bridgeTimeout: 600_000,
   detectNativeCrashes: true,
   resetEnvironmentBetweenTestFiles: true,
   forwardClientLogs: true,
