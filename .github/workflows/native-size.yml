@@ -33,6 +33,13 @@ jobs:
       - run: cargo install cargo-ndk --version 4.1.2 --locked
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter react-native-surrealdb run ubrn:android:size
+      - name: Reclaim native build disk
+        run: |
+          native_library="packages/react-native-surrealdb/android/src/main/jniLibs/arm64-v8a/libsurrealdb_rn_core.so"
+          test -f "$native_library"
+          rm -rf target packages/react-native-surrealdb/android/build
+          test -f "$native_library"
+          df -h .
       - run: pnpm --filter SurrealDbHarness run size:android:benchmark
       - uses: actions/upload-artifact@v4
         if: always()
