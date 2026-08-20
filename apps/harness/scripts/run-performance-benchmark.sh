@@ -77,7 +77,7 @@ if [[ "$PLATFORM" == "android" ]]; then
   ADB="$ANDROID_HOME/platform-tools/adb"
   if "$ADB" get-state >/dev/null 2>&1; then
     "$ADB" uninstall com.surrealdbharness >/dev/null 2>&1 || true
-    "$ADB" logcat -c
+    "$ADB" logcat -c >/dev/null 2>&1 || true
   fi
 
   # Harness shuts down emulators that it started. Capture logcat concurrently
