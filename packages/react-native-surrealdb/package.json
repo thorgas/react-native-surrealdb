@@ -10,13 +10,13 @@
   ],
   "license": "MIT",
   "author": "Tim Horgas",
-  "homepage": "https://github.com/timhorgas/react-native-surrealdb#readme",
+  "homepage": "https://github.com/thorgas/react-native-surrealdb#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/timhorgas/react-native-surrealdb.git"
+    "url": "git+https://github.com/thorgas/react-native-surrealdb.git"
   },
   "bugs": {
-    "url": "https://github.com/timhorgas/react-native-surrealdb/issues"
+    "url": "https://github.com/thorgas/react-native-surrealdb/issues"
   },
   "publishConfig": {
     "access": "public",
