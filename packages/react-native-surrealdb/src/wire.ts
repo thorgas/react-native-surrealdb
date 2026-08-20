@@ -43,10 +43,7 @@ export class SurrealSqlValue {
   readonly kind: SurrealSqlKind;
   readonly value: string;
 
-  constructor(
-    kind: SurrealSqlKind,
-    value: string,
-  ) {
+  constructor(kind: SurrealSqlKind, value: string) {
     this.kind = kind;
     this.value = value;
   }

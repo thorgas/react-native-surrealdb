@@ -144,13 +144,7 @@ export async function runOpSQLiteBenchBenchmark(
     });
 
     database.executeSync('DELETE FROM bench');
-    await coolDown(
-      cooldownMs,
-      signal,
-      onProgress,
-      2,
-      'transaction insert 1k',
-    );
+    await coolDown(cooldownMs, signal, onProgress, 2, 'transaction insert 1k');
     const transactionInsertMs = await measure(() =>
       database.transaction(async transaction => {
         for (let index = 0; index < iterations; index += 1) {

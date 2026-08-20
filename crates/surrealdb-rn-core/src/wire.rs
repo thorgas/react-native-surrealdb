@@ -55,12 +55,12 @@ impl Serialize for WireValue<'_> {
             Value::Duration(value) => tagged(
                 serializer,
                 "duration",
-                Some(Value::Duration(value.clone()).to_sql()),
+                Some(Value::Duration(*value).to_sql()),
             ),
             Value::Datetime(value) => tagged(
                 serializer,
                 "datetime",
-                Some(Value::Datetime(value.clone()).to_sql()),
+                Some(Value::Datetime(*value).to_sql()),
             ),
             Value::Uuid(value) => tagged(serializer, "uuid", Some(value.to_string())),
             Value::Geometry(value) => tagged(

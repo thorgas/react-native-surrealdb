@@ -53,8 +53,9 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
       ...environment,
       surrealDb: '3.2.1',
     });
-    const firstOrderOpSQLiteReport =
-      await runOpSQLiteBenchBenchmark(environment);
+    const firstOrderOpSQLiteReport = await runOpSQLiteBenchBenchmark(
+      environment,
+    );
     firstOrderContext = {
       firstOrderSurrealReport,
       firstOrderOpSQLiteReport,
@@ -67,8 +68,9 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
     }
     const { firstOrderSurrealReport, firstOrderOpSQLiteReport } =
       firstOrderContext;
-    const secondOrderOpSQLiteReport =
-      await runOpSQLiteBenchBenchmark(environment);
+    const secondOrderOpSQLiteReport = await runOpSQLiteBenchBenchmark(
+      environment,
+    );
     const secondOrderSurrealReport = await runSQLiteBenchBenchmark({
       ...environment,
       surrealDb: '3.2.1',
@@ -313,8 +315,8 @@ function medianAttribution(
     engineMs > packagePathMs
       ? 'engine-sdk'
       : packagePathMs > engineMs
-        ? 'package-path'
-        : 'tie';
+      ? 'package-path'
+      : 'tie';
   return {
     engineMs,
     packagePathMs,

@@ -64,8 +64,8 @@ export function buildSQLiteBenchComparisons(
       surrealDbMedianMs < opSQLiteMedianMs
         ? 'surrealdb'
         : opSQLiteMedianMs < surrealDbMedianMs
-          ? 'op-sqlite'
-          : 'tie';
+        ? 'op-sqlite'
+        : 'tie';
     const factor =
       fasterLibrary === 'tie'
         ? 1
@@ -99,7 +99,10 @@ function findMedian(
   if (!metric) {
     throw new Error(`Missing comparable sqlite-bench metric: ${metricName}`);
   }
-  if (!Number.isFinite(metric.summary.medianMs) || metric.summary.medianMs <= 0) {
+  if (
+    !Number.isFinite(metric.summary.medianMs) ||
+    metric.summary.medianMs <= 0
+  ) {
     throw new Error(`Invalid median for sqlite-bench metric: ${metricName}`);
   }
   return metric.summary.medianMs;

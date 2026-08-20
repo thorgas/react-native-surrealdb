@@ -336,8 +336,8 @@ function checksumRows(value: unknown): bigint {
       typeof candidate.sequence === 'bigint'
         ? candidate.sequence
         : typeof candidate.sequence === 'number'
-          ? BigInt(candidate.sequence)
-          : undefined;
+        ? BigInt(candidate.sequence)
+        : undefined;
     if (
       sequence === undefined ||
       typeof candidate.name !== 'string' ||
