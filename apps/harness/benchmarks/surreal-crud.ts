@@ -1,3 +1,8 @@
+/**
+ * Mobile adaptation of surrealdb/crud-bench at the pinned revision below.
+ * See the root THIRD_PARTY_NOTICES.md and PERFORMANCE.md for provenance,
+ * license, methodological differences, and the original workload sources.
+ */
 import { connect, type SurrealClient } from 'react-native-surrealdb';
 
 import { summarize, type DistributionSummary } from './statistics';

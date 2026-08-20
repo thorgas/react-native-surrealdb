@@ -1,3 +1,8 @@
+/**
+ * SurrealQL translation of surrealdb/crud-bench's default workload matrix.
+ * Each group links to its pinned upstream definition. See the root
+ * THIRD_PARTY_NOTICES.md and PERFORMANCE.md for provenance and license details.
+ */
 export type ScanProjection = 'count' | 'id' | 'full';
 
 export type ScanIndex = {

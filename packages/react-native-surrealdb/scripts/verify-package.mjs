@@ -37,6 +37,7 @@ if (packageJson.publishConfig?.tag !== "next")
 for (const path of [
   "README.md",
   "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
   "CHANGELOG.md",
   "Surrealdb.podspec",
   "lib/module/index.js",

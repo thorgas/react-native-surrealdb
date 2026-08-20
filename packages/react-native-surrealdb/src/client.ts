@@ -13,9 +13,15 @@ import {
   type QueryVariables,
   type SurrealValue,
 } from "./wire";
+import { LiveSubscription } from "./subscription";
 
 export { SurrealRnError, SurrealRnError_Tags };
 export type { ConnectOptions };
+export { LiveSubscription } from "./subscription";
+export type {
+  LiveSubscriptionSnapshot,
+  LiveSubscriptionStatus,
+} from "./subscription";
 
 export type CallOptions = { signal: AbortSignal };
 
@@ -113,6 +119,20 @@ export class SurrealClient {
       options,
     );
     return new LiveQuery<T>(liveQuery);
+  }
+
+  /**
+   * Start a multicast subscription backed by one native live query.
+   *
+   * Consumers can listen imperatively or use the React integration. Closing
+   * the subscription cancels the server-side live query.
+   */
+  async subscribe<T = SurrealValue>(
+    surql: string,
+    variables?: QueryVariables,
+    options?: CallOptions,
+  ): Promise<LiveSubscription<T>> {
+    return new LiveSubscription(await this.live<T>(surql, variables, options));
   }
 
   use(namespace: string, database: string, options?: CallOptions) {

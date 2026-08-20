@@ -32,6 +32,7 @@
     "*.podspec",
     "CHANGELOG.md",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "RELEASING.md",
     "!ios/build",
     "!android/build",
@@ -52,6 +53,12 @@
       "react-native": "./src/index.ts",
       "source": "./src/index.ts",
       "default": "./lib/module/index.js"
+    },
+    "./react": {
+      "types": "./lib/typescript/react.d.ts",
+      "react-native": "./src/react.ts",
+      "source": "./src/react.ts",
+      "default": "./lib/module/react.js"
     },
     "./package.json": "./package.json"
   },
