@@ -3,6 +3,7 @@
   "compilerOptions": {
     "baseUrl": ".",
     "paths": {
+      "@op-engineering/op-sqlite": ["./node_modules/@op-engineering/op-sqlite"],
       "react": ["./node_modules/@types/react"],
       "react-native": ["./node_modules/react-native"],
       "react-native-harness": ["./node_modules/react-native-harness"],

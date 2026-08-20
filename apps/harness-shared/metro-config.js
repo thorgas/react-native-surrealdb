@@ -23,6 +23,10 @@ function createMetroConfig({
     resolver: {
       blockList,
       extraNodeModules: {
+        '@op-engineering/op-sqlite': path.resolve(
+          hostRoot,
+          'node_modules/@op-engineering/op-sqlite',
+        ),
         react: path.resolve(hostRoot, 'node_modules/react'),
         'react-native': path.resolve(
           hostRoot,
