@@ -29,8 +29,7 @@ which is included in npm releases.
   provide the device runner and generated native host foundation.
 - [OP-SQLite](https://github.com/OP-Engineering/op-sqlite) informed the
   benchmark methodology. [Oscar Franco's `sqlite-bench`](https://github.com/ospfranco/sqlite-bench)
-  was adapted for historical paired SQLite/SurrealDB benchmark branches. Those
-  paired benchmark files are not part of the current checkout.
+  was adapted for the paired SQLite/SurrealDB benchmarks.
 
 See [PERFORMANCE.md](./PERFORMANCE.md) for the detailed methodology, limitations,
 and pinned source references.

@@ -141,10 +141,9 @@ The test and benchmark work deserves its own explicit credit:
   benchmark workload categories, Release-app execution pattern, cooldowns, and
   the need to measure both query completion and full JSI value materialization.
 - [Oscar Franco's `sqlite-bench`](https://github.com/ospfranco/sqlite-bench) was
-  the source for the historical paired SQLite/SurrealDB benchmark adaptation.
+  the source for the paired SQLite/SurrealDB benchmark adaptation.
   The repository history pins the studied revision and records what was adapted
-  or excluded; that paired code lives in benchmark branches rather than this
-  current checkout.
+  or excluded.
 - [SurrealDB's `crud-bench`](https://github.com/surrealdb/crud-bench) is the
   source for the workload matrix adapted by the current mobile benchmark suite,
   with pinned source links beside the translated cases.
