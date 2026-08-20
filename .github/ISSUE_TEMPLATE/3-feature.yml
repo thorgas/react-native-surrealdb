@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose new functionality for react-native-surrealdb.
+type: Feature
+labels: [triage]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for proposing a feature for react-native-surrealdb.
+
+  - id: use-case
+    type: textarea
+    attributes:
+      label: Use case
+      description: What are you trying to build, and why is the current library insufficient?
+    validations:
+      required: true
+
+  - id: proposal
+    type: textarea
+    attributes:
+      label: Proposed functionality
+      description: Describe the desired behavior. Include an API sketch when useful.
+    validations:
+      required: true
+
+  - id: alternatives
+    type: textarea
+    attributes:
+      label: Alternatives considered
+      description: Describe other libraries, workarounds, or designs you considered.
+
+  - id: scope
+    type: textarea
+    attributes:
+      label: Scope and tradeoffs
+      description: Note relevant platform differences, compatibility concerns, native dependencies, performance costs, or package-size impact.
+
+  - type: checkboxes
+    attributes:
+      label: Existing issues
+      options:
+        - label: I searched the existing issues and did not find a duplicate.
+          required: true
