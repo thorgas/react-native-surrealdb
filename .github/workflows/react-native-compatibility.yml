@@ -243,6 +243,7 @@ jobs:
           github-token: ${{ github.token }}
           working-directory: apps/${{ matrix.host }}
           destination: simulator
+          rock-build-extra-params: --extra-params "ARCHS=arm64 ONLY_ACTIVE_ARCH=YES"
           scheme: ReactTestApp
           configuration: Debug
           comment-bot: false
