@@ -115,6 +115,8 @@ jobs:
     needs: android-native
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      GITHUB_TOKEN: ${{ github.token }}
     strategy:
       fail-fast: false
       matrix:
@@ -145,7 +147,7 @@ jobs:
           path: packages/react-native-surrealdb/android/src/main/jniLibs
       - uses: callstackincubator/android@599c4a7f0f78cbb1b3fdcd3aea220ee9fbb7e973
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           working-directory: apps/${{ matrix.host }}
           variant: debug
           comment-bot: false
@@ -157,6 +159,7 @@ jobs:
     timeout-minutes: 60
     env:
       BUNDLE_GEMFILE: ${{ github.workspace }}/apps/harness-rn86/Gemfile
+      GITHUB_TOKEN: ${{ github.token }}
     strategy:
       fail-fast: false
       matrix:
@@ -197,7 +200,7 @@ jobs:
           bundle exec pod install
       - uses: callstackincubator/ios@623ebea314454cbe2b405dad5d1c6c42a9a89109
         with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-token: ${{ github.token }}
           working-directory: apps/${{ matrix.host }}
           destination: simulator
           scheme: ReactTestApp

@@ -15,7 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  android:
+  android-native:
+    name: Android native library
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -34,14 +35,61 @@ jobs:
       - run: cargo install cargo-ndk --version 4.1.2 --locked
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter react-native-surrealdb run ubrn:android:size
-      - name: Reclaim native build disk
-        run: |
-          native_library="packages/react-native-surrealdb/android/src/main/jniLibs/arm64-v8a/libsurrealdb_rn_core.so"
-          test -f "$native_library"
-          rm -rf target packages/react-native-surrealdb/android/build
-          test -f "$native_library"
-          df -h .
-      - run: pnpm --filter surrealdb-harness-rn86 run size:android:benchmark
+      - uses: actions/upload-artifact@v4
+        with:
+          name: surrealdb-android-size-native
+          path: packages/react-native-surrealdb/android/src/main/jniLibs/arm64-v8a/libsurrealdb_rn_core.so
+          retention-days: 1
+
+  android-baseline:
+    name: Android stock baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: android-actions/setup-android@v3
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter surrealdb-harness-rn86 run size:android:baseline
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-size-baseline
+          path: |
+            apps/harness-rn86/size-results/android/baseline.apk
+            apps/harness-rn86/size-results/android/baseline-report.json
+          retention-days: 1
+
+  android-candidate:
+    name: Android candidate
+    needs:
+      - android-native
+      - android-baseline
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: android-actions/setup-android@v3
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: surrealdb-android-size-native
+          path: packages/react-native-surrealdb/android/src/main/jniLibs/arm64-v8a
+      - uses: actions/download-artifact@v4
+        with:
+          name: android-size-baseline
+          path: apps/harness-rn86/size-results/android
+      - run: pnpm --filter surrealdb-harness-rn86 run size:android
+        env:
+          BASELINE_APK: ${{ github.workspace }}/apps/harness-rn86/size-results/android/baseline.apk
       - uses: actions/upload-artifact@v4
         if: always()
         with:
