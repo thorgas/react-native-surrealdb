@@ -1,18 +1,30 @@
 # `react-native-surrealdb` architecture research
 
 Research date: 2026-07-12
-Implementation update: 2026-07-24
+Implementation update: 2026-08-21
 
 ## Implementation status
 
 The native-alpha core described by this research is now implemented. The
 current package supports embedded memory and experimental SurrealKV, remote
 WebSocket connections, authentication, lossless values, pull-based live-query
-handles, and native transaction handles exposed to JavaScript. Transactions
-execute each `query()` immediately under one Rust SDK transaction ID and then
-commit or cancel once; callback transactions automatically cancel when the
-callback throws. The reactive `surreal-store`, reconnect/re-subscription logic,
-and production durability/migration gates remain future work.
+handles, multicast subscriptions, an optional React live-query hook, and native
+transaction handles exposed to JavaScript. Transactions execute each `query()`
+immediately under one Rust SDK transaction ID and then commit or cancel once;
+callback transactions automatically cancel when the callback throws.
+
+Prebuilt release artifacts now cover iOS arm64 devices, arm64/x86_64
+simulators, and Android arm64-v8a, armeabi-v7a, x86_64, and x86. Local native
+build validation passes across the isolated React Native 0.82.1, 0.83.10,
+0.84.1, 0.85.3, and 0.86.0 hosts. The package remains New-Architecture/Hermes
+only. Its first npm alpha has passed package verification and an npm publish dry
+run but has not been published. The current tarball is approximately 279 MB
+compressed and 912 MB unpacked, so native artifact size remains a release and
+consumer-experience concern.
+
+The full reactive `surreal-store`, automatic reconnect/re-subscription, a true
+local-first synchronization engine, and production durability/migration gates
+remain future work.
 
 The recommendation and project comparisons below retain their original
 research-date context. Current package behavior is documented in
@@ -128,7 +140,12 @@ packages/
     android/
     cpp/
 apps/
-  harness/
+  harness-shared/
+  harness-rn82/
+  harness-rn83/
+  harness-rn84/
+  harness-rn85/
+  harness-rn86/
 ```
 
 The optional `surreal-store` and dedicated Expo example have not been created.
@@ -309,12 +326,19 @@ Minimum release matrix:
 
 - React Native New Architecture with Hermes;
 - iOS device arm64, iOS simulator arm64 and x86_64;
-- Android arm64-v8a and x86_64 first; add armeabi-v7a only if demand justifies build size and CI cost;
+- Android arm64-v8a, armeabi-v7a, x86_64, and x86;
 - bare RN example and Expo development-build example;
 - Debug and Release builds;
 - app restart, Fast Refresh/native module invalidation, background/foreground, forced termination, and low-storage tests.
 
 CI should generate bindings, fail on generated diffs, build all native targets, run Rust unit tests, TypeScript codec parity tests, RN integration tests, and publish size reports. Releases should contain prebuilt native artifacts so consumers do not need a Rust toolchain. Pin the Rust toolchain, SurrealDB crate, UniFFI, generator, NDK, CMake, Xcode, and minimum platform versions.
+
+The implemented compatibility workflow builds shared Android and iOS native
+artifacts and exercises React Native 0.82 through 0.86 in separate RNTA hosts.
+The native-size workflow builds the Rust library, stock RNTA baseline, and
+SurrealDB candidate on separate runners, then compares the downloaded baseline
+and candidate APKs. Physical-device lifecycle, forced-termination, migration,
+and low-storage coverage are still required before a stable release.
 
 Use [React Native Harness](https://github.com/callstackincubator/react-native-harness) for native-module correctness, lifecycle, cancellation, crash, persistence, and JavaScript/native integration tests on iOS and Android. Harness executes Jest-style tests serially inside the real React Native runtime, supports simulators/emulators and physical devices, detects native crashes, and has an official CI action. Its test bundle requires a Debug application, so Harness timings are useful as a controlled regression signal but must not be presented as production performance. Canonical performance gates should come from a dedicated Release benchmark app on pinned physical devices.
 
@@ -363,4 +387,10 @@ Search did not reveal an established public package named `react-native-surreald
 
 ## Bottom line
 
-The project is feasible enough to justify a focused build spike, and Jazz demonstrates the most practical bridge path. The largest unknown is not JSI—it is whether the full SurrealDB embedded engine, especially beta SurrealKV, has acceptable mobile build compatibility, resource use, durability, and upgrade behavior. Prove that before investing in a broad SDK or state-management API.
+The native binding approach is proven across the supported iOS and Android build
+targets, and Jazz's UniFFI-based architecture remains the right bridge model for
+this alpha. The largest remaining unknown is not JSI or basic mobile build
+compatibility; it is whether experimental SurrealKV has acceptable long-term
+resource use, forced-termination durability, recovery, and upgrade behavior in
+production. Prove those properties before calling the package stable or
+investing in a broad state-management or synchronization API.

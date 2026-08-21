@@ -61,6 +61,47 @@ CI passes `GITHUB_TOKEN` to the pinned Rock Android and iOS actions and grants
 only `contents: read` and `actions: write`. A cache miss builds and uploads the
 binary; the next job with the same native fingerprint downloads it.
 
+Each static host exposes Rock's remote-cache command through `rock:cache`. List
+the cache records for an exact host and native build configuration from the
+repository root:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run rock:cache list \
+  --platform android --traits debug
+pnpm --filter surrealdb-harness-rn86 run rock:cache list \
+  --platform ios --traits simulator,Debug
+```
+
+Rock normally uploads a successful local build automatically. To upload an
+already-built binary explicitly, pass the artifact produced by that same host,
+platform, and configuration:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run rock:cache upload \
+  --platform android --traits debug \
+  --binary-path android/app/build/outputs/apk/debug/app-debug.apk
+pnpm --filter surrealdb-harness-rn86 run rock:cache upload \
+  --platform ios --traits simulator,Debug \
+  --binary-path /absolute/path/to/ReactTestApp.app
+```
+
+The iOS `.app` location depends on the selected Xcode build folder, so resolve
+it from the completed local build rather than copying the placeholder. A cache
+record is usable only when its Rock fingerprint and uploaded artifact both
+exist; do not upload an artifact built by another React Native host.
+
+After a compatibility workflow has completed, list its run IDs and rerun only
+the failed jobs with the GitHub CLI:
+
+```sh
+gh run list --repo thorgas/react-native-surrealdb \
+  --workflow "React Native compatibility"
+gh run rerun <run-id> --repo thorgas/react-native-surrealdb --failed
+```
+
+Failures that happen before Rock performs its cache lookup, such as an explicit
+`pod install` failure, must be fixed or retried independently of the cache.
+
 Native host configuration belongs in each host's `app.json`, the RNTA manifest.
 Application code belongs in `harness-shared`, not in generated native projects.
 

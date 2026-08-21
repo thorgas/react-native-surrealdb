@@ -11,6 +11,7 @@
     "lint": "eslint --config .eslintrc.js ../harness-shared index.js",
     "prepare:ios": "bash ../harness-shared/scripts/prepare-ios.sh",
     "rock:android": "rock run:android",
+    "rock:cache": "rock remote-cache",
     "rock:ios": "pnpm run prepare:ios && rock run:ios",
     "start": "rock start",
     "test:harness:android": "react-native-harness --harnessRunner android",
