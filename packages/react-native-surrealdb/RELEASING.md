@@ -83,6 +83,11 @@ symbols from the distributable native libraries while preserving their public
 linker symbols. The pack step has a 260,000,000-byte ceiling and fails before
 release creation when a candidate grows beyond it.
 
+The React Native compatibility workflow performs the same full-package size
+check for pull requests and pushes to `main`. It also verifies that the
+repository root remains private and that the tarball is named
+`react-native-surrealdb`; never run `npm publish` from the repository root.
+
 ## Test the candidate
 
 Download the tarball from the GitHub prerelease and keep it in a location that

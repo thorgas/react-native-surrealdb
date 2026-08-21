@@ -290,6 +290,12 @@ All commands below target the published package:
 | `pnpm --filter react-native-surrealdb pack`      | Runs `prepack` (therefore `release:check`) and creates the npm tarball for consumer testing.                                 |
 | `pnpm --filter react-native-surrealdb publish …` | Runs `prepublishOnly` (also `release:check`) before publishing. Follow the release guide rather than invoking this casually. |
 
+The workspace root is private and must never be published. Publish only the
+tested tarball produced for `packages/react-native-surrealdb`. Pull-request CI
+assembles that complete package from stripped iOS and Android artifacts, checks
+its exact npm name, and rejects it if the compressed tarball exceeds
+260,000,000 bytes.
+
 Prepare native artifacts before a release check:
 
 ```sh

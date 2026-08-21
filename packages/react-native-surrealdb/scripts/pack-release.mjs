@@ -50,6 +50,9 @@ if (report.length !== 1)
   throw new Error("npm pack returned an unexpected report");
 
 const [artifact] = report;
+if (artifact.name !== "react-native-surrealdb") {
+  throw new Error(`refusing to pack unexpected package ${artifact.name}`);
+}
 await writeFile(
   join(outputDirectory, "npm-pack.json"),
   `${JSON.stringify(report, null, 2)}\n`,
