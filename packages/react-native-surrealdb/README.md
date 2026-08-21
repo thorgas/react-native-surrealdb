@@ -19,9 +19,10 @@ Requirements:
 - iOS 15.1 or newer (arm64 devices and Apple Silicon simulators);
 - Android API 24 or newer (arm64-v8a devices and x86_64 emulators).
 
-Intel Mac simulators and 32-bit Android ABIs are not included in the alpha
-package. This keeps the prebuilt native distribution within npm's upload
-boundary while covering current production devices and development hosts.
+Intel Mac iOS simulators do not work with this alpha because the x86_64 iOS
+slice is not included. That slice and the 32-bit Android ABIs were removed to
+keep the prebuilt native distribution below npm's effective upload-size
+boundary. Android x86_64 emulators remain supported.
 Release binaries also use abort-on-panic optimization: an unexpected Rust panic
 terminates the application process instead of unwinding across the native
 boundary. Expected database and validation failures continue to be returned as

@@ -27,6 +27,9 @@ which is included in npm releases.
 - [React Native Harness](https://github.com/callstackincubator/react-native-harness)
   and [React Native Test App](https://github.com/microsoft/react-native-test-app)
   provide the device runner and generated native host foundation.
+- The compatibility harness includes an MIT-licensed CocoaPods project-group
+  workaround adapted from CocoaPods' implementation and the pnpm symlink
+  investigation in [CocoaPods issue #12798](https://github.com/CocoaPods/CocoaPods/issues/12798).
 - [OP-SQLite](https://github.com/OP-Engineering/op-sqlite) informed the
   benchmark methodology. [Oscar Franco's `sqlite-bench`](https://github.com/ospfranco/sqlite-bench)
   was adapted for the paired SQLite/SurrealDB benchmarks.

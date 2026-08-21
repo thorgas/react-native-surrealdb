@@ -3,6 +3,7 @@ ws_dir = ws_dir.parent until
   File.exist?("#{ws_dir}/node_modules/react-native-test-app/test_app.rb") ||
   ws_dir.expand_path.to_s == '/'
 require "#{ws_dir}/node_modules/react-native-test-app/test_app.rb"
+require_relative '../../harness-shared/cocoapods_pathname_workaround'
 
 workspace 'SurrealDbHarnessRN85.xcworkspace'
 
