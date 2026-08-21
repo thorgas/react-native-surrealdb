@@ -78,7 +78,10 @@ package checks, and attaches these files:
 - `SHA256SUMS` — the tarball checksum.
 
 The workflow fails if the tag and package version differ. It never edits or
-commits generated files.
+commits generated files. After binding generation, it strips debug and local
+symbols from the distributable native libraries while preserving their public
+linker symbols. The pack step has a 260,000,000-byte ceiling and fails before
+release creation when a candidate grows beyond it.
 
 ## Test the candidate
 
@@ -100,10 +103,10 @@ locks. Run clean iOS and Android native builds and exercise at least:
 - embedded database restart and persistence when SurrealKV is used; and
 - installation size and startup behavior on representative production devices.
 
-The first static-library alpha packed to approximately 308 MB compressed and
-installed to roughly 1.1 GB. This is a historical upper reference, not an
-acceptable long-term target. Review `npm-pack.json` and treat an unexpected
-increase as a release blocker.
+The first unstripped static-library alpha packed to approximately 284.5 MB and
+was rejected by npm with HTTP 413. Post-generation symbol stripping reduced the
+same four-ABI package to approximately 258.9 MB. Review `npm-pack.json`; the
+automated ceiling retains a small margin below npm's observed upload boundary.
 
 If testing fails, fix the problem and create a new version and tag. Never replace
 a tag or reuse a package version.

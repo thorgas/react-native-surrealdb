@@ -70,6 +70,7 @@ jobs:
       - run: cargo install cargo-ndk --version 4.1.2 --locked
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter react-native-surrealdb run ubrn:android
+      - run: pnpm --filter react-native-surrealdb run release:strip:android
       - uses: actions/upload-artifact@v6
         with:
           name: release-android-native
@@ -97,6 +98,7 @@ jobs:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter react-native-surrealdb run ubrn:ios
+      - run: pnpm --filter react-native-surrealdb run release:strip:ios
       - uses: actions/upload-artifact@v6
         with:
           name: release-ios-native
@@ -137,11 +139,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p release
-          npm pack ./packages/react-native-surrealdb \
-            --ignore-scripts \
-            --json \
-            --pack-destination "$GITHUB_WORKSPACE/release" \
-            > release/npm-pack.json
+          pnpm --filter react-native-surrealdb run release:pack -- "$GITHUB_WORKSPACE/release"
           node -e '
             const fs = require("node:fs");
             const [pack] = JSON.parse(fs.readFileSync("release/npm-pack.json", "utf8"));

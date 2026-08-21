@@ -17,9 +17,12 @@ Prebuilt release artifacts now cover iOS arm64 devices, arm64/x86_64
 simulators, and Android arm64-v8a, armeabi-v7a, x86_64, and x86. Local native
 build validation passes across the isolated React Native 0.82.1, 0.83.10,
 0.84.1, 0.85.3, and 0.86.0 hosts. The package remains New-Architecture/Hermes
-only. Its first npm alpha has passed package verification and an npm publish dry
-run but has not been published. The current tarball is approximately 279 MB
-compressed and 912 MB unpacked, so native artifact size remains a release and
+only. Its first npm alpha passed package verification and a dry run, but npm
+rejected the 284.5 MB upload with HTTP 413. The release pipeline now strips
+non-runtime symbols after binding generation while preserving all four Android
+ABIs and both iOS simulator architectures. The same candidate measures
+approximately 258.9 MB compressed and 801.3 MB unpacked, with a 260,000,000-byte
+automated ceiling. Native artifact size therefore remains a release and
 consumer-experience concern.
 
 The full reactive `surreal-store`, automatic reconnect/re-subscription, a true
