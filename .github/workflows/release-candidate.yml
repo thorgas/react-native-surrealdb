@@ -1,0 +1,179 @@
+name: Build release candidate
+
+on:
+  push:
+    tags:
+      - "[0-9]*.[0-9]*.[0-9]*"
+      - "[0-9]*.[0-9]*.[0-9]*-*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-candidate-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: 22
+  PNPM_VERSION: 11.5.0
+  RUST_VERSION: 1.96.1
+
+jobs:
+  validate:
+    name: Validate release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: metadata
+        name: Match tag, version, and npm channel
+        shell: bash
+        run: |
+          node -e '
+            const pkg = require("./packages/react-native-surrealdb/package.json");
+            const tag = process.env.GITHUB_REF_NAME;
+            const prerelease = pkg.version.includes("-");
+            const expectedChannel = prerelease ? "next" : "latest";
+            if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(tag)) {
+              throw new Error(`tag ${tag} is not a supported release version`);
+            }
+            if (tag !== pkg.version) {
+              throw new Error(`tag ${tag} must equal package version ${pkg.version}`);
+            }
+            if (pkg.publishConfig?.tag !== expectedChannel) {
+              throw new Error(`${pkg.version} must use npm tag ${expectedChannel}`);
+            }
+            process.stdout.write(`prerelease=${prerelease}\n`);
+          ' >> "$GITHUB_OUTPUT"
+
+  android-native:
+    name: Build Android release libraries
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
+      - uses: android-actions/setup-android@v4
+      - run: sdkmanager "ndk;27.1.12297006"
+      - run: cargo install cargo-ndk --version 4.1.2 --locked
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter react-native-surrealdb run ubrn:android
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-android-native
+          path: packages/react-native-surrealdb/android/src/main/jniLibs
+          compression-level: 0
+          retention-days: 1
+
+  ios-native:
+    name: Build iOS release framework
+    needs: validate
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter react-native-surrealdb run ubrn:ios
+      - uses: actions/upload-artifact@v6
+        with:
+          name: release-ios-native
+          path: packages/react-native-surrealdb/SurrealDbRnFramework.xcframework
+          compression-level: 0
+          retention-days: 1
+
+  package:
+    name: Package immutable candidate
+    permissions:
+      contents: write
+    needs:
+      - validate
+      - android-native
+      - ios-native
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-android-native
+          path: packages/react-native-surrealdb/android/src/main/jniLibs
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-ios-native
+          path: packages/react-native-surrealdb/SurrealDbRnFramework.xcframework
+      - run: pnpm --filter react-native-surrealdb run release:check
+      - name: Pack and describe candidate
+        shell: bash
+        run: |
+          mkdir -p release
+          npm pack ./packages/react-native-surrealdb \
+            --ignore-scripts \
+            --json \
+            --pack-destination "$GITHUB_WORKSPACE/release" \
+            > release/npm-pack.json
+          node -e '
+            const fs = require("node:fs");
+            const [pack] = JSON.parse(fs.readFileSync("release/npm-pack.json", "utf8"));
+            if (pack.name !== "react-native-surrealdb") throw new Error("unexpected package name");
+            if (pack.version !== process.env.GITHUB_REF_NAME) throw new Error("packed version does not match tag");
+            console.log(`${pack.name}@${pack.version}: ${pack.size} bytes packed, ${pack.unpackedSize} bytes unpacked`);
+          '
+          (cd release && sha256sum *.tgz > SHA256SUMS)
+      - uses: actions/upload-artifact@v6
+        with:
+          name: react-native-surrealdb-${{ github.ref_name }}
+          path: release
+          compression-level: 0
+          retention-days: 30
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
+        shell: bash
+        run: |
+          if [ "$PRERELEASE" = "true" ]; then
+            gh release create "$GITHUB_REF_NAME" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --prerelease \
+              --generate-notes \
+              --title "react-native-surrealdb $GITHUB_REF_NAME"
+          else
+            gh release create "$GITHUB_REF_NAME" release/* \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --draft \
+              --generate-notes \
+              --title "react-native-surrealdb $GITHUB_REF_NAME"
+          fi

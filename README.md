@@ -79,6 +79,11 @@ See the [package README](./packages/react-native-surrealdb/README.md) for live
 queries, the React hook, supported platforms, native development, and the
 release process.
 
+Maintainers create an immutable GitHub prerelease tarball for production-app
+testing before making a separate, approval-gated npm publication. See the
+[release guide](./packages/react-native-surrealdb/RELEASING.md) for versioning,
+candidate tags, trusted publishing, provenance, and stable promotion.
+
 ## Current limitations
 
 - SurrealKV support remains experimental.
