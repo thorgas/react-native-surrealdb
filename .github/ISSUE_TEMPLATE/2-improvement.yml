@@ -1,0 +1,62 @@
+name: Improvement
+description: Suggest an improvement to existing behavior or APIs.
+type: Improvement
+labels: [triage]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for suggesting an improvement to react-native-surrealdb.
+
+  - id: area
+    type: dropdown
+    attributes:
+      label: Area
+      options:
+        - JavaScript or TypeScript API
+        - Embedded database
+        - Remote connections
+        - Live queries
+        - React integration
+        - iOS integration
+        - Android integration
+        - Performance or package size
+        - Documentation or examples
+        - Testing or developer tooling
+        - Other
+    validations:
+      required: true
+
+  - id: problem
+    type: textarea
+    attributes:
+      label: Problem or limitation
+      description: Describe the current behavior and the use case it makes difficult.
+    validations:
+      required: true
+
+  - id: solution
+    type: textarea
+    attributes:
+      label: Suggested improvement
+      description: Explain what you would change and how callers would use it.
+    validations:
+      required: true
+
+  - id: alternatives
+    type: textarea
+    attributes:
+      label: Alternatives considered
+      description: Describe workarounds or alternative designs you considered.
+
+  - id: additional-context
+    type: textarea
+    attributes:
+      label: Additional context
+      description: Add examples, API sketches, benchmarks, or links that clarify the proposal.
+
+  - type: checkboxes
+    attributes:
+      label: Existing issues
+      options:
+        - label: I searched the existing issues and did not find a duplicate.
+          required: true

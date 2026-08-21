@@ -1,6 +1,37 @@
 # `react-native-surrealdb` architecture research
 
 Research date: 2026-07-12
+Implementation update: 2026-08-21
+
+## Implementation status
+
+The native-alpha core described by this research is now implemented. The
+current package supports embedded memory and experimental SurrealKV, remote
+WebSocket connections, authentication, lossless values, pull-based live-query
+handles, multicast subscriptions, an optional React live-query hook, and native
+transaction handles exposed to JavaScript. Transactions execute each `query()`
+immediately under one Rust SDK transaction ID and then commit or cancel once;
+callback transactions automatically cancel when the callback throws.
+
+Prebuilt release artifacts now cover iOS arm64 devices, arm64/x86_64
+simulators, and Android arm64-v8a, armeabi-v7a, x86_64, and x86. Local native
+build validation passes across the isolated React Native 0.82.1, 0.83.10,
+0.84.1, 0.85.3, and 0.86.0 hosts. The package remains New-Architecture/Hermes
+only. Its first npm alpha passed package verification and a dry run, but npm
+rejected the 284.5 MB upload with HTTP 413. The release pipeline now strips
+non-runtime symbols after binding generation while preserving all four Android
+ABIs and both iOS simulator architectures. The same candidate measures
+approximately 258.9 MB compressed and 801.3 MB unpacked, with a 260,000,000-byte
+automated ceiling. Native artifact size therefore remains a release and
+consumer-experience concern.
+
+The full reactive `surreal-store`, automatic reconnect/re-subscription, a true
+local-first synchronization engine, and production durability/migration gates
+remain future work.
+
+The recommendation and project comparisons below retain their original
+research-date context. Current package behavior is documented in
+`packages/react-native-surrealdb/README.md`.
 
 ## Executive recommendation
 
@@ -86,7 +117,7 @@ Source: [`uniffi-bindgen-react-native`](https://github.com/jhugman/uniffi-bindge
                               │
                               ▼
 @scope/react-native-surrealdb (public TypeScript API)
-  Database • Query • Subscription • codecs • errors • lifecycle
+  Database • Query • Transaction • LiveQuery • codecs • errors • lifecycle
                               │
                               ▼
 generated UniFFI JSI/TurboModule bindings
@@ -100,26 +131,30 @@ surrealdb-rn-core (Rust)
        embedded Mem/SurrealKV       remote WS/WSS
 ```
 
-Suggested monorepo:
+Implemented monorepo:
 
 ```text
+crates/
+  surrealdb-rn-core/
 packages/
   react-native-surrealdb/
     src/
-    rust/
     ios/
     android/
     cpp/
-  surreal-store/
-    src/
-  example-bare/
-  example-expo/
-crates/
-  surrealdb-rn-core/
-docs/
+apps/
+  harness-shared/
+  harness-rn82/
+  harness-rn83/
+  harness-rn84/
+  harness-rn85/
+  harness-rn86/
 ```
 
-An Expo config plugin can automate native configuration, but the library cannot run in Expo Go because it contains custom native code. Validate Expo development builds separately from a bare React Native app.
+The optional `surreal-store` and dedicated Expo example have not been created.
+An Expo config plugin can automate native configuration, but the library cannot
+run in Expo Go because it contains custom native code. Validate Expo development
+builds separately from the bare React Native Harness app.
 
 ## Native API: keep it smaller than the SurrealDB Rust SDK
 
@@ -127,20 +162,37 @@ Do not expose every generic Rust SDK builder through UniFFI. A narrow object API
 
 ```ts
 export type ConnectOptions = {
-  endpoint: `mem://${string}` | `surrealkv://${string}` | `ws://${string}` | `wss://${string}`
-  namespace?: string
-  database?: string
+  endpoint: string;
+  namespace?: string;
+  database?: string;
+};
+
+export interface SurrealClient {
+  query<T = unknown>(
+    surql: string,
+    vars?: SurrealVars,
+  ): Promise<QueryStatement<T>[]>;
+  beginTransaction(): Promise<SurrealTransaction>;
+  transaction<T>(
+    run: (transaction: SurrealTransaction) => Promise<T>,
+  ): Promise<T>;
+  live<T = unknown>(surql: string, vars?: SurrealVars): Promise<LiveQuery<T>>;
+  use(namespace: string, database: string): Promise<void>;
+  close(): Promise<void>;
 }
 
-export interface SurrealDatabase {
-  query<T = unknown>(surql: string, vars?: SurrealVars): Promise<QueryResult<T>[]>
-  use(options: { namespace: string; database: string }): Promise<void>
-  close(): Promise<void>
-  subscribe<T>(surql: string, vars: SurrealVars | undefined, listener: LiveListener<T>): Promise<Subscription>
+export interface SurrealTransaction {
+  query<T = unknown>(
+    surql: string,
+    vars?: SurrealVars,
+  ): Promise<QueryStatement<T>[]>;
+  commit(): Promise<void>;
+  cancel(): Promise<void>;
 }
 
-export interface Subscription {
-  cancel(): Promise<void>
+export interface LiveQuery<T> extends AsyncIterable<LiveNotification<T>> {
+  next(): Promise<LiveNotification<T> | undefined>;
+  close(): Promise<void>;
 }
 ```
 
@@ -154,17 +206,20 @@ Define a versioned tagged wire format in Rust and TypeScript, for example:
 
 ```ts
 type SurrealValue =
-  | null | boolean | string | number
-  | { $surreal: 'none' }
-  | { $surreal: 'int'; value: string }
-  | { $surreal: 'decimal'; value: string }
-  | { $surreal: 'record'; table: string; key: SurrealValue }
-  | { $surreal: 'datetime'; value: string }
-  | { $surreal: 'duration'; value: string }
-  | { $surreal: 'uuid'; value: string }
-  | { $surreal: 'bytes'; base64: string }
+  | null
+  | boolean
+  | string
+  | number
+  | { $surreal: "none" }
+  | { $surreal: "int"; value: string }
+  | { $surreal: "decimal"; value: string }
+  | { $surreal: "record"; table: string; key: SurrealValue }
+  | { $surreal: "datetime"; value: string }
+  | { $surreal: "duration"; value: string }
+  | { $surreal: "uuid"; value: string }
+  | { $surreal: "bytes"; base64: string }
   | SurrealValue[]
-  | { [key: string]: SurrealValue }
+  | { [key: string]: SurrealValue };
 ```
 
 Start with a UTF-8 JSON encoding of that algebra for correctness. Benchmark moving the same schema to a binary buffer only after profiling proves bridge serialization is material. The public API may decode familiar types into wrapper classes (`RecordId`, `Decimal`, etc.) while retaining a lossless raw mode.
@@ -173,6 +228,9 @@ Start with a UTF-8 JSON encoding of that algebra for correctness. Benchmark movi
 
 - One long-lived Tokio runtime per native module, not one runtime per call.
 - One `Arc`-owned database handle per connection.
+- One `Arc`-owned transaction handle around the Rust SDK transaction; serialize
+  queries on that handle, commit or cancel idempotently, and cancel registered
+  open transactions when the database closes.
 - No database mutex held while invoking a JavaScript callback.
 - Every stream has an explicit cancellation token and is cancelled during connection close/module invalidation.
 - Catch Rust panics at every exported sync and async boundary and convert them to typed errors.
@@ -215,20 +273,20 @@ Recommended v1 concepts:
 
 ```ts
 const todos = store.query({
-  key: ['todos', projectId],
-  surql: 'SELECT * FROM todo WHERE project = $project ORDER BY created_at',
+  key: ["todos", projectId],
+  surql: "SELECT * FROM todo WHERE project = $project ORDER BY created_at",
   vars: { project: projectId },
-})
+});
 
 function TodoCount() {
-  return useSurrealSelector(todos, state => state.data.length)
+  return useSurrealSelector(todos, (state) => state.data.length);
 }
 
 await store.mutate({
-  surql: 'UPDATE $id MERGE $patch RETURN AFTER',
+  surql: "UPDATE $id MERGE $patch RETURN AFTER",
   vars: { id, patch },
-  optimistic: cache => cache.patchRecord(id, patch),
-})
+  optimistic: (cache) => cache.patchRecord(id, patch),
+});
 ```
 
 Core behaviors:
@@ -271,12 +329,19 @@ Minimum release matrix:
 
 - React Native New Architecture with Hermes;
 - iOS device arm64, iOS simulator arm64 and x86_64;
-- Android arm64-v8a and x86_64 first; add armeabi-v7a only if demand justifies build size and CI cost;
+- Android arm64-v8a, armeabi-v7a, x86_64, and x86;
 - bare RN example and Expo development-build example;
 - Debug and Release builds;
 - app restart, Fast Refresh/native module invalidation, background/foreground, forced termination, and low-storage tests.
 
 CI should generate bindings, fail on generated diffs, build all native targets, run Rust unit tests, TypeScript codec parity tests, RN integration tests, and publish size reports. Releases should contain prebuilt native artifacts so consumers do not need a Rust toolchain. Pin the Rust toolchain, SurrealDB crate, UniFFI, generator, NDK, CMake, Xcode, and minimum platform versions.
+
+The implemented compatibility workflow builds shared Android and iOS native
+artifacts and exercises React Native 0.82 through 0.86 in separate RNTA hosts.
+The native-size workflow builds the Rust library, stock RNTA baseline, and
+SurrealDB candidate on separate runners, then compares the downloaded baseline
+and candidate APKs. Physical-device lifecycle, forced-termination, migration,
+and low-storage coverage are still required before a stable release.
 
 Use [React Native Harness](https://github.com/callstackincubator/react-native-harness) for native-module correctness, lifecycle, cancellation, crash, persistence, and JavaScript/native integration tests on iOS and Android. Harness executes Jest-style tests serially inside the real React Native runtime, supports simulators/emulators and physical devices, detects native crashes, and has an official CI action. Its test bundle requires a Debug application, so Harness timings are useful as a controlled regression signal but must not be presented as production performance. Canonical performance gates should come from a dedicated Release benchmark app on pinned physical devices.
 
@@ -307,7 +372,6 @@ Prove cancellation and absence of callbacks after close/invalidate. Repeatedly m
 
 Implement these native integration cases as Harness suites, with platform-specific files where necessary. Include forced native errors/panics, timeout recovery, repeated database deletion/recreation, concurrent queries, close during an in-flight query, app relaunch, and validation that no callback arrives after cancellation.
 
-
 ## Licensing and naming
 
 SurrealDB core uses the Business Source License, while some SDKs and related crates use Apache-2.0 or MIT. SurrealDB's current FAQ explicitly permits embedding and shipping SurrealDB in customer applications; the restriction is offering a commercial hosted database-as-a-service. Preserve all required notices and obtain a license review before publishing native binaries, especially if the package or a downstream product could be positioned as hosted SurrealDB.
@@ -326,4 +390,10 @@ Search did not reveal an established public package named `react-native-surreald
 
 ## Bottom line
 
-The project is feasible enough to justify a focused build spike, and Jazz demonstrates the most practical bridge path. The largest unknown is not JSI—it is whether the full SurrealDB embedded engine, especially beta SurrealKV, has acceptable mobile build compatibility, resource use, durability, and upgrade behavior. Prove that before investing in a broad SDK or state-management API.
+The native binding approach is proven across the supported iOS and Android build
+targets, and Jazz's UniFFI-based architecture remains the right bridge model for
+this alpha. The largest remaining unknown is not JSI or basic mobile build
+compatibility; it is whether experimental SurrealKV has acceptable long-term
+resource use, forced-termination durability, recovery, and upgrade behavior in
+production. Prove those properties before calling the package stable or
+investing in a broad state-management or synchronization API.

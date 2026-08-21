@@ -3,6 +3,8 @@ use std::str::FromStr;
 
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
+use serde::Serialize;
+use serde::ser::{SerializeMap, SerializeSeq, Serializer};
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue, json};
 use surrealdb::types::{Array, Bytes, Decimal, Number, Object, RecordId, Set, ToSql, Uuid, Value};
 
@@ -11,9 +13,133 @@ use crate::SurrealRnError;
 const TAG: &str = "$surreal";
 
 pub fn encode_value(value: Value) -> Result<String, SurrealRnError> {
+    serde_json::to_string(&WireValue(&value)).map_err(|error| SurrealRnError::Codec {
+        message: error.to_string(),
+    })
+}
+
+pub fn encode_value_tree(value: Value) -> Result<String, SurrealRnError> {
     serde_json::to_string(&to_wire_value(value)).map_err(|error| SurrealRnError::Codec {
         message: error.to_string(),
     })
+}
+
+struct WireValue<'a>(&'a Value);
+
+impl Serialize for WireValue<'_> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        match self.0 {
+            Value::None => tagged(serializer, "none", None),
+            Value::Null => serializer.serialize_none(),
+            Value::Bool(value) => serializer.serialize_bool(*value),
+            Value::Number(Number::Int(value)) => tagged(serializer, "int", Some(value.to_string())),
+            Value::Number(Number::Float(value)) if value.is_finite() => {
+                serializer.serialize_f64(*value)
+            }
+            Value::Number(Number::Float(value)) => {
+                tagged(serializer, "float", Some(value.to_string()))
+            }
+            Value::Number(Number::Decimal(value)) => {
+                tagged(serializer, "decimal", Some(value.to_string()))
+            }
+            Value::String(value) => serializer.serialize_str(value),
+            Value::Bytes(value) => {
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry(TAG, "bytes")?;
+                map.serialize_entry("base64", &BASE64.encode(value.as_ref()))?;
+                map.end()
+            }
+            Value::Duration(value) => tagged(
+                serializer,
+                "duration",
+                Some(Value::Duration(*value).to_sql()),
+            ),
+            Value::Datetime(value) => tagged(
+                serializer,
+                "datetime",
+                Some(Value::Datetime(*value).to_sql()),
+            ),
+            Value::Uuid(value) => tagged(serializer, "uuid", Some(value.to_string())),
+            Value::Geometry(value) => tagged(
+                serializer,
+                "geometry",
+                Some(Value::Geometry(value.clone()).to_sql()),
+            ),
+            Value::Table(value) => tagged(serializer, "table", Some(value.as_str().to_owned())),
+            Value::RecordId(value) => tagged(serializer, "record", Some(value.to_sql())),
+            Value::File(value) => tagged(
+                serializer,
+                "file",
+                Some(Value::File(value.clone()).to_sql()),
+            ),
+            Value::Range(value) => tagged(
+                serializer,
+                "range",
+                Some(Value::Range(value.clone()).to_sql()),
+            ),
+            Value::Regex(value) => tagged(
+                serializer,
+                "regex",
+                Some(Value::Regex(value.clone()).to_sql()),
+            ),
+            Value::Array(values) => {
+                let mut sequence = serializer.serialize_seq(Some(values.len()))?;
+                for value in values.iter() {
+                    sequence.serialize_element(&WireValue(value))?;
+                }
+                sequence.end()
+            }
+            Value::Object(values) => {
+                let mut map = serializer.serialize_map(Some(values.len()))?;
+                for (key, value) in values.iter() {
+                    map.serialize_entry(key, &WireValue(value))?;
+                }
+                map.end()
+            }
+            Value::Set(values) => {
+                let mut map = serializer.serialize_map(Some(2))?;
+                map.serialize_entry(TAG, "set")?;
+                map.serialize_entry("values", &WireValues(values.iter()))?;
+                map.end()
+            }
+        }
+    }
+}
+
+struct WireValues<'a, I>(I)
+where
+    I: Iterator<Item = &'a Value> + Clone;
+
+impl<'a, I> Serialize for WireValues<'a, I>
+where
+    I: Iterator<Item = &'a Value> + Clone,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let iterator = self.0.clone();
+        let mut sequence = serializer.serialize_seq(iterator.size_hint().1)?;
+        for value in iterator {
+            sequence.serialize_element(&WireValue(value))?;
+        }
+        sequence.end()
+    }
+}
+
+fn tagged<S>(serializer: S, kind: &str, value: Option<String>) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    let mut map = serializer.serialize_map(Some(if value.is_some() { 2 } else { 1 }))?;
+    map.serialize_entry(TAG, kind)?;
+    if let Some(value) = value {
+        map.serialize_entry("value", &value)?;
+    }
+    map.end()
 }
 
 pub fn decode_variables(input: Option<&str>) -> Result<Object, SurrealRnError> {
@@ -195,6 +321,33 @@ mod tests {
             encoded,
             r#"{"$surreal":"int","value":"9223372036854775807"}"#
         );
+    }
+
+    #[test]
+    fn streaming_and_tree_encoders_produce_equivalent_wire_values() {
+        let value = Value::Object(
+            decode_variables(Some(
+                r#"{
+                    "bytes":{"$surreal":"bytes","base64":"AAH+/w=="},
+                    "count":{"$surreal":"int","value":"42"},
+                    "decimal":{"$surreal":"decimal","value":"1234567890.0000000001"},
+                    "finiteFloat":1.25,
+                    "missing":{"$surreal":"none"},
+                    "name":"answer",
+                    "nested":[true,null],
+                    "nonFiniteFloat":{"$surreal":"float","value":"NaN"},
+                    "record":{"$surreal":"record","value":"person:ada"},
+                    "set":{"$surreal":"set","values":["x",{"$surreal":"int","value":"7"}]},
+                    "uuid":{"$surreal":"uuid","value":"2f1b0ff8-0c2d-4b2b-bdce-497784869c2f"}
+                }"#,
+            ))
+            .unwrap(),
+        );
+        let streaming: JsonValue =
+            serde_json::from_str(&encode_value(value.clone()).unwrap()).unwrap();
+        let tree: JsonValue = serde_json::from_str(&encode_value_tree(value).unwrap()).unwrap();
+
+        assert_eq!(streaming, tree);
     }
 
     #[test]

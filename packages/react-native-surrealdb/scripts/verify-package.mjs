@@ -26,17 +26,32 @@ const packageJson = JSON.parse(
 if (packageJson.private === true) failures.push("package must not be private");
 if (packageJson.name !== "react-native-surrealdb")
   failures.push("unexpected package name");
-if (!packageJson.version.includes("-"))
-  failures.push("alpha package version must be a prerelease");
+const isPrerelease = packageJson.version.includes("-");
 if (packageJson.license !== "MIT") failures.push("package license must be MIT");
+if (
+  (typeof packageJson.author !== "string" ||
+    packageJson.author.trim().length === 0) &&
+  (typeof packageJson.author !== "object" ||
+    packageJson.author === null ||
+    Object.keys(packageJson.author).length === 0)
+)
+  failures.push("author is required by the CocoaPods podspec");
+if (
+  typeof packageJson.homepage !== "string" ||
+  !URL.canParse(packageJson.homepage)
+)
+  failures.push("homepage must be a valid URL for the CocoaPods podspec");
 if (packageJson.publishConfig?.access !== "public")
   failures.push("publishConfig.access must be public");
-if (packageJson.publishConfig?.tag !== "next")
+if (isPrerelease && packageJson.publishConfig?.tag !== "next")
   failures.push("prereleases must use the next dist-tag");
+if (!isPrerelease && packageJson.publishConfig?.tag !== "latest")
+  failures.push("stable releases must use the latest dist-tag");
 
 for (const path of [
   "README.md",
   "LICENSE",
+  "THIRD_PARTY_NOTICES.md",
   "CHANGELOG.md",
   "Surrealdb.podspec",
   "lib/module/index.js",

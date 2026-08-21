@@ -1,0 +1,59 @@
+{
+  "name": "surrealdb-harness-rn83",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "android": "react-native run-android",
+    "build:android": "react-native bundle --entry-file index.js --platform android --dev true --bundle-output dist/main.android.jsbundle --assets-dest dist/res",
+    "build:ios": "react-native bundle --entry-file index.js --platform ios --dev true --bundle-output dist/main.ios.jsbundle --assets-dest dist",
+    "configure": "configure-test-app",
+    "ios": "pnpm run prepare:ios && react-native run-ios --simulator \"${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro (26.1)}\"",
+    "lint": "eslint --config .eslintrc.js ../harness-shared index.js",
+    "prepare:ios": "bash ../harness-shared/scripts/prepare-ios.sh",
+    "rock:android": "rock run:android",
+    "rock:cache": "rock remote-cache",
+    "rock:ios": "pnpm run prepare:ios && rock run:ios",
+    "start": "rock start",
+    "test:harness:android": "react-native-harness --harnessRunner android",
+    "test:harness:ios": "react-native-harness --harnessRunner ios",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@op-engineering/op-sqlite": "17.1.1",
+    "@react-native/new-app-screen": "catalog:rn83",
+    "react": "catalog:rn83",
+    "react-native": "catalog:rn83",
+    "react-native-safe-area-context": "catalog:",
+    "react-native-surrealdb": "workspace:*"
+  },
+  "devDependencies": {
+    "@babel/core": "catalog:",
+    "@babel/preset-env": "catalog:",
+    "@babel/runtime": "catalog:",
+    "@react-native-community/cli": "catalog:rn83",
+    "@react-native-community/cli-platform-android": "catalog:rn83",
+    "@react-native-community/cli-platform-ios": "catalog:rn83",
+    "@react-native-harness/platform-android": "catalog:",
+    "@react-native-harness/platform-apple": "catalog:",
+    "@react-native/babel-preset": "catalog:rn83",
+    "@react-native/eslint-config": "catalog:rn83",
+    "@react-native/metro-config": "catalog:rn83",
+    "@react-native/typescript-config": "catalog:rn83",
+    "@rnx-kit/metro-config": "catalog:",
+    "@rock-js/platform-android": "catalog:",
+    "@rock-js/platform-ios": "catalog:",
+    "@rock-js/plugin-metro": "catalog:",
+    "@rock-js/provider-github": "catalog:",
+    "@types/react": "catalog:rn83",
+    "eslint": "catalog:",
+    "jest": "catalog:",
+    "prettier": "catalog:",
+    "react-native-harness": "catalog:",
+    "react-native-test-app": "catalog:",
+    "rock": "catalog:",
+    "typescript": "catalog:"
+  },
+  "engines": {
+    "node": ">=20.19.4"
+  }
+}

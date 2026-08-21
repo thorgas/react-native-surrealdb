@@ -8,17 +8,18 @@ mod wire;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use surrealdb::Surreal;
 use surrealdb::engine::any::{Any, connect as connect_any};
+use surrealdb::method::Transaction as NativeTransaction;
 use surrealdb::opt::auth::{Database as DatabaseCredentials, Root, Token};
 use surrealdb::types::{Action, Object, Value};
 use tokio::sync::{Mutex as AsyncMutex, RwLock as AsyncRwLock, watch};
 
 use futures::StreamExt;
 
-use crate::wire::{decode_variables, encode_value};
+use crate::wire::{decode_variables, encode_value, encode_value_tree};
 
 uniffi::setup_scaffolding!();
 
@@ -33,6 +34,37 @@ pub struct ConnectOptions {
 pub struct QueryStatementResult {
     pub statement_index: u32,
     pub value_json: String,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct NativeBatchQuery {
+    pub surql: String,
+    pub variables_json: Option<String>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct NativeBatchQueryResult {
+    pub query_index: u32,
+    pub results: Vec<QueryStatementResult>,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct NativeQueryTiming {
+    pub input_decode_ns: u64,
+    pub engine_ns: u64,
+    pub output_encode_ns: u64,
+}
+
+#[derive(Debug, Clone, uniffi::Record)]
+pub struct NativeProfiledQueryResult {
+    pub results: Vec<QueryStatementResult>,
+    pub timing: NativeQueryTiming,
+}
+
+#[derive(Debug, Clone, Copy, uniffi::Enum)]
+pub enum NativeOutputEncoding {
+    Tree,
+    Streaming,
 }
 
 #[derive(Debug, Clone, uniffi::Enum)]
@@ -87,6 +119,13 @@ pub struct SurrealDatabase {
     // concurrent sign-in/use calls from silently overwriting one another.
     inner: AsyncRwLock<Option<Surreal<Any>>>,
     live_queries: Mutex<Vec<Weak<LiveQuery>>>,
+    transactions: Mutex<Vec<Weak<SurrealTransaction>>>,
+    closed: AtomicBool,
+}
+
+#[derive(uniffi::Object)]
+pub struct SurrealTransaction {
+    inner: AsyncMutex<Option<NativeTransaction<Any>>>,
     closed: AtomicBool,
 }
 
@@ -97,6 +136,30 @@ pub struct LiveQuery {
     client: Mutex<Option<Surreal<Any>>>,
     closed: AtomicBool,
     close_signal: watch::Sender<bool>,
+}
+
+impl SurrealTransaction {
+    async fn cancel_inner(&self) -> Result<(), SurrealRnError> {
+        self.closed.store(true, Ordering::Release);
+        if let Some(transaction) = self.inner.lock().await.take() {
+            transaction.cancel().await?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for SurrealTransaction {
+    fn drop(&mut self) {
+        self.closed.store(true, Ordering::Release);
+        let Some(transaction) = self.inner.get_mut().take() else {
+            return;
+        };
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                transaction.cancel().await.ok();
+            });
+        }
+    }
 }
 
 impl LiveQuery {
@@ -173,8 +236,145 @@ pub async fn connect(options: ConnectOptions) -> Result<Arc<SurrealDatabase>, Su
     Ok(Arc::new(SurrealDatabase {
         inner: AsyncRwLock::new(Some(client)),
         live_queries: Mutex::new(Vec::new()),
+        transactions: Mutex::new(Vec::new()),
         closed: AtomicBool::new(false),
     }))
+}
+
+/// Minimal async round trip used to establish the UniFFI/JSI call baseline.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn benchmark_boundary_noop() -> bool {
+    true
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl SurrealTransaction {
+    /// Execute one or more statements inside this transaction.
+    pub async fn query(
+        &self,
+        surql: String,
+        variables_json: Option<String>,
+    ) -> Result<Vec<QueryStatementResult>, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SurrealRnError::Closed);
+        }
+        let variables: Object = decode_variables(variables_json.as_deref())?;
+        let slot = self.inner.lock().await;
+        let transaction = slot.as_ref().ok_or(SurrealRnError::Closed)?;
+        let response = transaction.query(surql).bind(variables).await?.check()?;
+        query_results(response)
+    }
+
+    /// Execute multiple independently parameterized queries in one native call.
+    pub async fn query_batch(
+        &self,
+        queries: Vec<NativeBatchQuery>,
+    ) -> Result<Vec<NativeBatchQueryResult>, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SurrealRnError::Closed);
+        }
+        let slot = self.inner.lock().await;
+        let transaction = slot.as_ref().ok_or(SurrealRnError::Closed)?;
+        let mut batch_results = Vec::with_capacity(queries.len());
+
+        for (query_index, query) in queries.into_iter().enumerate() {
+            let variables: Object = decode_variables(query.variables_json.as_deref())?;
+            let response = transaction
+                .query(query.surql)
+                .bind(variables)
+                .await?
+                .check()?;
+            batch_results.push(NativeBatchQueryResult {
+                query_index: u32::try_from(query_index).map_err(|_| SurrealRnError::Internal {
+                    message: "batch query index exceeds u32".into(),
+                })?,
+                results: query_results(response)?,
+            });
+        }
+
+        Ok(batch_results)
+    }
+
+    /// Execute one parameterized query repeatedly and discard `RETURN NONE` results.
+    pub async fn execute_batch(
+        &self,
+        surql: String,
+        variables_json: Vec<String>,
+    ) -> Result<u32, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SurrealRnError::Closed);
+        }
+        let slot = self.inner.lock().await;
+        let transaction = slot.as_ref().ok_or(SurrealRnError::Closed)?;
+
+        for variables_json in &variables_json {
+            let variables: Object = decode_variables(Some(variables_json))?;
+            transaction.query(&surql).bind(variables).await?.check()?;
+        }
+
+        u32::try_from(variables_json.len()).map_err(|_| SurrealRnError::Internal {
+            message: "batch query count exceeds u32".into(),
+        })
+    }
+
+    /// Benchmark-only query variant that separates SDK execution from codecs.
+    pub async fn query_profiled(
+        &self,
+        surql: String,
+        variables_json: Option<String>,
+    ) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SurrealRnError::Closed);
+        }
+        let input_started = Instant::now();
+        let variables: Object = decode_variables(variables_json.as_deref())?;
+        let input_decode_ns = elapsed_ns(input_started);
+        let slot = self.inner.lock().await;
+        let transaction = slot.as_ref().ok_or(SurrealRnError::Closed)?;
+        let engine_started = Instant::now();
+        let response = transaction.query(surql).bind(variables).await?.check()?;
+        let engine_ns = elapsed_ns(engine_started);
+        profiled_query_results(response, input_decode_ns, engine_ns)
+    }
+
+    /// Benchmark-only query variant selecting the native result serializer.
+    pub async fn query_profiled_with_encoding(
+        &self,
+        surql: String,
+        variables_json: Option<String>,
+        output_encoding: NativeOutputEncoding,
+    ) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(SurrealRnError::Closed);
+        }
+        let input_started = Instant::now();
+        let variables: Object = decode_variables(variables_json.as_deref())?;
+        let input_decode_ns = elapsed_ns(input_started);
+        let slot = self.inner.lock().await;
+        let transaction = slot.as_ref().ok_or(SurrealRnError::Closed)?;
+        let engine_started = Instant::now();
+        let response = transaction.query(surql).bind(variables).await?.check()?;
+        let engine_ns = elapsed_ns(engine_started);
+        profiled_query_results_with_encoding(response, input_decode_ns, engine_ns, output_encoding)
+    }
+
+    /// Commit once, persisting all queries executed through this handle.
+    pub async fn commit(&self) -> Result<(), SurrealRnError> {
+        self.closed.store(true, Ordering::Release);
+        if let Some(transaction) = self.inner.lock().await.take() {
+            transaction.commit().await?;
+        }
+        Ok(())
+    }
+
+    /// Idempotently roll back all queries executed through this handle.
+    pub async fn cancel(&self) -> Result<(), SurrealRnError> {
+        self.cancel_inner().await
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -228,6 +428,34 @@ impl LiveQuery {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl SurrealDatabase {
+    /// Begin a transaction whose queries can be issued individually.
+    pub async fn begin_transaction(&self) -> Result<Arc<SurrealTransaction>, SurrealRnError> {
+        let client = self.client().await?;
+        let native_transaction = client.begin().await?;
+        let transaction = Arc::new(SurrealTransaction {
+            inner: AsyncMutex::new(Some(native_transaction)),
+            closed: AtomicBool::new(false),
+        });
+
+        {
+            let mut transactions =
+                self.transactions
+                    .lock()
+                    .map_err(|_| SurrealRnError::Internal {
+                        message: "transaction registry lock poisoned".into(),
+                    })?;
+            if self.closed.load(Ordering::Acquire) {
+                drop(transactions);
+                transaction.cancel_inner().await?;
+                return Err(SurrealRnError::Closed);
+            }
+            transactions.retain(|transaction| transaction.strong_count() > 0);
+            transactions.push(Arc::downgrade(&transaction));
+        }
+
+        Ok(transaction)
+    }
+
     pub async fn use_namespace_database(
         &self,
         namespace: String,
@@ -251,19 +479,41 @@ impl SurrealDatabase {
     ) -> Result<Vec<QueryStatementResult>, SurrealRnError> {
         let client = self.client().await?;
         let variables: Object = decode_variables(variables_json.as_deref())?;
-        let mut response = client.query(surql).bind(variables).await?.check()?;
-        let statement_count = response.num_statements();
-        let mut results = Vec::with_capacity(statement_count);
+        let response = client.query(surql).bind(variables).await?.check()?;
+        query_results(response)
+    }
 
-        for index in 0..statement_count {
-            let value: Value = response.take(index)?;
-            results.push(QueryStatementResult {
-                statement_index: index as u32,
-                value_json: encode_value(value)?,
-            });
-        }
+    /// Benchmark-only query variant that separates SDK execution from codecs.
+    pub async fn query_profiled(
+        &self,
+        surql: String,
+        variables_json: Option<String>,
+    ) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+        let client = self.client().await?;
+        let input_started = Instant::now();
+        let variables: Object = decode_variables(variables_json.as_deref())?;
+        let input_decode_ns = elapsed_ns(input_started);
+        let engine_started = Instant::now();
+        let response = client.query(surql).bind(variables).await?.check()?;
+        let engine_ns = elapsed_ns(engine_started);
+        profiled_query_results(response, input_decode_ns, engine_ns)
+    }
 
-        Ok(results)
+    /// Benchmark-only query variant selecting the native result serializer.
+    pub async fn query_profiled_with_encoding(
+        &self,
+        surql: String,
+        variables_json: Option<String>,
+        output_encoding: NativeOutputEncoding,
+    ) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+        let client = self.client().await?;
+        let input_started = Instant::now();
+        let variables: Object = decode_variables(variables_json.as_deref())?;
+        let input_decode_ns = elapsed_ns(input_started);
+        let engine_started = Instant::now();
+        let response = client.query(surql).bind(variables).await?.check()?;
+        let engine_ns = elapsed_ns(engine_started);
+        profiled_query_results_with_encoding(response, input_decode_ns, engine_ns, output_encoding)
     }
 
     /// Start a single live SurrealQL statement and return a pull-based stream.
@@ -374,6 +624,23 @@ impl SurrealDatabase {
         for live_query in live_queries {
             live_query.close_inner().await;
         }
+        let transactions = {
+            let mut transaction_registry =
+                self.transactions
+                    .lock()
+                    .map_err(|_| SurrealRnError::Internal {
+                        message: "transaction registry lock poisoned".into(),
+                    })?;
+            let transactions = transaction_registry
+                .iter()
+                .filter_map(Weak::upgrade)
+                .collect::<Vec<_>>();
+            transaction_registry.clear();
+            transactions
+        };
+        for transaction in transactions {
+            transaction.cancel_inner().await?;
+        }
         // The SDK owns its embedded router task. Dropping the last client closes
         // its route channel; yield so that task can begin datastore shutdown.
         tokio::task::yield_now().await;
@@ -383,6 +650,68 @@ impl SurrealDatabase {
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
     }
+}
+
+fn query_results(
+    mut response: surrealdb::IndexedResults,
+) -> Result<Vec<QueryStatementResult>, SurrealRnError> {
+    query_results_with_encoding(&mut response, NativeOutputEncoding::Streaming)
+}
+
+fn query_results_with_encoding(
+    response: &mut surrealdb::IndexedResults,
+    output_encoding: NativeOutputEncoding,
+) -> Result<Vec<QueryStatementResult>, SurrealRnError> {
+    let statement_count = response.num_statements();
+    let mut results = Vec::with_capacity(statement_count);
+
+    for index in 0..statement_count {
+        let value: Value = response.take(index)?;
+        results.push(QueryStatementResult {
+            statement_index: index as u32,
+            value_json: match output_encoding {
+                NativeOutputEncoding::Tree => encode_value_tree(value)?,
+                NativeOutputEncoding::Streaming => encode_value(value)?,
+            },
+        });
+    }
+
+    Ok(results)
+}
+
+fn profiled_query_results(
+    response: surrealdb::IndexedResults,
+    input_decode_ns: u64,
+    engine_ns: u64,
+) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+    profiled_query_results_with_encoding(
+        response,
+        input_decode_ns,
+        engine_ns,
+        NativeOutputEncoding::Streaming,
+    )
+}
+
+fn profiled_query_results_with_encoding(
+    mut response: surrealdb::IndexedResults,
+    input_decode_ns: u64,
+    engine_ns: u64,
+    output_encoding: NativeOutputEncoding,
+) -> Result<NativeProfiledQueryResult, SurrealRnError> {
+    let output_started = Instant::now();
+    let results = query_results_with_encoding(&mut response, output_encoding)?;
+    Ok(NativeProfiledQueryResult {
+        results,
+        timing: NativeQueryTiming {
+            input_decode_ns,
+            engine_ns,
+            output_encode_ns: elapsed_ns(output_started),
+        },
+    })
+}
+
+fn elapsed_ns(started: Instant) -> u64 {
+    u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX)
 }
 
 fn live_action(action: Action) -> LiveAction {
@@ -479,6 +808,181 @@ mod tests {
         assert!(database.is_closed());
         assert!(matches!(
             database.query("RETURN 1".into(), None).await,
+            Err(SurrealRnError::Closed)
+        ));
+    }
+
+    #[tokio::test]
+    async fn profiled_query_reports_engine_and_codec_timings() {
+        assert!(benchmark_boundary_noop().await);
+        let database = connect(ConnectOptions {
+            endpoint: "memory".into(),
+            namespace: Some("profiled".into()),
+            database: Some("profiled".into()),
+        })
+        .await
+        .unwrap();
+
+        let profiled = database
+            .query_profiled("RETURN 42".into(), None)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            profiled.results[0].value_json,
+            r#"{"$surreal":"int","value":"42"}"#
+        );
+        assert!(profiled.timing.engine_ns > 0);
+        assert!(profiled.timing.output_encode_ns > 0);
+    }
+
+    #[tokio::test]
+    async fn transaction_handle_commits_and_cancels_individual_queries() {
+        let database = connect(ConnectOptions {
+            endpoint: "mem://".into(),
+            namespace: Some("transactions".into()),
+            database: Some("transactions".into()),
+        })
+        .await
+        .unwrap();
+        database
+            .query("DEFINE TABLE person SCHEMALESS".into(), None)
+            .await
+            .unwrap();
+
+        let transaction = database.begin_transaction().await.unwrap();
+        transaction
+            .query(
+                "CREATE person:ada SET name = 'Ada' RETURN NONE".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        transaction
+            .query(
+                "CREATE person:lin SET name = 'Lin' RETURN NONE".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        transaction.commit().await.unwrap();
+        transaction.commit().await.unwrap();
+        assert!(transaction.is_closed());
+
+        let result = database
+            .query("SELECT VALUE name FROM person ORDER BY name".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(result[0].value_json, r#"["Ada","Lin"]"#);
+
+        let cancelled = database.begin_transaction().await.unwrap();
+        cancelled
+            .query(
+                "CREATE person:grace SET name = 'Grace' RETURN NONE".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        cancelled.cancel().await.unwrap();
+        cancelled.cancel().await.unwrap();
+        assert!(cancelled.is_closed());
+
+        let result = database
+            .query("RETURN record::exists(person:grace)".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(result[0].value_json, "false");
+    }
+
+    #[tokio::test]
+    async fn transaction_batch_preserves_query_order_and_variables() {
+        let database = connect(ConnectOptions {
+            endpoint: "memory".into(),
+            namespace: Some("batch".into()),
+            database: Some("batch".into()),
+        })
+        .await
+        .unwrap();
+        let transaction = database.begin_transaction().await.unwrap();
+        let results = transaction
+            .query_batch(vec![
+                NativeBatchQuery {
+                    surql: "RETURN $value".into(),
+                    variables_json: Some(r#"{"value":"first"}"#.into()),
+                },
+                NativeBatchQuery {
+                    surql: "RETURN $value".into(),
+                    variables_json: Some(r#"{"value":"second"}"#.into()),
+                },
+            ])
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].query_index, 0);
+        assert_eq!(results[0].results[0].value_json, r#""first""#);
+        assert_eq!(results[1].query_index, 1);
+        assert_eq!(results[1].results[0].value_json, r#""second""#);
+        let executed = transaction
+            .execute_batch(
+                "CREATE event CONTENT { sequence: $sequence } RETURN NONE".into(),
+                vec![r#"{"sequence":1}"#.into(), r#"{"sequence":2}"#.into()],
+            )
+            .await
+            .unwrap();
+        assert_eq!(executed, 2);
+        transaction.commit().await.unwrap();
+        let events = database
+            .query(
+                "SELECT VALUE sequence FROM event ORDER BY sequence".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            events[0].value_json,
+            r#"[{"$surreal":"int","value":"1"},{"$surreal":"int","value":"2"}]"#
+        );
+        database
+            .query(
+                "INSERT INTO bulk_event $records RETURN NONE".into(),
+                Some(r#"{"records":[{"sequence":1},{"sequence":2}]}"#.into()),
+            )
+            .await
+            .unwrap();
+        let bulk_events = database
+            .query(
+                "SELECT VALUE sequence FROM bulk_event ORDER BY sequence".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            bulk_events[0].value_json,
+            r#"[{"$surreal":"int","value":"1"},{"$surreal":"int","value":"2"}]"#
+        );
+    }
+
+    #[tokio::test]
+    async fn database_close_cancels_open_transactions() {
+        let database = connect(ConnectOptions {
+            endpoint: "mem://".into(),
+            namespace: Some("transaction_close".into()),
+            database: Some("transaction_close".into()),
+        })
+        .await
+        .unwrap();
+        let transaction = database.begin_transaction().await.unwrap();
+        transaction
+            .query("CREATE event:uncommitted RETURN NONE".into(), None)
+            .await
+            .unwrap();
+
+        database.close().await.unwrap();
+
+        assert!(transaction.is_closed());
+        assert!(matches!(
+            transaction.query("RETURN 1".into(), None).await,
             Err(SurrealRnError::Closed)
         ));
     }

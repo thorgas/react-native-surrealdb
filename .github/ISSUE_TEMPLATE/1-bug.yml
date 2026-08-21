@@ -1,0 +1,111 @@
+name: Bug report
+description: Report reproducible incorrect behavior in react-native-surrealdb.
+type: Bug
+labels: [triage]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug. Please remove secrets and personal data from code, logs, and databases before submitting them.
+
+  - id: what
+    type: textarea
+    attributes:
+      label: Describe the bug
+      description: What happened, and what part of the library appears to be affected?
+      placeholder: Give a concise description of the incorrect behavior.
+    validations:
+      required: true
+
+  - id: steps
+    type: textarea
+    attributes:
+      label: Steps to reproduce
+      description: Provide the smallest runnable example or exact steps that reproduce the problem.
+      placeholder: |
+        1. Connect using ...
+        2. Run ...
+        3. Observe ...
+
+        ```tsx
+        // Minimal reproduction
+        ```
+    validations:
+      required: true
+
+  - id: expected
+    type: textarea
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen instead?
+    validations:
+      required: true
+
+  - id: package-version
+    type: input
+    attributes:
+      label: react-native-surrealdb version
+      placeholder: 0.1.0-alpha.1
+    validations:
+      required: true
+
+  - id: react-native-version
+    type: input
+    attributes:
+      label: React Native and Expo versions
+      description: Include the React Native version and, when applicable, the Expo SDK version.
+      placeholder: React Native 0.82.0, Expo SDK 55
+    validations:
+      required: true
+
+  - id: platform
+    type: dropdown
+    attributes:
+      label: Platform
+      options:
+        - iOS
+        - Android
+        - Both
+    validations:
+      required: true
+
+  - id: architecture
+    type: input
+    attributes:
+      label: Device and architecture
+      description: Include physical device or simulator/emulator, OS version, and CPU architecture if known.
+      placeholder: iPhone 17 Pro simulator, iOS 26, arm64
+    validations:
+      required: true
+
+  - id: endpoint
+    type: dropdown
+    attributes:
+      label: Database connection
+      options:
+        - Embedded memory
+        - Embedded SurrealKV
+        - Remote WebSocket
+        - Not connection-specific
+    validations:
+      required: true
+
+  - id: logs
+    type: textarea
+    attributes:
+      label: Relevant logs or diagnostics
+      description: Paste relevant JavaScript and native logs, crash reports, or error messages. Remove secrets and personal data.
+      render: shell
+
+  - id: additional-context
+    type: textarea
+    attributes:
+      label: Additional context
+      description: Add anything else that may help, such as a reproduction repository or screenshots.
+
+  - type: checkboxes
+    attributes:
+      label: Existing issues
+      options:
+        - label: I searched the existing issues and did not find a duplicate.
+          required: true

@@ -10,13 +10,13 @@
   ],
   "license": "MIT",
   "author": "Tim Horgas",
-  "homepage": "https://github.com/timhorgas/react-native-surrealdb#readme",
+  "homepage": "https://github.com/thorgas/react-native-surrealdb#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/timhorgas/react-native-surrealdb.git"
+    "url": "git+https://github.com/thorgas/react-native-surrealdb.git"
   },
   "bugs": {
-    "url": "https://github.com/timhorgas/react-native-surrealdb/issues"
+    "url": "https://github.com/thorgas/react-native-surrealdb/issues"
   },
   "publishConfig": {
     "access": "public",
@@ -32,6 +32,7 @@
     "*.podspec",
     "CHANGELOG.md",
     "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
     "RELEASING.md",
     "!ios/build",
     "!android/build",
@@ -53,6 +54,12 @@
       "source": "./src/index.ts",
       "default": "./lib/module/index.js"
     },
+    "./react": {
+      "types": "./lib/typescript/react.d.ts",
+      "react-native": "./src/react.ts",
+      "source": "./src/react.ts",
+      "default": "./lib/module/react.js"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -63,8 +70,11 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "verify:package": "node scripts/verify-package.mjs",
-    "release:artifacts": "pnpm run ubrn:ios && pnpm run ubrn:android",
+    "release:artifacts": "pnpm run ubrn:ios && pnpm run release:strip:ios && pnpm run ubrn:android && pnpm run release:strip:android",
     "release:check": "pnpm run build && pnpm run typecheck && pnpm run test && pnpm run verify:package",
+    "release:pack": "node scripts/pack-release.mjs",
+    "release:strip:android": "bash scripts/prepare-android-release-artifacts.sh",
+    "release:strip:ios": "bash scripts/prepare-ios-release-artifacts.sh",
     "prepack": "pnpm run release:check",
     "prepublishOnly": "pnpm run release:check",
     "ubrn:ios": "IPHONEOS_DEPLOYMENT_TARGET=15.1 ubrn build ios --and-generate --release --targets aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios && pnpm run format:generated",
@@ -72,6 +82,7 @@
     "ubrn:android:size": "ubrn build android --and-generate --release --targets aarch64-linux-android && pnpm run format:generated"
   },
   "dependencies": {
+    "@babel/runtime": "7.29.7",
     "@ubjs/core": "0.31.0-3",
     "uniffi-bindgen-react-native": "0.31.0-3"
   },
