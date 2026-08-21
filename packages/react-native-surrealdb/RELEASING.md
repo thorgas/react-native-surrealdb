@@ -70,12 +70,16 @@ git push origin 0.1.0-alpha.1
 
 Tags containing a prerelease suffix create a public GitHub prerelease. Stable
 tags create a draft GitHub release. The **Build release candidate** workflow
-builds Android arm64-v8a/x86_64 and the arm64 iOS device/simulator XCFramework, runs the
-package checks, and attaches these files:
+builds Android arm64-v8a/x86_64 and the arm64 iOS device/simulator XCFramework,
+runs the package checks, and attaches these files:
 
 - `react-native-surrealdb-<version>.tgz` — the immutable package candidate;
 - `npm-pack.json` — npm's file-count and size report; and
 - `SHA256SUMS` — the tarball checksum.
+
+The iOS simulator artifact requires Apple Silicon. Intel Mac simulators cannot
+load this alpha because its x86_64 iOS slice was removed to stay below npm's
+effective upload-size boundary. Android x86_64 emulators remain supported.
 
 The workflow fails if the tag and package version differ. It never edits or
 commits generated files. After binding generation, it strips debug and local

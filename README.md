@@ -52,7 +52,7 @@ development build and does not run in Expo Go.
 
 ## Quick example
 
-The first npm alpha is being prepared. Once it is published:
+Install the current npm alpha with:
 
 ```sh
 pnpm add react-native-surrealdb
@@ -87,6 +87,10 @@ candidate tags, trusted publishing, provenance, and stable promotion.
 ## Current limitations
 
 - SurrealKV support remains experimental.
+- iOS simulator builds require Apple Silicon. Intel Mac simulators cannot load
+  this alpha because its x86_64 iOS slice was removed to keep the npm package
+  below the registry's effective upload-size boundary. Android x86_64 emulators
+  remain supported.
 - Automatic WebSocket reconnection, live-query re-subscription, and duplicate
   suppression across reconnects are not implemented yet.
 - This is a database binding, not yet a local-first synchronization engine.
