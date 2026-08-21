@@ -44,6 +44,8 @@ jobs:
           node-version: 22.14.0
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
+      - name: Remove deprecated npm configuration
+        run: sed -i '/^always-auth=/d' "$NPM_CONFIG_USERCONFIG"
       - name: Install OIDC-capable npm CLI
         run: npm install --global npm@11.5.1
       - name: Download tested release assets
@@ -83,7 +85,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          TARBALL=$(find release -maxdepth 1 -name '*.tgz' -type f -print -quit)
+          TARBALL=$(find "$GITHUB_WORKSPACE/release" -maxdepth 1 -name '*.tgz' -type f -print -quit)
+          test -n "$TARBALL"
           npm publish "$TARBALL" \
             --access public \
             --tag "${{ inputs.dist_tag }}" \
