@@ -7,7 +7,7 @@ STRIP_TOOL=$(xcrun --sdk iphoneos --find strip)
 
 for library in \
   "$PACKAGE_ROOT/SurrealDbRnFramework.xcframework/ios-arm64/libsurrealdb_rn_core.a" \
-  "$PACKAGE_ROOT/SurrealDbRnFramework.xcframework/ios-arm64_x86_64-simulator/libsurrealdb_rn_core.a"; do
+  "$PACKAGE_ROOT/SurrealDbRnFramework.xcframework/ios-arm64-simulator/libsurrealdb_rn_core.a"; do
   if [[ ! -f "$library" ]]; then
     echo "Missing iOS release library: $library" >&2
     exit 1

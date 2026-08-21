@@ -13,17 +13,21 @@ transaction handles exposed to JavaScript. Transactions execute each `query()`
 immediately under one Rust SDK transaction ID and then commit or cancel once;
 callback transactions automatically cancel when the callback throws.
 
-Prebuilt release artifacts now cover iOS arm64 devices, arm64/x86_64
-simulators, and Android arm64-v8a, armeabi-v7a, x86_64, and x86. Local native
+Prebuilt alpha.1 artifacts cover iOS arm64 devices and Apple Silicon
+simulators, plus Android arm64-v8a devices and x86_64 emulators. Local native
 build validation passes across the isolated React Native 0.82.1, 0.83.10,
 0.84.1, 0.85.3, and 0.86.0 hosts. The package remains New-Architecture/Hermes
 only. Its first npm alpha passed package verification and a dry run, but npm
-rejected the 284.5 MB upload with HTTP 413. The release pipeline now strips
-non-runtime symbols after binding generation while preserving all four Android
-ABIs and both iOS simulator architectures. The same candidate measures
-approximately 258.9 MB compressed and 801.3 MB unpacked, with a 260,000,000-byte
-automated ceiling. Native artifact size therefore remains a release and
-consumer-experience concern.
+rejected the 284.5 MB upload with HTTP 413. Symbol stripping reduced the
+full-architecture candidate to approximately 258.7 MB, and abort-on-panic
+reduced it to 220.1 MB; npm still rejected both. Alpha.1 removes Intel iOS
+simulator and 32-bit Android artifacts and uses a conservative 180,000,000-byte
+automated ceiling. The resulting verified alpha.1 tarball is 143,388,326 bytes
+compressed and 451,087,977 bytes unpacked. An Android arm64 embedded-only build
+(memory and SurrealKV, without WebSocket support) stripped to 19,010,072 bytes,
+versus 20,015,960 bytes for the full arm64 library: only 1,005,888 bytes (5.0%)
+smaller. That result does not justify a separate embedded-only package yet.
+Native artifact size remains a release and consumer-experience concern.
 
 The full reactive `surreal-store`, automatic reconnect/re-subscription, a true
 local-first synchronization engine, and production durability/migration gates
@@ -328,8 +332,8 @@ Therefore `surreal-store` v1 should support either a local database or a remote 
 Minimum release matrix:
 
 - React Native New Architecture with Hermes;
-- iOS device arm64, iOS simulator arm64 and x86_64;
-- Android arm64-v8a, armeabi-v7a, x86_64, and x86;
+- iOS device arm64 and iOS simulator arm64;
+- Android arm64-v8a and x86_64;
 - bare RN example and Expo development-build example;
 - Debug and Release builds;
 - app restart, Fast Refresh/native module invalidation, background/foreground, forced termination, and low-storage tests.

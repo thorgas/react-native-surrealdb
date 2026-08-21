@@ -256,8 +256,8 @@ The `ubrn:*` scripts live in
 
 | Command                                                      | Result                                                                                                                                                                                    |
 | ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm --filter react-native-surrealdb run ubrn:ios`          | Builds release libraries for iOS device plus arm64/x86_64 simulators, creates `SurrealDbRnFramework.xcframework`, and regenerates the UniFFI bindings. The deployment target is iOS 15.1. |
-| `pnpm --filter react-native-surrealdb run ubrn:android`      | Builds release `.so` files for arm64-v8a, armeabi-v7a, x86_64, and x86 under `android/src/main/jniLibs`, and regenerates the bindings.                                                    |
+| `pnpm --filter react-native-surrealdb run ubrn:ios`          | Builds release libraries for arm64 iOS devices and Apple Silicon simulators, creates `SurrealDbRnFramework.xcframework`, and regenerates the UniFFI bindings. The deployment target is iOS 15.1. |
+| `pnpm --filter react-native-surrealdb run ubrn:android`      | Builds release `.so` files for arm64-v8a and x86_64 under `android/src/main/jniLibs`, and regenerates the bindings.                                                                         |
 | `pnpm --filter react-native-surrealdb run ubrn:android:size` | Builds only arm64 Android, which is sufficient for the controlled release-size benchmark. Do not use this reduced artifact set for publishing.                                            |
 | `pnpm --filter react-native-surrealdb run release:artifacts` | Runs the full iOS and Android `ubrn` builds, then strips non-runtime symbols from the distributable native libraries.                                                                     |
 | `pnpm --filter react-native-surrealdb run format:generated`  | Rewrites the generated TurboModule entry files with Prettier. The `ubrn:*` scripts run it automatically.                                                                                  |
@@ -284,8 +284,8 @@ All commands below target the published package:
 | `... run typecheck`                              | Runs `tsc --noEmit`.                                                                                                         |
 | `... run lint`                                   | Also runs `tsc --noEmit`; this alias lets the root recursive lint command include the package.                               |
 | `... run format`                                 | Checks package source, tests, and top-level JSON/YAML with Prettier.                                                         |
-| `... run verify:package`                         | Checks built output, generated bindings, all expected iOS slices, all four Android ABIs, and package metadata.               |
-| `... run release:pack -- /path/to/output`        | Packs the release without rerunning generators and rejects tarballs larger than 260,000,000 bytes.                           |
+| `... run verify:package`                         | Checks built output, generated bindings, the retained iOS/Android architectures, and package metadata.                       |
+| `... run release:pack -- /path/to/output`        | Packs the release without rerunning generators and rejects tarballs larger than 180,000,000 bytes.                           |
 | `... run release:check`                          | Runs build, type-check, tests, and package verification. It does **not** create missing native artifacts.                    |
 | `pnpm --filter react-native-surrealdb pack`      | Runs `prepack` (therefore `release:check`) and creates the npm tarball for consumer testing.                                 |
 | `pnpm --filter react-native-surrealdb publish …` | Runs `prepublishOnly` (also `release:check`) before publishing. Follow the release guide rather than invoking this casually. |
@@ -294,7 +294,7 @@ The workspace root is private and must never be published. Publish only the
 tested tarball produced for `packages/react-native-surrealdb`. Pull-request CI
 assembles that complete package from stripped iOS and Android artifacts, checks
 its exact npm name, and rejects it if the compressed tarball exceeds
-260,000,000 bytes.
+180,000,000 bytes.
 
 Prepare native artifacts before a release check:
 
