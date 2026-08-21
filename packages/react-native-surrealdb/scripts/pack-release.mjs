@@ -14,7 +14,7 @@ const outputDirectory = requestedOutput
     : resolve(process.cwd(), requestedOutput)
   : join(packageRoot, "release");
 const maximumPackedBytes = Number(
-  process.env.MAXIMUM_NPM_TARBALL_BYTES ?? 260_000_000,
+  process.env.MAXIMUM_NPM_TARBALL_BYTES ?? 180_000_000,
 );
 
 if (!Number.isSafeInteger(maximumPackedBytes) || maximumPackedBytes <= 0) {

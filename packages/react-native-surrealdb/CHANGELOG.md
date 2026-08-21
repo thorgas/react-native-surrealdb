@@ -2,6 +2,14 @@
 
 All notable changes to this package are documented here.
 
+## 0.1.0-alpha.1
+
+- Optimize release binaries with abort-on-panic behavior and retain post-build
+  symbol stripping.
+- Distribute iOS arm64 device/simulator and Android arm64-v8a/x86_64 artifacts.
+- Add a conservative 180 MB compressed npm-package ceiling after the first
+  full-architecture candidate exceeded npm's effective upload boundary.
+
 ## 0.1.0-alpha.0
 
 - Add embedded in-memory and experimental persistent SurrealKV connections.

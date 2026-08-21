@@ -70,7 +70,7 @@ git push origin 0.1.0-alpha.1
 
 Tags containing a prerelease suffix create a public GitHub prerelease. Stable
 tags create a draft GitHub release. The **Build release candidate** workflow
-builds all four Android ABIs and the iOS device/simulator XCFramework, runs the
+builds Android arm64-v8a/x86_64 and the arm64 iOS device/simulator XCFramework, runs the
 package checks, and attaches these files:
 
 - `react-native-surrealdb-<version>.tgz` — the immutable package candidate;
@@ -80,8 +80,13 @@ package checks, and attaches these files:
 The workflow fails if the tag and package version differ. It never edits or
 commits generated files. After binding generation, it strips debug and local
 symbols from the distributable native libraries while preserving their public
-linker symbols. The pack step has a 260,000,000-byte ceiling and fails before
+linker symbols. Release builds abort rather than unwind on an unexpected Rust
+panic. The pack step has a 180,000,000-byte ceiling and fails before
 release creation when a candidate grows beyond it.
+
+The locally verified alpha.1 candidate is 143,388,326 bytes compressed and
+451,087,977 bytes unpacked. Treat the ceiling as a regression guard rather than
+a target; investigate unexpected growth before raising it.
 
 The React Native compatibility workflow performs the same full-package size
 check for pull requests and pushes to `main`. It also verifies that the
@@ -109,9 +114,12 @@ locks. Run clean iOS and Android native builds and exercise at least:
 - installation size and startup behavior on representative production devices.
 
 The first unstripped static-library alpha packed to approximately 284.5 MB and
-was rejected by npm with HTTP 413. Post-generation symbol stripping reduced the
-same four-ABI package to approximately 258.9 MB. Review `npm-pack.json`; the
-automated ceiling retains a small margin below npm's observed upload boundary.
+was rejected by npm with HTTP 413. Stripping reduced it to approximately
+258.7 MB, and abort-on-panic reduced the same full-architecture package to
+approximately 220.1 MB; both remained too large for npm's effective request
+boundary. Alpha.1 therefore supports current 64-bit production/development
+targets and enforces a conservative 180 MB ceiling. Review `npm-pack.json` and
+treat any unexpected increase as a release blocker.
 
 If testing fails, fix the problem and create a new version and tag. Never replace
 a tag or reuse a package version.

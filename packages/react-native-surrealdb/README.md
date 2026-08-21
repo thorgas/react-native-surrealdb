@@ -16,8 +16,16 @@ cd ios && pod install
 Requirements:
 
 - React Native 0.82 or newer with the New Architecture and Hermes enabled;
-- iOS 15.1 or newer (arm64 devices and arm64/x86_64 simulators);
-- Android API 24 or newer (arm64-v8a, armeabi-v7a, x86_64, and x86).
+- iOS 15.1 or newer (arm64 devices and Apple Silicon simulators);
+- Android API 24 or newer (arm64-v8a devices and x86_64 emulators).
+
+Intel Mac simulators and 32-bit Android ABIs are not included in the alpha
+package. This keeps the prebuilt native distribution within npm's upload
+boundary while covering current production devices and development hosts.
+Release binaries also use abort-on-panic optimization: an unexpected Rust panic
+terminates the application process instead of unwinding across the native
+boundary. Expected database and validation failures continue to be returned as
+typed JavaScript errors.
 
 ## Connect and query
 

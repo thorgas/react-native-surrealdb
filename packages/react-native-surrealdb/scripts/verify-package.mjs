@@ -63,7 +63,7 @@ for (const path of [
   await requireFile(path);
 }
 
-for (const abi of ["arm64-v8a", "armeabi-v7a", "x86_64", "x86"]) {
+for (const abi of ["arm64-v8a", "x86_64"]) {
   await requireFile(`android/src/main/jniLibs/${abi}/libsurrealdb_rn_core.so`);
 }
 
@@ -80,12 +80,9 @@ if (await exists("SurrealDbRnFramework.xcframework/Info.plist")) {
   );
   const hasDeviceArm64 = /<string>ios-arm64<\/string>/.test(plist);
   const hasSimulatorArm64 = simulator?.includes("<string>arm64</string>");
-  const hasSimulatorX64 = simulator?.includes("<string>x86_64</string>");
   if (!hasDeviceArm64) failures.push("XCFramework is missing iOS device arm64");
   if (!hasSimulatorArm64)
     failures.push("XCFramework is missing iOS simulator arm64");
-  if (!hasSimulatorX64)
-    failures.push("XCFramework is missing iOS simulator x86_64");
 }
 
 for (const path of [".npmrc"]) {
@@ -94,7 +91,7 @@ for (const path of [".npmrc"]) {
 
 for (const path of [
   "SurrealDbRnFramework.xcframework/ios-arm64/libsurrealdb_rn_core.a",
-  "SurrealDbRnFramework.xcframework/ios-arm64_x86_64-simulator/libsurrealdb_rn_core.a",
+  "SurrealDbRnFramework.xcframework/ios-arm64-simulator/libsurrealdb_rn_core.a",
 ]) {
   if (await exists(path)) {
     const info = await stat(join(root, path));

@@ -29,7 +29,7 @@ if [[ ! -x "$READELF_TOOL" ]]; then
   exit 1
 fi
 
-for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+for abi in arm64-v8a x86_64; do
   library="$PACKAGE_ROOT/android/src/main/jniLibs/$abi/libsurrealdb_rn_core.so"
   if [[ ! -f "$library" ]]; then
     echo "Missing Android release library: $library" >&2
