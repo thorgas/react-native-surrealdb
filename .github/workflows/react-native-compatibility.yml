@@ -50,11 +50,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -62,18 +62,18 @@ jobs:
         with:
           toolchain: ${{ env.RUST_VERSION }}
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android,i686-linux-android
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
       - run: sdkmanager "ndk;27.1.12297006"
       - run: cargo install cargo-ndk --version 4.1.2 --locked
       - run: pnpm install --frozen-lockfile
       - id: native-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: packages/react-native-surrealdb/android/src/main/jniLibs
           key: surrealdb-android-all-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', 'crates/surrealdb-rn-core/**', 'packages/react-native-surrealdb/ubrn.config.yaml') }}
       - if: steps.native-cache.outputs.cache-hit != 'true'
         run: pnpm --filter react-native-surrealdb run ubrn:android
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: surrealdb-android-all
           path: packages/react-native-surrealdb/android/src/main/jniLibs
@@ -84,11 +84,11 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -98,13 +98,13 @@ jobs:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim,x86_64-apple-ios
       - run: pnpm install --frozen-lockfile
       - id: native-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: packages/react-native-surrealdb/SurrealDbRnFramework.xcframework
           key: surrealdb-ios-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', 'crates/surrealdb-rn-core/**', 'packages/react-native-surrealdb/ubrn.config.yaml') }}
       - if: steps.native-cache.outputs.cache-hit != 'true'
         run: pnpm --filter react-native-surrealdb run ubrn:ios
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: surrealdb-ios-xcframework
           path: packages/react-native-surrealdb/SurrealDbRnFramework.xcframework
@@ -132,16 +132,16 @@ jobs:
           - host: harness-rn86
             react-native: "0.86.0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: surrealdb-android-all
           path: packages/react-native-surrealdb/android/src/main/jniLibs
@@ -175,11 +175,11 @@ jobs:
           - host: harness-rn86
             react-native: "0.86.0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v6
         with:
           version: ${{ env.PNPM_VERSION }}
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: pnpm
@@ -188,7 +188,7 @@ jobs:
           ruby-version: "3.3"
           bundler-cache: true
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           name: surrealdb-ios-xcframework
           path: packages/react-native-surrealdb/SurrealDbRnFramework.xcframework
