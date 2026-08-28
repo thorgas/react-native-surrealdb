@@ -3,18 +3,22 @@
 //! This module is Rust-only. It deliberately exposes no UniFFI or TypeScript API
 //! until the durable lifecycle has been proven on mobile.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use serde_json::Value as JsonValue;
 use surrealdb::engine::any::Any;
 use surrealdb::method::Transaction;
-use surrealdb::types::{Array, Bytes, RecordId, SurrealValue, Value};
-use surrealdb_sync_client::{ClientError, DurableClientState};
-use surrealdb_sync_protocol::{ClientId, PartitionId};
+use surrealdb::types::{Array, Bytes, RecordId as NativeRecordId, SurrealValue, Value};
+use surrealdb_sync_client::{ClientError, ClientRuntime, DurableClientState, OptimisticRecord};
+use surrealdb_sync_protocol::{ClientId, PartitionId, RecordId as ProtocolRecordId};
 
+use crate::wire::from_wire_value;
 use crate::{SurrealDatabase, SurrealRnError};
 
 const FORMAT_VERSION: i64 = 1;
 const STATE_TABLE: &str = "_sync_client_state";
 const MAX_IDENTITY_BYTES: usize = 512;
+const MAX_RECORD_ID_BYTES: usize = 1024;
 pub const MAX_SYNC_STATE_BYTES: usize = 4 * 1024 * 1024;
 
 const DEFINE_SCHEMA: &str = r#"
@@ -66,6 +70,15 @@ pub enum SyncStateError {
 
     #[error("stored sync state is corrupt")]
     CorruptState,
+
+    #[error("sync record ID is not supported by the native adapter")]
+    UnsupportedRecordId,
+
+    #[error("sync record value must be a SurrealDB object")]
+    RecordValueMustBeObject,
+
+    #[error("sync record value decoding failed")]
+    ValueCodec(#[source] SurrealRnError),
 
     #[error("sync state is invalid")]
     InvalidState(#[source] ClientError),
@@ -149,14 +162,7 @@ impl<'a> SyncStateStore<'a> {
         expected_revision: Option<u64>,
         state: &StoredSyncState,
     ) -> Result<SyncStateWrite, SyncStateError> {
-        let key = SyncStateKey::new(&state.partition_id, &state.client_id);
-        validate_key(key)?;
-        validate_next_revision(expected_revision, state.revision)?;
-        state.validate().map_err(SyncStateError::InvalidState)?;
-        let payload = serde_json::to_vec(state).map_err(SyncStateError::Encode)?;
-        if payload.len() > MAX_SYNC_STATE_BYTES {
-            return Err(SyncStateError::StateTooLarge);
-        }
+        let (key, payload) = prepare_state_write(expected_revision, state)?;
 
         let client = self.database.client().await.map_err(SyncStateError::Core)?;
         let transaction = client.begin().await.map_err(SyncStateError::Database)?;
@@ -169,21 +175,136 @@ impl<'a> SyncStateStore<'a> {
         )
         .await;
 
-        match operation {
-            Ok(disposition) => transaction
-                .commit()
-                .await
-                .map(|_| disposition)
-                .map_err(SyncStateError::CommitUnknown),
-            Err(operation) => match transaction.cancel().await {
-                Ok(_) => Err(operation),
-                Err(rollback) => Err(SyncStateError::RollbackFailed {
-                    operation: Box::new(operation),
-                    rollback,
-                }),
-            },
+        finish_transaction(transaction, operation).await
+    }
+
+    /// Apply a prepared optimistic projection and its durable state together.
+    ///
+    /// This is still a Rust-only prototype. A successful return means both the
+    /// changed SurrealDB records and the sync metadata committed atomically.
+    pub async fn apply_transition_atomic(
+        &self,
+        current: &StoredSyncState,
+        next: &StoredSyncState,
+    ) -> Result<SyncStateWrite, SyncStateError> {
+        if current.partition_id != next.partition_id || current.client_id != next.client_id {
+            return Err(SyncStateError::CorruptState);
+        }
+        current.validate().map_err(SyncStateError::InvalidState)?;
+        if current == next {
+            let key = SyncStateKey::new(&current.partition_id, &current.client_id);
+            return match self.load(key).await? {
+                Some(stored) if stored == *current => Ok(SyncStateWrite::AlreadyCurrent),
+                Some(_) | None => Err(SyncStateError::RevisionConflict),
+            };
+        }
+
+        let (key, payload) = prepare_state_write(Some(current.revision), next)?;
+        let current_projection = ClientRuntime::open(current.clone())
+            .map_err(SyncStateError::InvalidState)?
+            .optimistic();
+        let next_projection = ClientRuntime::open(next.clone())
+            .map_err(SyncStateError::InvalidState)?
+            .optimistic();
+
+        let client = self.database.client().await.map_err(SyncStateError::Core)?;
+        let transaction = client.begin().await.map_err(SyncStateError::Database)?;
+        let operation = async {
+            let disposition = replace_in_transaction(
+                &transaction,
+                key,
+                Some(current.revision),
+                next.revision,
+                payload,
+            )
+            .await?;
+            if disposition == SyncStateWrite::Applied {
+                apply_projection_diff(&transaction, &current_projection, &next_projection).await?;
+            }
+            Ok(disposition)
+        }
+        .await;
+
+        finish_transaction(transaction, operation).await
+    }
+}
+
+async fn finish_transaction(
+    transaction: Transaction<Any>,
+    operation: Result<SyncStateWrite, SyncStateError>,
+) -> Result<SyncStateWrite, SyncStateError> {
+    match operation {
+        Ok(disposition) => transaction
+            .commit()
+            .await
+            .map(|_| disposition)
+            .map_err(SyncStateError::CommitUnknown),
+        Err(operation) => match transaction.cancel().await {
+            Ok(_) => Err(operation),
+            Err(rollback) => Err(SyncStateError::RollbackFailed {
+                operation: Box::new(operation),
+                rollback,
+            }),
+        },
+    }
+}
+
+fn prepare_state_write<'a>(
+    expected_revision: Option<u64>,
+    state: &'a StoredSyncState,
+) -> Result<(SyncStateKey<'a>, Vec<u8>), SyncStateError> {
+    let key = SyncStateKey::new(&state.partition_id, &state.client_id);
+    validate_key(key)?;
+    validate_next_revision(expected_revision, state.revision)?;
+    state.validate().map_err(SyncStateError::InvalidState)?;
+    let payload = serde_json::to_vec(state).map_err(SyncStateError::Encode)?;
+    if payload.len() > MAX_SYNC_STATE_BYTES {
+        return Err(SyncStateError::StateTooLarge);
+    }
+    Ok((key, payload))
+}
+
+async fn apply_projection_diff(
+    transaction: &Transaction<Any>,
+    current: &BTreeMap<ProtocolRecordId, OptimisticRecord<JsonValue>>,
+    next: &BTreeMap<ProtocolRecordId, OptimisticRecord<JsonValue>>,
+) -> Result<(), SyncStateError> {
+    let record_ids = current
+        .keys()
+        .chain(next.keys())
+        .cloned()
+        .collect::<BTreeSet<_>>();
+
+    for record_id in record_ids {
+        let previous = current.get(&record_id);
+        let updated = next.get(&record_id);
+        if previous == updated {
+            continue;
+        }
+
+        let native_id = native_record_id(&record_id)?;
+        match updated {
+            Some(OptimisticRecord::Present { value, .. }) => {
+                let Value::Object(content) =
+                    from_wire_value(value.clone()).map_err(SyncStateError::ValueCodec)?
+                else {
+                    return Err(SyncStateError::RecordValueMustBeObject);
+                };
+                let _: Option<Value> = transaction
+                    .upsert(native_id)
+                    .content(content)
+                    .await
+                    .map_err(SyncStateError::Database)?;
+            }
+            Some(OptimisticRecord::Deleted { .. }) | None => {
+                let _: Option<Value> = transaction
+                    .delete(native_id)
+                    .await
+                    .map_err(SyncStateError::Database)?;
+            }
         }
     }
+    Ok(())
 }
 
 async fn replace_in_transaction(
@@ -291,11 +412,23 @@ fn parse_revision(revision: &str) -> Result<u64, SyncStateError> {
     revision.parse().map_err(|_| SyncStateError::CorruptState)
 }
 
-fn record_id(key: SyncStateKey<'_>) -> RecordId {
-    RecordId::new(
+fn record_id(key: SyncStateKey<'_>) -> NativeRecordId {
+    NativeRecordId::new(
         STATE_TABLE,
         Array::from(vec![key.partition_id.0.clone(), key.client_id.0.clone()]),
     )
+}
+
+fn native_record_id(record_id: &ProtocolRecordId) -> Result<NativeRecordId, SyncStateError> {
+    if record_id.0.len() > MAX_RECORD_ID_BYTES {
+        return Err(SyncStateError::UnsupportedRecordId);
+    }
+    let record_id = NativeRecordId::parse_simple(&record_id.0)
+        .map_err(|_| SyncStateError::UnsupportedRecordId)?;
+    if record_id.table.as_str() == STATE_TABLE {
+        return Err(SyncStateError::UnsupportedRecordId);
+    }
+    Ok(record_id)
 }
 
 #[cfg(test)]
@@ -337,6 +470,23 @@ mod tests {
                     base_version: BaseVersion::Absent,
                     value,
                     reference: None,
+                }],
+            })
+            .unwrap()
+            .into_state()
+    }
+
+    fn enqueue_delete(state: StoredSyncState, commit_id: &str, record_id: &str) -> StoredSyncState {
+        let runtime = ClientRuntime::open(state).unwrap();
+        runtime
+            .prepare_enqueue(ClientCommit {
+                identity: CommitIdentity {
+                    client_commit_id: ClientCommitId(commit_id.into()),
+                    fingerprint: Fingerprint(format!("fingerprint-{commit_id}")),
+                },
+                operations: vec![Operation::Delete {
+                    record_id: RecordId(record_id.into()),
+                    base_version: 0,
                 }],
             })
             .unwrap()
@@ -490,6 +640,141 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn optimistic_record_and_state_commit_together_and_survive_reopen() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let database = surrealkv_database(directory.path()).await;
+        let store = SyncStateStore::new(&database);
+        store.define_schema().await.unwrap();
+        let initial = empty_state("partition", "client");
+        store.save_atomic(None, &initial).await.unwrap();
+        let queued = enqueue(
+            initial.clone(),
+            "commit-1",
+            "person:ada",
+            json!({
+                "name": "Ada",
+                "friend": {"$surreal": "record", "value": "person:bob"},
+                "links": [{"$surreal": "record", "value": "person:grace"}],
+                "profile": {"age": {"$surreal": "int", "value": "42"}}
+            }),
+        );
+
+        assert_eq!(
+            store
+                .apply_transition_atomic(&initial, &queued)
+                .await
+                .unwrap(),
+            SyncStateWrite::Applied
+        );
+        assert_eq!(
+            store
+                .apply_transition_atomic(&queued, &queued)
+                .await
+                .unwrap(),
+            SyncStateWrite::AlreadyCurrent
+        );
+        let client = database.client().await.unwrap();
+        let record: Option<Value> = client
+            .select(NativeRecordId::parse_simple("person:ada").unwrap())
+            .await
+            .unwrap();
+        let Value::Object(record) = record.unwrap() else {
+            panic!("expected object record");
+        };
+        assert_eq!(record.get("name"), Some(&Value::String("Ada".into())));
+        assert_eq!(
+            record.get("friend"),
+            Some(&Value::RecordId(
+                NativeRecordId::parse_simple("person:bob").unwrap()
+            ))
+        );
+        drop(client);
+        database.close().await.unwrap();
+        drop(database);
+
+        let reopened = surrealkv_database(directory.path()).await;
+        let reopened_store = SyncStateStore::new(&reopened);
+        let key = SyncStateKey::new(&queued.partition_id, &queued.client_id);
+        assert_eq!(reopened_store.load(key).await.unwrap(), Some(queued));
+        let client = reopened.client().await.unwrap();
+        let record: Option<Value> = client
+            .select(NativeRecordId::parse_simple("person:ada").unwrap())
+            .await
+            .unwrap();
+        assert!(matches!(record, Some(Value::Object(_))));
+    }
+
+    #[tokio::test]
+    async fn invalid_record_projection_rolls_back_state_and_domain_changes() {
+        let database = memory_database().await;
+        let store = SyncStateStore::new(&database);
+        store.define_schema().await.unwrap();
+        database
+            .client()
+            .await
+            .unwrap()
+            .query("DEFINE TABLE person SCHEMALESS")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        let initial = empty_state("partition", "client");
+        store.save_atomic(None, &initial).await.unwrap();
+        let invalid = enqueue(
+            initial.clone(),
+            "commit-1",
+            "person:ada",
+            json!("records require object content"),
+        );
+
+        assert!(matches!(
+            store.apply_transition_atomic(&initial, &invalid).await,
+            Err(SyncStateError::RecordValueMustBeObject)
+        ));
+        let key = SyncStateKey::new(&initial.partition_id, &initial.client_id);
+        assert_eq!(store.load(key).await.unwrap(), Some(initial));
+        let client = database.client().await.unwrap();
+        let record: Option<Value> = client
+            .select(NativeRecordId::parse_simple("person:ada").unwrap())
+            .await
+            .unwrap();
+        assert_eq!(record, None);
+    }
+
+    #[tokio::test]
+    async fn optimistic_delete_and_state_commit_together() {
+        let database = memory_database().await;
+        let store = SyncStateStore::new(&database);
+        store.define_schema().await.unwrap();
+        let initial = empty_state("partition", "client");
+        store.save_atomic(None, &initial).await.unwrap();
+        let created = enqueue(
+            initial.clone(),
+            "commit-1",
+            "person:ada",
+            json!({"name": "Ada"}),
+        );
+        store
+            .apply_transition_atomic(&initial, &created)
+            .await
+            .unwrap();
+        let deleted = enqueue_delete(created.clone(), "commit-2", "person:ada");
+        store
+            .apply_transition_atomic(&created, &deleted)
+            .await
+            .unwrap();
+
+        let client = database.client().await.unwrap();
+        let record: Option<Value> = client
+            .select(NativeRecordId::parse_simple("person:ada").unwrap())
+            .await
+            .unwrap();
+        assert_eq!(record, None);
+        let key = SyncStateKey::new(&deleted.partition_id, &deleted.client_id);
+        assert_eq!(store.load(key).await.unwrap(), Some(deleted));
+    }
+
+    #[tokio::test]
     async fn corrupt_or_oversized_payload_is_never_treated_as_empty_state() {
         let database = memory_database().await;
         let store = SyncStateStore::new(&database);
@@ -577,5 +862,16 @@ mod tests {
             validate_key(SyncStateKey::new(&oversized, &client_b)),
             Err(SyncStateError::IdentityTooLarge)
         ));
+
+        for unsupported in [
+            RecordId("missing_table_separator".into()),
+            RecordId(format!("{STATE_TABLE}:reserved")),
+            RecordId(format!("person:{}", "x".repeat(MAX_RECORD_ID_BYTES))),
+        ] {
+            assert!(matches!(
+                native_record_id(&unsupported),
+                Err(SyncStateError::UnsupportedRecordId)
+            ));
+        }
     }
 }
