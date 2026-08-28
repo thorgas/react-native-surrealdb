@@ -32,6 +32,10 @@ function createMetroConfig({
           hostRoot,
           'node_modules/react-native',
         ),
+        'react-native-harness': path.resolve(
+          hostRoot,
+          'node_modules/react-native-harness',
+        ),
         'react-native-safe-area-context': path.resolve(
           hostRoot,
           'node_modules/react-native-safe-area-context',

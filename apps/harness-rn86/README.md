@@ -56,6 +56,21 @@ pnpm --filter surrealdb-harness-rn84 run test:harness:android
 pnpm typecheck:react-native-matrix
 ```
 
+The RN 0.86 host also has a two-phase sync recovery check. Each command builds
+and launches the host, seeds an app-private SurrealKV database, crosses a real
+Harness process-termination boundary, and verifies the durable outbox and
+optimistic record after reopening:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:android
+```
+
+Use Node 22.22.0 from the repository `.node-version`. The Android runner may
+stop and restart its configured `Pixel_9` AVD between the seed and verification
+files; do not uninstall the app or pass `HARNESS_APP_PATH` between those phases,
+because either action can erase the app-private database being verified.
+
 Locally, Rock reads a token from `GITHUB_TOKEN` or the authenticated GitHub CLI.
 CI passes `GITHUB_TOKEN` to the pinned Rock Android and iOS actions and grants
 only `contents: read` and `actions: write`. A cache miss builds and uploads the

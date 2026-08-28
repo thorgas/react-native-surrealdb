@@ -13,5 +13,9 @@
     "lint": "pnpm --recursive --if-present run lint",
     "test": "pnpm --recursive --if-present run test",
     "typecheck:react-native-matrix": "pnpm --filter \"./apps/harness-rn*\" --workspace-concurrency=1 run typecheck"
+  },
+  "devDependencies": {
+    "@babel/plugin-transform-class-static-block": "7.29.7",
+    "@babel/plugin-transform-react-jsx": "7.29.7"
   }
 }

@@ -353,6 +353,7 @@ Replace the filter in these examples to test another supported version:
 | `... run build:android` / `... run build:ios`               | Produces a development JS bundle and assets in `dist/`; these do not compile a native app.                                           |
 | `... run test:harness:android` / `... run test:harness:ios` | Runs device integration tests with React Native Harness. A compatible emulator/simulator or `HARNESS_APP_PATH` must be available.    |
 | `... run e2e:android` / `... run e2e:ios`                   | Builds, installs, launches, and tests a host in one command; use these for a clean machine or changed native artifacts.              |
+| `... run e2e:sync-restart:android` / `... run e2e:sync-restart:ios` | Seeds durable optimistic sync state, lets Harness terminate the app process, then reopens the same app-private SurrealKV database and verifies recovery. |
 | `... run lint`                                              | Lints shared app/test code using that React Native version's ESLint configuration.                                                   |
 | `... run typecheck`                                         | Type-checks shared code against that host's React Native and React versions.                                                         |
 | `... run configure`                                         | Runs RNTA's `configure-test-app` generator. Use only after intentionally changing `app.json` or RNTA/native configuration.           |

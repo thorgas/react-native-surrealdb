@@ -78,6 +78,8 @@ pnpm --filter react-native-surrealdb run typecheck
 pnpm --filter react-native-surrealdb run release:artifacts
 pnpm --filter surrealdb-harness-rn86 run e2e:ios
 pnpm --filter surrealdb-harness-rn86 run e2e:android
+pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:android
 ./scripts/verify-core.sh
 ```
 
@@ -99,25 +101,39 @@ that imports the shared suites, host app IDs and the iOS scheme are explicit, `e
 `e2e:android` perform build/install/test in one command, and `.node-version` selects Node 22.22.0.
 No UI changed, so screenshots are not applicable.
 
+The dedicated restart suites derive an app-private SurrealKV endpoint from the
+already-installed op-sqlite native path constants. The seed phase writes a
+database marker and a pending optimistic sync commit, deliberately leaves both
+native handles open, and lets Harness terminate the process. A separately
+loaded verification file reopens the same database, proves the marker, outbox,
+and optimistic row survived, records a durable conflict, then cleans up. This
+passed on an iPhone 17 Pro simulator and, after the configured Pixel 9 AVD's
+package manager wedged, on an alternate Pixel 4 XL AVD. The test changes no UI.
+
+The monorepo also carries a narrow pnpm patch for React Native Harness 1.3.0.
+Its Metro resolver previously selected the hoisted RN 0.85 Harness runtime for
+the RN 0.86 entry bundle while shared tests imported the RN 0.86 runtime. The
+patch resolves the runtime relative to the active host package, and the shared
+Metro config likewise pins `react-native-harness` to that host. Without it,
+Harness either attempted to define its immutable Jest guard twice or collected
+tests into a different runtime context.
+
 ## Next implementation slices
 
 1. Select the canonical protocol value codec and fingerprint rules, then replace the prototype JSON
    boundary in `crates/surrealdb-sync-protocol`, `crates/surrealdb-rn-core`, and
    `packages/react-native-surrealdb/src/sync.ts`.
-2. Add an app-private SurrealKV path to the harness and prove full process/database restart on iOS
-   and Android in `apps/harness-shared`.
-3. Add an application-owned HTTP push/pull adapter around the facade; keep WebSockets as pull hints.
-4. Integrate the reviewed authority endpoint and authorization/checkpoint semantics separately.
-5. Replace the copied crates with the agreed single-source/public-export mechanism before release.
+2. Add an application-owned HTTP push/pull adapter around the facade; keep WebSockets as pull hints.
+3. Integrate the reviewed authority endpoint and authorization/checkpoint semantics separately.
+4. Replace the copied crates with the agreed single-source/public-export mechanism before release.
 
 ## Hard blockers
 
 - The long-term single-source/export mechanism is unresolved.
 - GitHub Actions may remain unavailable until account billing permits runner allocation.
 - The canonical native-value storage/wire codec is not selected yet.
-- Device-level full-process SurrealKV restart needs a cross-platform app-private path mechanism.
 - The HTTP authority deployment shape and authentication integration remain separate work.
 - This branch must remain a draft and must not be released or advertised as sync support.
 
-Only GitHub runner/billing availability is a user-side operational blocker. The codec, path,
-transport, and authority items are engineering/architecture follow-ups, not account setup tasks.
+Only GitHub runner/billing availability is a user-side operational blocker. The codec, transport,
+and authority items are engineering/architecture follow-ups, not account setup tasks.
