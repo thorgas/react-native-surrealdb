@@ -56,8 +56,7 @@ mechanism exists, protocol changes must originate in the private canonical repos
   conflicts, and pull application are mapped to native values. The private sync-state table cannot
   be targeted by protocol operations.
 - `open_sync_client` and `NativeSyncClient` expose named enqueue, push-outcome, pull, pending,
-  conflict, persisted opaque checkpoint-token, status, close, and closed-state operations over
-  UniFFI.
+  conflict, status, close, and closed-state operations over UniFFI.
 - `ExperimentalSyncClient` is the hand-written TypeScript facade. `SurrealClient` exposes it through
   `openExperimentalSync()` only on embedded databases.
 

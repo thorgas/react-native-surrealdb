@@ -218,9 +218,6 @@ interface NativeModuleInterface {
     uniffiSelf: bigint,
     responseJson: Uint8Array,
   ): bigint;
-  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_checkpoint_token(
-    uniffiSelf: bigint,
-  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_close(
     uniffiSelf: bigint,
   ): bigint;
@@ -343,7 +340,6 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_next(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_pull_response(): number;
-  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_checkpoint_token(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_close(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_conflicts_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_enqueue(): number;

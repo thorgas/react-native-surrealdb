@@ -179,16 +179,6 @@ impl NativeSyncClient {
             .collect::<Result<Vec<_>, _>>()
     }
 
-    pub async fn checkpoint_token(&self) -> Result<Option<String>, NativeSyncError> {
-        let slot = self.runtime.lock().await;
-        let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
-        Ok(runtime
-            .state()
-            .checkpoint
-            .as_ref()
-            .map(|checkpoint| checkpoint.token.0.clone()))
-    }
-
     pub async fn status(&self) -> Result<NativeSyncStatus, NativeSyncError> {
         let slot = self.runtime.lock().await;
         status(slot.as_ref().ok_or(NativeSyncError::Closed)?)
@@ -437,7 +427,6 @@ mod tests {
         let client = open_sync_client(database.clone(), options("all"))
             .await
             .unwrap();
-        assert_eq!(client.checkpoint_token().await.unwrap(), None);
         let checkpoint = Checkpoint {
             token: OpaqueCheckpoint("checkpoint-1".into()),
             cursor: Cursor {
@@ -480,23 +469,11 @@ mod tests {
             .unwrap();
         assert_eq!(status.cursor_epoch, Some(1));
         assert_eq!(status.cursor_sequence, Some(1));
-        assert_eq!(
-            client.checkpoint_token().await.unwrap().as_deref(),
-            Some("checkpoint-1")
-        );
         let database_client = database.client().await.unwrap();
         let record: Option<Value> = database_client
             .select(NativeRecordId::parse_simple("person:lin").unwrap())
             .await
             .unwrap();
         assert!(matches!(record, Some(Value::Object(_))));
-        drop(database_client);
-
-        client.close().await;
-        let reopened = open_sync_client(database, options("all")).await.unwrap();
-        assert_eq!(
-            reopened.checkpoint_token().await.unwrap().as_deref(),
-            Some("checkpoint-1")
-        );
     }
 }

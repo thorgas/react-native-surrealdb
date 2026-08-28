@@ -17,7 +17,6 @@ function createNative() {
   let closed = false;
   const native = {
     applyPullResponse: vi.fn(async () => initialStatus),
-    checkpointToken: vi.fn(async () => "checkpoint-1"),
     close: vi.fn(async () => {
       closed = true;
     }),
@@ -49,10 +48,6 @@ describe("ExperimentalSyncClient", () => {
     });
     await expect(client.pending()).resolves.toEqual([{ identity: "commit-1" }]);
     await expect(client.conflicts()).resolves.toEqual([{ status: "conflict" }]);
-    await expect(client.checkpointToken({ signal })).resolves.toBe(
-      "checkpoint-1",
-    );
-    expect(native.checkpointToken).toHaveBeenCalledWith({ signal });
   });
 
   it("forwards cancellation and reflects native closure", async () => {

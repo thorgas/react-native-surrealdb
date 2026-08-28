@@ -178,9 +178,6 @@ void uniffi_surrealdb_rn_core_fn_free_nativesyncclient(
 /*handle*/ uint64_t
 uniffi_surrealdb_rn_core_fn_method_nativesyncclient_apply_pull_response(
     /*handle*/ uint64_t ptr, RustBuffer response_json);
-/*handle*/ uint64_t
-uniffi_surrealdb_rn_core_fn_method_nativesyncclient_checkpoint_token(
-    /*handle*/ uint64_t ptr);
 /*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_method_nativesyncclient_close(
     /*handle*/ uint64_t ptr);
 /*handle*/ uint64_t
@@ -362,8 +359,6 @@ uint16_t
 uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled_with_encoding();
 uint16_t
 uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_pull_response();
-uint16_t
-uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_checkpoint_token();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_close();
 uint16_t
 uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_conflicts_json();
@@ -2118,18 +2113,6 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
             ->cpp_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_apply_pull_response(
                 rt, thisVal, args, count);
       });
-  props["ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_checkpoint_"
-        "token"] = jsi::Function::createFromHostFunction(
-      rt,
-      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_method_"
-                                    "nativesyncclient_checkpoint_token"),
-      1,
-      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
-             const jsi::Value *args, size_t count) -> jsi::Value {
-        return this
-            ->cpp_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_checkpoint_token(
-                rt, thisVal, args, count);
-      });
   props["ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_close"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -3115,18 +3098,6 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                 rt, thisVal, args, count);
       });
   props["ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_"
-        "checkpoint_token"] = jsi::Function::createFromHostFunction(
-      rt,
-      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
-                                    "method_nativesyncclient_checkpoint_token"),
-      0,
-      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
-             const jsi::Value *args, size_t count) -> jsi::Value {
-        return this
-            ->cpp_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_checkpoint_token(
-                rt, thisVal, args, count);
-      });
-  props["ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_"
         "close"] = jsi::Function::createFromHostFunction(
       rt,
       jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
@@ -3952,18 +3923,6 @@ jsi::Value NativeSurrealdbRnCore::
                                                             args[0]),
           uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(
               rt, callInvoker, args[1]));
-
-  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
-                                                         value);
-}
-jsi::Value NativeSurrealdbRnCore::
-    cpp_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_checkpoint_token(
-        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
-        size_t count) {
-  auto value =
-      uniffi_surrealdb_rn_core_fn_method_nativesyncclient_checkpoint_token(
-          uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
-                                                            args[0]));
 
   return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
                                                          value);
@@ -4916,15 +4875,6 @@ jsi::Value NativeSurrealdbRnCore::
         size_t count) {
   auto value =
       uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_pull_response();
-
-  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
-}
-jsi::Value NativeSurrealdbRnCore::
-    cpp_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_checkpoint_token(
-        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
-        size_t count) {
-  auto value =
-      uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_checkpoint_token();
 
   return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }
