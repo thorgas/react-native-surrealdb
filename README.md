@@ -124,12 +124,14 @@ conflict, offline recovery, migration, and adversarial failure tests.
 ### Unusable sync-runtime staging
 
 This branch contains temporary copies of the Apache-2.0 `surrealdb-sync-protocol` and
-`surrealdb-sync-client` Rust crates plus a Rust-only SurrealKV state adapter. The adapter
-transactionally stores a bounded, revision-checked client-state snapshot and rejects corrupt data,
-but it is not connected to UniFFI, TypeScript, domain records, or networking. It does not make this
-package a sync engine. The private formal specification and comprehensive checker suites are not
-included. See [`crates/SYNC_RUNTIME_ORIGIN.md`](./crates/SYNC_RUNTIME_ORIGIN.md) for the temporary
-source boundary and [the handoff](./docs/SYNC_RUNTIME_HANDOFF.md) for current limitations.
+`surrealdb-sync-client` Rust crates plus an experimental native/TypeScript facade. An enqueue or
+pull transition atomically updates its bounded, revision-checked client state and optimistic domain
+records in the embedded SurrealDB transaction. The facade performs no networking, authority,
+authentication, or automatic retry, and its protocol values still cross a prototype JSON boundary.
+It does not make this package a usable sync engine and must not be released as one. The private
+formal specification and comprehensive checker suites are not included. See
+[`crates/SYNC_RUNTIME_ORIGIN.md`](./crates/SYNC_RUNTIME_ORIGIN.md) for the temporary source boundary
+and [the handoff](./docs/SYNC_RUNTIME_HANDOFF.md) for current limitations.
 
 ## Maintenance
 
@@ -189,7 +191,7 @@ React Native package, and five static compatibility apps:
 
 | Path                                      | Purpose                                                                 |
 | ----------------------------------------- | ----------------------------------------------------------------------- |
-| `crates/surrealdb-rn-core`                | UniFFI Rust core plus an unexported experimental sync-state adapter      |
+| `crates/surrealdb-rn-core`                | UniFFI Rust core plus the experimental embedded sync adapter             |
 | `crates/surrealdb-sync-protocol`          | Temporarily copied transport-neutral sync message types                  |
 | `crates/surrealdb-sync-client`            | Temporarily copied storage-neutral client state transitions              |
 | `packages/react-native-surrealdb`         | Published TypeScript, JSI/C++, iOS, and Android package                 |
@@ -233,8 +235,11 @@ dependencies instead of installing the command globally:
 pnpm install --frozen-lockfile
 ```
 
-The repository requires Node.js 20 or newer and pnpm 11 or newer; CI currently
-uses Node.js 22 and pnpm 11.5.0. Platform builds additionally require Xcode and
+The repository pins Node.js 22.22.0 in `.node-version` and pnpm 11.5.0 in
+`package.json`. Run `fnm use` (or select that version with your Node manager)
+before platform tooling; Node 23 and newer are intentionally excluded because
+their type stripping cannot load the current pinned Rock configuration files.
+Platform builds additionally require Xcode and
 CocoaPods on macOS, or an Android SDK, NDK 27, Java, and `cargo-ndk` for
 Android. The complete Rust target list is recorded in
 [`packages/react-native-surrealdb/RELEASING.md`](./packages/react-native-surrealdb/RELEASING.md).
@@ -347,6 +352,7 @@ Replace the filter in these examples to test another supported version:
 | `... run prepare:ios`                                       | Creates the missing XCFramework and JS bundle, and runs `bundle exec pod install` when the Pods project does not link the framework. |
 | `... run build:android` / `... run build:ios`               | Produces a development JS bundle and assets in `dist/`; these do not compile a native app.                                           |
 | `... run test:harness:android` / `... run test:harness:ios` | Runs device integration tests with React Native Harness. A compatible emulator/simulator or `HARNESS_APP_PATH` must be available.    |
+| `... run e2e:android` / `... run e2e:ios`                   | Builds, installs, launches, and tests a host in one command; use these for a clean machine or changed native artifacts.              |
 | `... run lint`                                              | Lints shared app/test code using that React Native version's ESLint configuration.                                                   |
 | `... run typecheck`                                         | Type-checks shared code against that host's React Native and React versions.                                                         |
 | `... run configure`                                         | Runs RNTA's `configure-test-app` generator. Use only after intentionally changing `app.json` or RNTA/native configuration.           |
@@ -361,9 +367,17 @@ For example:
 
 ```sh
 pnpm --filter surrealdb-harness-rn82 run rock:android
-pnpm --filter surrealdb-harness-rn84 run test:harness:android
+pnpm --filter surrealdb-harness-rn86 run e2e:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:android
 pnpm typecheck:react-native-matrix
 ```
+
+`e2e:ios` uses `iPhone 17 Pro` by default; set `SURREALDB_IOS_SIMULATOR` to an
+available simulator name. `e2e:android` uses the connected emulator selected by
+the React Native CLI; the harness then requires the configured `Pixel_9` AVD.
+The local proxy test in each static host imports the single shared suite from
+`apps/harness-shared`, which keeps the tests bundleable without duplicating
+their behavior.
 
 Rock fingerprints each host's native files, resolved dependencies, React Native
 version, and the shared Rust/package sources. Locally, its GitHub provider reads

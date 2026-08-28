@@ -176,6 +176,19 @@ Expo Go. Persistent SurrealKV support is experimental. Transaction callbacks
 must finish before the database is closed, and remote connection recovery is
 currently application-managed.
 
+### Unreleased sync prototype
+
+This development branch exposes `openExperimentalSync()` only to exercise the native protocol
+workflow. The returned transport-free client can enqueue an atomic local commit, inspect its
+durable pending/conflict queues, and apply HTTP push/pull responses supplied by the application.
+Optimistic records and sync metadata commit together in embedded SurrealDB.
+
+The payload API accepts ordinary JSON-compatible protocol objects. It does not yet use this
+package's lossless SurrealDB value codec, so JavaScript `bigint` and untagged SurrealDB-specific
+values are not accepted. Networking, authorization, server deployment, and retry scheduling are
+also absent. Do not ship or advertise this API; see the repository
+[sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
+
 ## Value transport
 
 The JavaScript/Rust boundary preserves 64-bit integers, decimals, record IDs,
