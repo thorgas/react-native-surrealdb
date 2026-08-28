@@ -59,7 +59,9 @@ pnpm typecheck:react-native-matrix
 The RN 0.86 host also has a two-phase sync recovery check. Each command builds
 and launches the host, seeds an app-private SurrealKV database, crosses a real
 Harness process-termination boundary, and verifies the durable outbox and
-optimistic record after reopening:
+optimistic record after reopening. The seed phase also calls the public native
+canonical-CBOR codec, checks a real pending push envelope, and decodes the
+private pull-response golden message through Hermes:
 
 ```sh
 pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:ios

@@ -21,7 +21,8 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Review: [draft PR #12](https://github.com/thorgas/react-native-surrealdb/pull/12).
 - Published branch: `origin/feat/sync-runtime-crates`.
 - Canonical codec source: private `main` (also `feat/canonical-codec-v1`) at
-  `29c68bda2290e861e7f83ae4cd658cd7287b597d`.
+  `2032066722ccb0202f2f8481f30fd5c70f4d681e`.
+- Native canonical HTTP codec commit: `c383a11`.
 
 ## Source boundary
 
@@ -30,7 +31,7 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Copied source: private canonical `surrealdb-sync-engine.dev` `main` at
   `056374ac5430e1e09ee73ab30b4d8c20247a2f68`.
 - Canonical codec update: private `main` at
-  `29c68bda2290e861e7f83ae4cd658cd7287b597d`.
+  `2032066722ccb0202f2f8481f30fd5c70f4d681e`.
 - Included: `surrealdb-sync-protocol`, `surrealdb-sync-client`, and the client's public transition
   regressions.
 - Excluded: Quint specifications, authority implementation, authority-cycle/conformance/adversarial
@@ -79,15 +80,22 @@ lossless bridge as query variables, preserving `bigint`, bytes, `NONE`, and stru
 The safe subset deliberately excludes floats, decimals, UUID/range record keys, dates, sets, and
 other undecided kinds.
 
-This selects canonical value and commit-fingerprint bytes, not the complete HTTP message encoding.
 `packages/react-native-surrealdb/src/sync-http.ts` adds an application-owned HTTP adapter around
 the facade. It serializes calls, submits each pending commit to `POST /v1/sync/push`, pulls from
 `POST /v1/sync/pull`, forwards the application token, and accepts only HTTP 200 protocol outcomes.
-The application must inject the codec, fetch implementation, and durable checkpoint store. The
-adapter applies the complete pull response before saving its opaque checkpoint; a crash or storage
-failure between those operations replays the prior checkpoint rather than skipping unapplied data.
-Its injected example JSON codec also rejects pending `bigint` values outside JavaScript's safe
-integer range; lossless native values do not make that prototype HTTP envelope lossless.
+The application must inject the codec and fetch implementation. The native client owns the opaque
+checkpoint with its records, cursor, scope snapshot, and outbox, so applying a complete pull is one
+embedded transaction.
+
+`crates/surrealdb-sync-protocol/src/http_codec.rs` is synchronized byte-for-byte from private commit
+`2032066`. Its definite-length CBOR grammar covers all push/pull requests and responses under a
+4 MiB/4,096-item aggregate budget, applies smaller identifier/container/checkpoint limits, rejects
+noncanonical or hostile messages before allocation, and binds commit fingerprints to partition and
+client. `crates/surrealdb-rn-core/src/sync_http_codec.rs` exposes four async UniFFI functions:
+`encode_sync_push_request`, `decode_sync_push_response`, `encode_sync_pull_request`, and
+`decode_sync_pull_response`. The public `createExperimentalCanonicalCborSyncHttpCodec()` constructor
+wires these bindings without sending protocol `u64` values through JavaScript numbers. The injected
+JSON codec remains a lossy test fallback and rejects unsafe `bigint` values.
 It deliberately provides no authority, background scheduler, implicit retry/backoff, or WebSocket
 ordering. WebSockets remain notification hints that cause the application to pull.
 
@@ -109,6 +117,8 @@ cargo clippy -p surrealdb-rn-core --all-targets -- -D warnings
 cargo test -p surrealdb-rn-core sync_state
 cargo test -p surrealdb-rn-core sync_client
 cargo test -p surrealdb-rn-core sync_codec
+cargo test -p surrealdb-rn-core sync_http_codec
+cargo test -p surrealdb-sync-protocol http_codec
 pnpm --filter react-native-surrealdb run test
 pnpm --filter react-native-surrealdb run typecheck
 pnpm --filter react-native-surrealdb run build
@@ -127,8 +137,14 @@ replacement, malformed and semantically corrupt payloads, size limits, structure
 SurrealKV close/reopen with an uncommitted transaction, atomic optimistic create/delete, facade
 reopen, durable conflict retention, scope drift, malformed input, exact HTTP request shape,
 authorization failures, lost responses, explicit retry, call serialization, cancellation, injected
-codec use, and checkpoint save ordering/failure replay. The shared native harness
-executes enqueue, optimistic visibility, facade reopen, and conflict reconciliation through Hermes.
+codec use, incomplete-pull rejection, and atomic native checkpoint persistence. The shared native
+harness executes enqueue, optimistic visibility, facade reopen, and conflict reconciliation through
+Hermes.
+
+The HTTP codec tests replay all four private golden messages, round-trip every protocol message and
+canonical value variant, and reject malformed, noncanonical, oversized, deeply nested, type-confused,
+and ambiguous tagged-object inputs. The package suite also runs the adapter against a real localhost
+HTTP server. No production data or credentials are used.
 
 All documented commands passed on 2026-08-28. `./scripts/verify-core.sh` ran formatting,
 warning-denied workspace Clippy, all workspace tests, and Rust checks for the iOS arm64 simulator
@@ -161,23 +177,30 @@ tests into a different runtime context.
 
 The RN 0.86 shared harness also exercises the HTTP adapter through Hermes against a redacted mocked
 authority while the embedded native client holds real pending state. It verifies accepted push,
-reset pull, pending removal, cursor advancement, and application checkpoint persistence on iOS and
-Android. This is a native-boundary E2E, not a deployed-server or real-network test.
+reset pull, pending removal, cursor advancement, and native checkpoint persistence. The process-
+restart seed additionally encodes a real pending commit and decodes the private pull golden message
+through the public canonical codec on both iOS and Android. This is a native-boundary E2E, not a
+deployed-server test.
+
+Authority coverage is currently a split conformance chain: private commit `2032066` proves canonical
+bytes through the typed authority, the pinned SurrealDB 3.2.4 harness proves atomic authority state
+and SurrealKV restart persistence, this package proves a real TCP client boundary, and the device
+tests prove the same codec through Hermes. A single deployable client-to-authority network E2E is
+not claimed because no HTTP framework or transactional SurrealDB authority adapter has been selected.
 
 ## Next implementation slices
 
-1. Define the complete bounded HTTP request/response envelope codec; the accepted canonical value
-   and commit-fingerprint profile does not make the prototype JSON HTTP codec canonical.
-2. Replace the injected checkpoint-store compatibility boundary with an upstream-compatible native
-   durability API once the generated Android binding can evolve safely.
-3. Integrate the reviewed authority endpoint and authorization/checkpoint semantics separately.
-4. Replace the copied crates with the agreed single-source/public-export mechanism before release.
+1. Integrate the reviewed private authority endpoint with a deployable SurrealDB adapter and run a
+   real authenticated push/pull/checkpoint E2E; framework and new dependency choices remain separate.
+2. Add scheduling, retry/backoff, connectivity policy, and WebSocket-only invalidation hints around
+   the explicit HTTP-correctness path.
+3. Replace the copied crates with the agreed single-source/public-export mechanism before release.
+4. Extend the canonical value profile only through private protocol decisions and golden vectors.
 
 ## Hard blockers
 
 - The long-term single-source/export mechanism is unresolved.
 - GitHub Actions may remain unavailable until account billing permits runner allocation.
-- The complete canonical HTTP envelope/checkpoint codec is not selected yet.
 - The HTTP adapter is only application-owned orchestration; authority deployment and authentication
   integration remain separate work.
 - This branch must remain a draft and must not be released or advertised as sync support.

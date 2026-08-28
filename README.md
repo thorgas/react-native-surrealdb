@@ -127,11 +127,12 @@ This branch contains temporary copies of the Apache-2.0 `surrealdb-sync-protocol
 `surrealdb-sync-client` Rust crates plus an experimental native/TypeScript facade. An enqueue or
 pull transition atomically updates its bounded, revision-checked client state and optimistic domain
 records in the embedded SurrealDB transaction. An optional application-owned HTTP adapter performs
-explicit push/pull calls with injected authentication, codec, fetch, and durable checkpoint storage.
-It provides no authority, scheduler, WebSocket ordering, or automatic retry, and its example codec
-still crosses a prototype JSON envelope. Native Rust now computes content-bound commit fingerprints
-from a bounded canonical safe subset and rejects unsupported or hostile values before mutation;
-the full HTTP message codec is not canonical yet.
+explicit push/pull calls with injected authentication, codec, and `fetch`; checkpoints live in the
+same native durable state as the applied records and cursor. A native bounded canonical-CBOR codec
+implements the private `surrealdb-sync/1` push/pull envelope, while the JSON codec remains an
+explicitly lossy test fallback. It provides no deployable authority, scheduler, WebSocket ordering,
+or automatic retry. Native Rust computes content-bound commit fingerprints from a bounded canonical
+safe subset and rejects unsupported or hostile values before mutation.
 It does not make this package a usable sync engine and must not be released as one. The private
 formal specification and comprehensive checker suites are not included. See
 [`crates/SYNC_RUNTIME_ORIGIN.md`](./crates/SYNC_RUNTIME_ORIGIN.md) for the temporary source boundary

@@ -5,7 +5,8 @@
 `056374ac5430e1e09ee73ab30b4d8c20247a2f68` on 2026-08-28.
 The owned `surrealdb-sync-protocol::canonical` module and its exact dependency pins were later
 synchronized from private `main` (also branch `feat/canonical-codec-v1`) at
-`29c68bda2290e861e7f83ae4cd658cd7287b597d`.
+`2032066722ccb0202f2f8481f30fd5c70f4d681e`. This includes the complete bounded
+`surrealdb-sync/1` push/pull CBOR envelope in `http_codec.rs`.
 
 The canonical protocol design, Quint specification, comprehensive conformance/adversarial tests,
 authority implementation, research wiki, SurrealDB compatibility oracle, and experiments remain

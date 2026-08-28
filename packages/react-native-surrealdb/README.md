@@ -187,17 +187,43 @@ Applications must inject their access-token provider, wire codec, and `fetch`. T
 last complete checkpoint from native durable client state; applying a pull atomically persists its
 records, cursor, scope snapshot, and opaque checkpoint before the next request can observe it.
 
+The native codec constructor is the only complete wire codec on this branch:
+
+```ts
+const sync = await database.openExperimentalSync({
+  partitionId: "workspace",
+  clientId: "device-1",
+  requestedScope: "all",
+  subscriptionRevision: 1n,
+});
+
+const transport = new ExperimentalSyncHttpAdapter({
+  sync,
+  baseUrl: "https://sync.example.invalid",
+  partitionId: "workspace",
+  clientId: "device-1",
+  requestedScope: "all",
+  subscriptionRevision: 1n,
+  accessToken: async () => applicationToken,
+  fetch,
+  codec: createExperimentalCanonicalCborSyncHttpCodec(),
+});
+```
+
+The example URL is intentionally non-routable: this package does not supply or deploy the authority.
+
 The payload API uses this package's tagged lossless value bridge for JavaScript `bigint`, bytes,
 `NONE`, and record links. Native Rust ignores any caller-supplied fingerprint, validates record
 values against the bounded canonical protocol safe subset, and emits the content-bound SHA-256
 fingerprint in the durable pending commit. Floats, decimals, UUID/range record keys, dates, sets,
-and other undecided protocol kinds fail closed. The exported `experimentalJsonSyncHttpCodec`
-remains test/prototype-only: it is a JSON envelope codec, not the complete canonical HTTP message
-codec. Authority deployment, automatic retry/backoff, and WebSocket durability or ordering are
-absent. A WebSocket may only notify the application to call `pull()`. Do not ship or advertise this
-API; see the repository [sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
-The example HTTP codec throws when a pending `bigint` lies outside JavaScript's safe integer range;
-applications must not mistake it for the lossless native boundary.
+and other undecided protocol kinds fail closed. `createExperimentalCanonicalCborSyncHttpCodec()`
+uses the copied protocol crate's bounded, deterministic `surrealdb-sync/1` request/response codec;
+its golden messages match private commit `2032066722ccb0202f2f8481f30fd5c70f4d681e`. The exported
+`experimentalJsonSyncHttpCodec` remains test/prototype-only and throws when a pending `bigint` lies
+outside JavaScript's safe integer range. Authority deployment, automatic retry/backoff, and
+WebSocket durability or ordering are absent. A WebSocket may only notify the application to call
+`pull()`. Do not ship or advertise this API; see the repository
+[sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
 
 ## Value transport
 
