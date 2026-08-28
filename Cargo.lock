@@ -4173,6 +4173,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "surrealdb-sync-client"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "surrealdb-sync-protocol",
+]
+
+[[package]]
+name = "surrealdb-sync-protocol"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "surrealdb-types"
 version = "3.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

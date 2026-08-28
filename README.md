@@ -121,6 +121,14 @@ project.
 No sync capability will be advertised until it has explicit authorization,
 conflict, offline recovery, migration, and adversarial failure tests.
 
+### Unusable sync-runtime staging
+
+This branch may contain temporary copies of the Apache-2.0 `surrealdb-sync-protocol` and
+`surrealdb-sync-client` Rust crates so the native adapter can be prototyped. They are not connected
+to UniFFI or TypeScript, perform no persistence or networking, and do not make this package a sync
+engine. The private formal specification and comprehensive checker suites are not included. See
+[`crates/SYNC_RUNTIME_ORIGIN.md`](./crates/SYNC_RUNTIME_ORIGIN.md) for the temporary source boundary.
+
 ## Maintenance
 
 This is not a one-off experiment. I use the package in a production app every
@@ -180,6 +188,8 @@ React Native package, and five static compatibility apps:
 | Path                                      | Purpose                                                                 |
 | ----------------------------------------- | ----------------------------------------------------------------------- |
 | `crates/surrealdb-rn-core`                | Rust API exposed through UniFFI                                         |
+| `crates/surrealdb-sync-protocol`          | Temporarily copied transport-neutral sync message types                  |
+| `crates/surrealdb-sync-client`            | Temporarily copied storage-neutral client state transitions              |
 | `packages/react-native-surrealdb`         | Published TypeScript, JSI/C++, iOS, and Android package                 |
 | `apps/harness-shared`                     | Application, integration tests, and benchmarks shared by every test app |
 | `apps/harness-rn82` … `apps/harness-rn86` | One React Native Test App host per supported React Native version       |
