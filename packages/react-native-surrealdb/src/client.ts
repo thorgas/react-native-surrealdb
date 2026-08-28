@@ -5,6 +5,7 @@ import {
   SurrealRnError_Tags,
   benchmarkBoundaryNoop as nativeBenchmarkBoundaryNoop,
   connect as nativeConnect,
+  openSyncClient as nativeOpenSyncClient,
   type ConnectOptions,
   type LiveQueryLike,
   type NativeBatchQuery,
@@ -20,6 +21,10 @@ import {
   type SurrealValue,
 } from "./wire";
 import { LiveSubscription } from "./subscription";
+import {
+  ExperimentalSyncClient,
+  type ExperimentalSyncOpenOptions,
+} from "./sync";
 
 export { SurrealRnError, SurrealRnError_Tags };
 export type { ConnectOptions };
@@ -333,6 +338,16 @@ export class SurrealClient {
     options?: CallOptions,
   ): Promise<LiveSubscription<T>> {
     return new LiveSubscription(await this.live<T>(surql, variables, options));
+  }
+
+  /** Open the unreleased, transport-free sync protocol prototype. */
+  async openExperimentalSync(
+    options: ExperimentalSyncOpenOptions,
+    callOptions?: CallOptions,
+  ): Promise<ExperimentalSyncClient> {
+    return new ExperimentalSyncClient(
+      await nativeOpenSyncClient(this.#native, options, callOptions),
+    );
   }
 
   use(namespace: string, database: string, options?: CallOptions) {

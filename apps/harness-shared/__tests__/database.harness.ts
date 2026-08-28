@@ -39,6 +39,68 @@ describe('react-native-surrealdb native core', () => {
     expect(database.isClosed).toBe(true);
   });
 
+  test('persists experimental optimistic sync state across facade reopen', async () => {
+    database = await connect({
+      endpoint: 'memory',
+      namespace: 'harness-sync',
+      database: 'harness-sync',
+    });
+    const options = {
+      partitionId: 'partition',
+      clientId: 'client',
+      requestedScope: 'all',
+      subscriptionRevision: 1n,
+    };
+    const identity = {
+      clientCommitId: 'commit-1',
+      fingerprint: 'fingerprint-1',
+    };
+    const sync = await database.openExperimentalSync(options);
+
+    const queued = await sync.enqueue({
+      identity,
+      operations: [
+        {
+          kind: 'upsert',
+          record_id: 'person:ada',
+          base_version: 'absent',
+          value: { name: 'Ada' },
+          reference: null,
+        },
+      ],
+    });
+    expect(queued.pendingCount).toBe(1);
+    const [optimistic] = await database.query<string[]>(
+      'SELECT VALUE name FROM person:ada',
+    );
+    expect(optimistic?.value).toEqual(['Ada']);
+
+    await sync.close();
+    const reopened = await database.openExperimentalSync(options);
+    expect((await reopened.pending())).toHaveLength(1);
+    expect((await reopened.status()).pendingCount).toBe(1);
+
+    const conflicted = await reopened.recordPushResponse({
+      schemaVersion: 'v1',
+      partitionId: 'partition',
+      clientId: 'client',
+      outcome: {
+        status: 'conflict',
+        identity,
+        record_id: 'person:ada',
+        authoritative: { state: 'absent' },
+      },
+    });
+    expect(conflicted.pendingCount).toBe(0);
+    expect(conflicted.conflictCount).toBe(1);
+    expect(await reopened.conflicts()).toHaveLength(1);
+    const [canonical] = await database.query<string[]>(
+      'SELECT VALUE name FROM person:ada',
+    );
+    expect(canonical?.value).toEqual([]);
+    await reopened.close();
+  });
+
   test('streams live query notifications and closes deterministically', async () => {
     database = await connect({
       endpoint: 'memory',

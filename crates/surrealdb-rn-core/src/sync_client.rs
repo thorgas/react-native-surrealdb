@@ -1,0 +1,422 @@
+//! Experimental UniFFI facade over the durable sync client state machine.
+//!
+//! The facade performs no networking. Callers provide serialized protocol
+//! messages and remain responsible for transport, authentication, and retry.
+
+use std::sync::Arc;
+
+use serde::de::DeserializeOwned;
+use serde_json::Value as JsonValue;
+use surrealdb_sync_client::{ClientError, ClientRuntime, PreparedTransition};
+use surrealdb_sync_protocol::{
+    ClientCommit, ClientId, DurableOutcome, PartitionId, PullResponse, PushResponse, ScopeIdentity,
+};
+use tokio::sync::Mutex as AsyncMutex;
+
+use crate::SurrealDatabase;
+use crate::sync_state::{
+    MAX_SYNC_STATE_BYTES, StoredSyncState, SyncStateError, SyncStateKey, SyncStateStore,
+};
+
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct NativeSyncOpenOptions {
+    pub partition_id: String,
+    pub client_id: String,
+    pub requested_scope: String,
+    pub subscription_revision: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct NativeSyncStatus {
+    pub revision: u64,
+    pub pending_count: u32,
+    pub outcome_count: u32,
+    pub conflict_count: u32,
+    pub cursor_epoch: Option<u64>,
+    pub cursor_sequence: Option<u64>,
+}
+
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum NativeSyncError {
+    #[error("sync client is closed")]
+    Closed,
+
+    #[error("sync input is invalid")]
+    InvalidInput,
+
+    #[error("sync protocol transition is invalid")]
+    Protocol,
+
+    #[error("sync persistence operation failed")]
+    Persistence,
+
+    #[error("sync persistence outcome is unknown; reopen before continuing")]
+    RecoveryRequired,
+
+    #[error("sync client requires an embedded database")]
+    RequiresEmbeddedDatabase,
+
+    #[error("sync client internal conversion failed")]
+    Internal,
+}
+
+#[derive(uniffi::Object)]
+pub struct NativeSyncClient {
+    database: Arc<SurrealDatabase>,
+    runtime: AsyncMutex<Option<ClientRuntime<JsonValue>>>,
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn open_sync_client(
+    database: Arc<SurrealDatabase>,
+    options: NativeSyncOpenOptions,
+) -> Result<Arc<NativeSyncClient>, NativeSyncError> {
+    if !database.embedded {
+        return Err(NativeSyncError::RequiresEmbeddedDatabase);
+    }
+
+    let partition_id = PartitionId(options.partition_id);
+    let client_id = ClientId(options.client_id);
+    let requested_scope = ScopeIdentity(options.requested_scope);
+    let key = SyncStateKey::new(&partition_id, &client_id);
+    let store = SyncStateStore::new(&database);
+    store.define_schema().await.map_err(map_persistence_error)?;
+
+    let state = match store.load(key).await.map_err(map_persistence_error)? {
+        Some(state) => state,
+        None => {
+            let initial = StoredSyncState::empty(
+                partition_id.clone(),
+                client_id.clone(),
+                requested_scope.clone(),
+                options.subscription_revision,
+            );
+            match store.save_atomic(None, &initial).await {
+                Ok(_) => initial,
+                Err(SyncStateError::RevisionConflict) => store
+                    .load(key)
+                    .await
+                    .map_err(map_persistence_error)?
+                    .ok_or(NativeSyncError::Persistence)?,
+                Err(error) => return Err(map_persistence_error(error)),
+            }
+        }
+    };
+
+    if state.partition_id != partition_id
+        || state.client_id != client_id
+        || state.requested_scope != requested_scope
+        || state.subscription_revision != options.subscription_revision
+    {
+        return Err(NativeSyncError::Protocol);
+    }
+    let runtime = ClientRuntime::open(state).map_err(map_protocol_error)?;
+    Ok(Arc::new(NativeSyncClient {
+        database,
+        runtime: AsyncMutex::new(Some(runtime)),
+    }))
+}
+
+#[uniffi::export(async_runtime = "tokio")]
+impl NativeSyncClient {
+    pub async fn enqueue(&self, commit_json: String) -> Result<NativeSyncStatus, NativeSyncError> {
+        let commit = decode_input::<ClientCommit<JsonValue>>(&commit_json)?;
+        let mut slot = self.runtime.lock().await;
+        let prepared = slot
+            .as_ref()
+            .ok_or(NativeSyncError::Closed)?
+            .prepare_enqueue(commit)
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    pub async fn record_push_response(
+        &self,
+        response_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let response = decode_input::<PushResponse<JsonValue>>(&response_json)?;
+        let mut slot = self.runtime.lock().await;
+        let prepared = slot
+            .as_ref()
+            .ok_or(NativeSyncError::Closed)?
+            .prepare_push_response(response)
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    pub async fn apply_pull_response(
+        &self,
+        response_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let response = decode_input::<PullResponse<JsonValue>>(&response_json)?;
+        let mut slot = self.runtime.lock().await;
+        let prepared = slot
+            .as_ref()
+            .ok_or(NativeSyncError::Closed)?
+            .prepare_pull_response(response)
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    pub async fn pending_json(&self) -> Result<Vec<String>, NativeSyncError> {
+        let slot = self.runtime.lock().await;
+        let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
+        runtime
+            .pending_commits()
+            .map(encode_output)
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    pub async fn conflicts_json(&self) -> Result<Vec<String>, NativeSyncError> {
+        let slot = self.runtime.lock().await;
+        let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
+        runtime
+            .state()
+            .outcomes
+            .iter()
+            .filter(|resolved| matches!(&resolved.outcome, DurableOutcome::Conflict { .. }))
+            .map(encode_output)
+            .collect::<Result<Vec<_>, _>>()
+    }
+
+    pub async fn status(&self) -> Result<NativeSyncStatus, NativeSyncError> {
+        let slot = self.runtime.lock().await;
+        status(slot.as_ref().ok_or(NativeSyncError::Closed)?)
+    }
+
+    pub async fn close(&self) {
+        self.runtime.lock().await.take();
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.runtime.try_lock().is_ok_and(|slot| slot.is_none())
+    }
+}
+
+impl NativeSyncClient {
+    async fn persist_and_install(
+        &self,
+        slot: &mut Option<ClientRuntime<JsonValue>>,
+        prepared: PreparedTransition<JsonValue>,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let current = slot
+            .as_ref()
+            .ok_or(NativeSyncError::Closed)?
+            .state()
+            .clone();
+        let next = prepared.state().clone();
+        let persisted = SyncStateStore::new(&self.database)
+            .apply_transition_atomic(&current, &next)
+            .await;
+        if matches!(&persisted, Err(SyncStateError::CommitUnknown(_))) {
+            slot.take();
+            return Err(NativeSyncError::RecoveryRequired);
+        }
+        persisted.map_err(map_persistence_error)?;
+        let runtime = slot.as_mut().ok_or(NativeSyncError::Closed)?;
+        runtime.install(prepared).map_err(map_protocol_error)?;
+        status(runtime)
+    }
+}
+
+fn decode_input<T: DeserializeOwned>(input: &str) -> Result<T, NativeSyncError> {
+    if input.len() > MAX_SYNC_STATE_BYTES {
+        return Err(NativeSyncError::InvalidInput);
+    }
+    serde_json::from_str(input).map_err(|_| NativeSyncError::InvalidInput)
+}
+
+fn encode_output<T: serde::Serialize>(value: &T) -> Result<String, NativeSyncError> {
+    serde_json::to_string(value).map_err(|_| NativeSyncError::Internal)
+}
+
+fn status(runtime: &ClientRuntime<JsonValue>) -> Result<NativeSyncStatus, NativeSyncError> {
+    let state = runtime.state();
+    let pending_count = u32::try_from(state.outbox.len()).map_err(|_| NativeSyncError::Internal)?;
+    let outcome_count =
+        u32::try_from(state.outcomes.len()).map_err(|_| NativeSyncError::Internal)?;
+    let conflict_count = u32::try_from(
+        state
+            .outcomes
+            .iter()
+            .filter(|resolved| matches!(&resolved.outcome, DurableOutcome::Conflict { .. }))
+            .count(),
+    )
+    .map_err(|_| NativeSyncError::Internal)?;
+    let cursor = state
+        .checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.cursor);
+    Ok(NativeSyncStatus {
+        revision: state.revision,
+        pending_count,
+        outcome_count,
+        conflict_count,
+        cursor_epoch: cursor.map(|cursor| cursor.epoch),
+        cursor_sequence: cursor.map(|cursor| cursor.sequence),
+    })
+}
+
+fn map_protocol_error(_: ClientError) -> NativeSyncError {
+    NativeSyncError::Protocol
+}
+
+fn map_persistence_error(error: SyncStateError) -> NativeSyncError {
+    match error {
+        SyncStateError::IdentityTooLarge
+        | SyncStateError::StateTooLarge
+        | SyncStateError::UnsupportedRecordId
+        | SyncStateError::RecordValueMustBeObject
+        | SyncStateError::ValueCodec(_) => NativeSyncError::InvalidInput,
+        SyncStateError::InvalidState(_) => NativeSyncError::Protocol,
+        SyncStateError::RevisionMismatch
+        | SyncStateError::RevisionConflict
+        | SyncStateError::CorruptState
+        | SyncStateError::Encode(_)
+        | SyncStateError::Decode(_)
+        | SyncStateError::Database(_)
+        | SyncStateError::Core(_)
+        | SyncStateError::RollbackFailed { .. } => NativeSyncError::Persistence,
+        SyncStateError::CommitUnknown(_) => NativeSyncError::RecoveryRequired,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+    use surrealdb::types::{RecordId as NativeRecordId, Value};
+    use surrealdb_sync_protocol::{
+        BaseVersion, ClientCommitId, CommitIdentity, Fingerprint, Operation, RecordId, RecordState,
+        SchemaVersion,
+    };
+
+    use super::*;
+    use crate::{ConnectOptions, connect};
+
+    fn options(scope: &str) -> NativeSyncOpenOptions {
+        NativeSyncOpenOptions {
+            partition_id: "partition".into(),
+            client_id: "client".into(),
+            requested_scope: scope.into(),
+            subscription_revision: 1,
+        }
+    }
+
+    fn commit() -> ClientCommit<JsonValue> {
+        ClientCommit {
+            identity: CommitIdentity {
+                client_commit_id: ClientCommitId("commit-1".into()),
+                fingerprint: Fingerprint("fingerprint-1".into()),
+            },
+            operations: vec![Operation::Upsert {
+                record_id: RecordId("person:ada".into()),
+                base_version: BaseVersion::Absent,
+                value: json!({
+                    "name": "Ada",
+                    "friend": {"$surreal": "record", "value": "person:bob"}
+                }),
+                reference: Some(RecordId("person:bob".into())),
+            }],
+        }
+    }
+
+    async fn database() -> Arc<SurrealDatabase> {
+        connect(ConnectOptions {
+            endpoint: "mem://".into(),
+            namespace: Some("native_sync_client".into()),
+            database: Some("native_sync_client".into()),
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn native_facade_persists_enqueue_reopen_and_conflict_outcome() {
+        let database = database().await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        assert_eq!(
+            client.status().await.unwrap(),
+            NativeSyncStatus {
+                revision: 0,
+                pending_count: 0,
+                outcome_count: 0,
+                conflict_count: 0,
+                cursor_epoch: None,
+                cursor_sequence: None,
+            }
+        );
+
+        let commit = commit();
+        let status = client
+            .enqueue(serde_json::to_string(&commit).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(status.revision, 1);
+        assert_eq!(status.pending_count, 1);
+        assert_eq!(client.pending_json().await.unwrap().len(), 1);
+        let database_client = database.client().await.unwrap();
+        let record: Option<Value> = database_client
+            .select(NativeRecordId::parse_simple("person:ada").unwrap())
+            .await
+            .unwrap();
+        assert!(matches!(record, Some(Value::Object(_))));
+        drop(database_client);
+
+        client.close().await;
+        assert!(client.is_closed());
+        assert!(matches!(
+            client.status().await,
+            Err(NativeSyncError::Closed)
+        ));
+
+        let reopened = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        assert_eq!(reopened.status().await.unwrap().pending_count, 1);
+        let response: PushResponse<JsonValue> = PushResponse {
+            schema_version: SchemaVersion::V1,
+            partition_id: PartitionId("partition".into()),
+            client_id: ClientId("client".into()),
+            outcome: DurableOutcome::Conflict {
+                identity: commit.identity,
+                record_id: RecordId("person:ada".into()),
+                authoritative: RecordState::Absent,
+            },
+        };
+        let status = reopened
+            .record_push_response(serde_json::to_string(&response).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(status.pending_count, 0);
+        assert_eq!(status.outcome_count, 1);
+        assert_eq!(status.conflict_count, 1);
+        assert_eq!(reopened.conflicts_json().await.unwrap().len(), 1);
+
+        let database_client = database.client().await.unwrap();
+        let record: Option<Value> = database_client
+            .select(NativeRecordId::parse_simple("person:ada").unwrap())
+            .await
+            .unwrap();
+        assert_eq!(record, None);
+    }
+
+    #[tokio::test]
+    async fn native_facade_rejects_scope_drift_and_malformed_input_without_mutation() {
+        let database = database().await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            client.enqueue("{not-json".into()).await,
+            Err(NativeSyncError::InvalidInput)
+        ));
+        assert_eq!(client.status().await.unwrap().revision, 0);
+
+        assert!(matches!(
+            open_sync_client(database, options("different")).await,
+            Err(NativeSyncError::Protocol)
+        ));
+    }
+}
