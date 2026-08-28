@@ -8,6 +8,10 @@ Stage temporary copies of the client-side Rust protocol/runtime crates so a late
 SurrealKV and UniFFI prototype. This branch intentionally exposes no React Native sync API and is
 not usable as a synchronization engine.
 
+- Implementation commit: `9667aec2adc1a1b739d3742df8fa4439237501ec`.
+- Review: [draft PR #12](https://github.com/thorgas/react-native-surrealdb/pull/12).
+- Published branch: `origin/feat/sync-runtime-crates`.
+
 ## Source boundary
 
 - Branch base: `react-native-surrealdb` `origin/main` at
@@ -34,6 +38,9 @@ cargo clippy -p surrealdb-sync-protocol -p surrealdb-sync-client --all-targets -
 cargo test -p surrealdb-sync-protocol -p surrealdb-sync-client
 ./scripts/verify-core.sh
 ```
+
+All four commands passed on 2026-08-28. The full script included workspace tests plus iOS
+arm64-simulator and Android arm64 Rust target checks.
 
 ## Next implementation slice
 
