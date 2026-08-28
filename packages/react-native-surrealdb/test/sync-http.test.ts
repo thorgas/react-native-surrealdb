@@ -8,7 +8,6 @@ import {
   ExperimentalSyncHttpAdapter,
   ExperimentalSyncHttpError,
   experimentalJsonSyncHttpCodec,
-  type ExperimentalSyncCheckpointStore,
   type ExperimentalSyncHttpCodec,
 } from "../src/sync-http";
 import { ExperimentalSyncClient } from "../src/sync";
@@ -31,6 +30,7 @@ const commit = {
 function createSync() {
   const native = {
     applyPullResponse: vi.fn(async () => status),
+    checkpointToken: vi.fn(async () => "checkpoint-0"),
     close: vi.fn(async () => undefined),
     conflictsJson: vi.fn(async () => []),
     enqueue: vi.fn(async () => status),
@@ -72,17 +72,8 @@ function pullResponse(checkpoint = "checkpoint-1") {
 function createAdapter(
   fetch: typeof globalThis.fetch,
   codec: ExperimentalSyncHttpCodec = experimentalJsonSyncHttpCodec,
-  customCheckpointStore?: ExperimentalSyncCheckpointStore,
 ) {
   const { native, sync } = createSync();
-  let checkpoint: string | undefined = "checkpoint-0";
-  const defaultCheckpointStore = {
-    load: vi.fn(async () => checkpoint),
-    save: vi.fn(async (nextCheckpoint: string) => {
-      checkpoint = nextCheckpoint;
-    }),
-  };
-  const checkpointStore = customCheckpointStore ?? defaultCheckpointStore;
   const adapter = new ExperimentalSyncHttpAdapter({
     sync,
     baseUrl: "https://sync.example.test/",
@@ -91,11 +82,10 @@ function createAdapter(
     requestedScope: "all",
     subscriptionRevision: 7n,
     accessToken: async () => "redacted-test-token",
-    checkpointStore,
     codec,
     fetch,
   });
-  return { adapter, checkpointStore, native };
+  return { adapter, native };
 }
 
 describe("ExperimentalSyncHttpAdapter", () => {
@@ -111,7 +101,7 @@ describe("ExperimentalSyncHttpAdapter", () => {
         }),
       )
       .mockResolvedValueOnce(response(pullResponse()));
-    const { adapter, checkpointStore, native } = createAdapter(fetch);
+    const { adapter, native } = createAdapter(fetch);
     const signal = new AbortController().signal;
 
     await expect(adapter.syncOnce({ signal })).resolves.toEqual({
@@ -149,7 +139,7 @@ describe("ExperimentalSyncHttpAdapter", () => {
     });
     expect(native.recordPushResponse).toHaveBeenCalledOnce();
     expect(native.applyPullResponse).toHaveBeenCalledOnce();
-    expect(checkpointStore.save).toHaveBeenCalledWith("checkpoint-1");
+    expect(native.checkpointToken).toHaveBeenCalledOnce();
   });
 
   it.each([400, 401, 403])(
@@ -219,33 +209,22 @@ describe("ExperimentalSyncHttpAdapter", () => {
     expect(fetch.mock.calls[0]?.[1]?.body).toBe(body);
   });
 
-  it("saves a pull checkpoint only after native state is applied", async () => {
+  it("reuses the old native checkpoint when pull application fails", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()
       .mockImplementation(async () => response(pullResponse("checkpoint-2")));
-    const checkpointStore = {
-      load: vi.fn(async () => "checkpoint-1"),
-      save: vi
-        .fn<(checkpoint: string) => Promise<void>>()
-        .mockRejectedValueOnce(new Error("checkpoint storage unavailable"))
-        .mockResolvedValueOnce(undefined),
-    };
-    const { adapter, native } = createAdapter(
-      fetch,
-      experimentalJsonSyncHttpCodec,
-      checkpointStore,
-    );
+    const { adapter, native } = createAdapter(fetch);
+    native.checkpointToken.mockResolvedValue("checkpoint-1");
+    native.applyPullResponse
+      .mockRejectedValueOnce(new Error("native persistence unavailable"))
+      .mockResolvedValueOnce(status);
 
-    await expect(adapter.pull()).rejects.toThrow("storage unavailable");
+    await expect(adapter.pull()).rejects.toThrow("persistence unavailable");
     expect(native.applyPullResponse).toHaveBeenCalledOnce();
-    expect(checkpointStore.save).toHaveBeenCalledWith("checkpoint-2");
-    expect(native.applyPullResponse.mock.invocationCallOrder[0]).toBeLessThan(
-      checkpointStore.save.mock.invocationCallOrder[0]!,
-    );
 
     await expect(adapter.pull()).resolves.toEqual(status);
     expect(native.applyPullResponse).toHaveBeenCalledTimes(2);
-    expect(checkpointStore.load).toHaveBeenCalledTimes(2);
+    expect(native.checkpointToken).toHaveBeenCalledTimes(2);
     for (const [, init] of fetch.mock.calls) {
       expect(JSON.parse(init?.body as string).checkpoint).toBe("checkpoint-1");
     }

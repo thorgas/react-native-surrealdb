@@ -183,8 +183,9 @@ workflow. The returned transport-free client can enqueue an atomic local commit,
 durable pending/conflict queues, and apply HTTP push/pull responses supplied by the application.
 Optimistic records and sync metadata commit together in embedded SurrealDB. The optional
 `ExperimentalSyncHttpAdapter` adds serialized, explicit `push()`, `pull()`, and `syncOnce()` calls.
-Applications must inject their access-token provider, wire codec, `fetch`, and a durable checkpoint
-store; the adapter saves a complete pull checkpoint only after the native state applies it.
+Applications must inject their access-token provider, wire codec, and `fetch`. The adapter reads the
+last complete checkpoint from native durable client state; applying a pull atomically persists its
+records, cursor, scope snapshot, and opaque checkpoint before the next request can observe it.
 
 The payload API uses this package's tagged lossless value bridge for JavaScript `bigint`, bytes,
 `NONE`, and record links. Native Rust ignores any caller-supplied fingerprint, validates record

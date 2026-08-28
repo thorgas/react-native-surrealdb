@@ -91,12 +91,13 @@ integer range; lossless native values do not make that prototype HTTP envelope l
 It deliberately provides no authority, background scheduler, implicit retry/backoff, or WebSocket
 ordering. WebSockets remain notification hints that cause the application to pull.
 
-The checkpoint store is currently a TypeScript interface rather than another native UniFFI method.
-Adding that method produced incompatible Android host bindings in the current generated bridge,
-including method-table and checksum failures. Commit `8f9265b` restores the previously verified
-native interface. The injected store is therefore an explicit compatibility boundary, not the
-long-term persistence design; applications must bind each stored token to the same partition,
-client, scope, authorization revision, and subscription revision used to request it.
+The HTTP adapter now reads the opaque checkpoint from the same native durable state that owns the
+confirmed records, cursor, scope snapshot, and outbox. A complete pull is therefore one embedded
+transaction instead of a native state write followed by a second application checkpoint write.
+The generated async `checkpointToken()` method is valid on both platforms when the Rust shared
+library and generated C++/TypeScript bindings are rebuilt together. The earlier reverted experiment
+paired a changed method table with a plausibly stale ignored Android `.so`; exact historical logs
+were not retained, so that cause remains an evidence-backed inference rather than a proven fact.
 
 ## Verification
 

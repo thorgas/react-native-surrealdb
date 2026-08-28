@@ -11,12 +11,6 @@ export type ExperimentalSyncHttpCodec = {
   decode(response: Response): Promise<SyncJsonValue>;
 };
 
-/** Application-owned durable storage for the last completely applied pull checkpoint. */
-export type ExperimentalSyncCheckpointStore = {
-  load(): string | undefined | Promise<string | undefined>;
-  save(checkpoint: string): void | Promise<void>;
-};
-
 export type ExperimentalSyncHttpOptions = {
   sync: ExperimentalSyncClient;
   baseUrl: string;
@@ -25,7 +19,6 @@ export type ExperimentalSyncHttpOptions = {
   requestedScope: string;
   subscriptionRevision: bigint;
   accessToken: () => string | Promise<string>;
-  checkpointStore: ExperimentalSyncCheckpointStore;
   codec: ExperimentalSyncHttpCodec;
   fetch?: typeof globalThis.fetch;
 };
@@ -91,7 +84,6 @@ export class ExperimentalSyncHttpAdapter {
   readonly #requestedScope: string;
   readonly #subscriptionRevision: bigint;
   readonly #accessToken: () => string | Promise<string>;
-  readonly #checkpointStore: ExperimentalSyncCheckpointStore;
   readonly #codec: ExperimentalSyncHttpCodec;
   readonly #fetch: typeof globalThis.fetch;
   #tail: Promise<void> = Promise.resolve();
@@ -104,10 +96,6 @@ export class ExperimentalSyncHttpAdapter {
     if (options.codec.mediaType.trim().length === 0) {
       throw new TypeError("sync HTTP codec mediaType is required");
     }
-    if (options.checkpointStore == null) {
-      throw new TypeError("sync HTTP checkpointStore is required");
-    }
-
     this.#sync = options.sync;
     this.#baseUrl = baseUrl;
     this.#partitionId = options.partitionId;
@@ -115,7 +103,6 @@ export class ExperimentalSyncHttpAdapter {
     this.#requestedScope = options.requestedScope;
     this.#subscriptionRevision = options.subscriptionRevision;
     this.#accessToken = options.accessToken;
-    this.#checkpointStore = options.checkpointStore;
     this.#codec = options.codec;
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   }
@@ -157,7 +144,7 @@ export class ExperimentalSyncHttpAdapter {
   }
 
   async #pull(options?: CallOptions): Promise<ExperimentalSyncStatus> {
-    const checkpoint = await this.#checkpointStore.load();
+    const checkpoint = await this.#sync.checkpointToken(options);
     const response = await this.#post(
       "/v1/sync/pull",
       {
@@ -170,10 +157,7 @@ export class ExperimentalSyncHttpAdapter {
       },
       options,
     );
-    const nextCheckpoint = pullCheckpoint(response);
-    const status = await this.#sync.applyPullResponse(response, options);
-    await this.#checkpointStore.save(nextCheckpoint);
-    return status;
+    return this.#sync.applyPullResponse(response, options);
   }
 
   async #post(
@@ -213,38 +197,6 @@ export class ExperimentalSyncHttpAdapter {
     );
     return result;
   }
-}
-
-function pullCheckpoint(response: SyncJsonValue): string {
-  if (!isSyncJsonObject(response)) {
-    throw new TypeError("sync pull response must be an object");
-  }
-
-  const endFrame = Array.isArray(response.frames)
-    ? response.frames.at(-1)
-    : undefined;
-  const checkpoint =
-    response.response === "reset"
-      ? response.checkpoint
-      : response.response === "batch" &&
-          isSyncJsonObject(endFrame) &&
-          endFrame.frame === "end"
-        ? endFrame.checkpoint
-        : undefined;
-  if (
-    !isSyncJsonObject(checkpoint) ||
-    typeof checkpoint.token !== "string" ||
-    checkpoint.token.length === 0
-  ) {
-    throw new TypeError("sync pull response has no complete checkpoint");
-  }
-  return checkpoint.token;
-}
-
-function isSyncJsonObject(
-  value: SyncJsonValue | undefined,
-): value is { readonly [key: string]: SyncJsonValue } {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function isSyncJsonValue(value: unknown): value is SyncJsonValue {

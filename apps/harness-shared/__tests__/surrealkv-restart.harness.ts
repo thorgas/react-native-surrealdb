@@ -21,6 +21,9 @@ describe('SurrealKV sync process restart recovery', () => {
 
     const sync = await database.openExperimentalSync(syncRestartOptions);
     expect((await sync.status()).pendingCount).toBe(1);
+    expect(await sync.checkpointToken()).toBe(
+      'checkpoint-before-process-restart',
+    );
     const pending = await sync.pending();
     expect(pending).toHaveLength(1);
     const canonicalIdentity = (

@@ -36,6 +36,23 @@ describe('SurrealKV sync process restart seed', () => {
     });
 
     expect(status.pendingCount).toBe(1);
+    await sync.applyPullResponse({
+      response: 'reset',
+      reason: 'checkpoint_expired',
+      checkpoint: {
+        token: 'checkpoint-before-process-restart',
+        cursor: { epoch: 1, sequence: 0 },
+        scope: {
+          identity: syncRestartOptions.requestedScope,
+          authorizationRevision: 1,
+          subscriptionRevision: 1,
+        },
+      },
+      records: [],
+    });
+    expect(await sync.checkpointToken()).toBe(
+      'checkpoint-before-process-restart',
+    );
     const [optimistic] = await database.query<string[]>(
       'SELECT VALUE name FROM person:restart',
     );

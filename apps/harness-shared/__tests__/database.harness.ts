@@ -142,7 +142,6 @@ describe('react-native-surrealdb native core', () => {
     expect(canonicalIdentity.fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
 
     const requests: Array<{ url: string; authorization: string | null }> = [];
-    let durableCheckpoint: string | undefined;
     const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       requests.push({
@@ -203,12 +202,6 @@ describe('react-native-surrealdb native core', () => {
       baseUrl: 'https://sync.invalid',
       ...options,
       accessToken: () => 'redacted-harness-token',
-      checkpointStore: {
-        load: () => durableCheckpoint,
-        save: checkpoint => {
-          durableCheckpoint = checkpoint;
-        },
-      },
       codec: experimentalJsonSyncHttpCodec,
       fetch,
     });
@@ -217,7 +210,7 @@ describe('react-native-surrealdb native core', () => {
     expect(result.push).toHaveLength(1);
     expect(result.pull.cursorSequence).toBe(1n);
     expect((await sync.status()).pendingCount).toBe(0);
-    expect(durableCheckpoint).toBe('checkpoint-http-1');
+    expect(await sync.checkpointToken()).toBe('checkpoint-http-1');
     const [mapped] = await database.query<string[]>(
       'SELECT VALUE name FROM person:http',
     );
