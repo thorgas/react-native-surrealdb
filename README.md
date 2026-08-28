@@ -129,7 +129,9 @@ pull transition atomically updates its bounded, revision-checked client state an
 records in the embedded SurrealDB transaction. An optional application-owned HTTP adapter performs
 explicit push/pull calls with injected authentication, codec, fetch, and durable checkpoint storage.
 It provides no authority, scheduler, WebSocket ordering, or automatic retry, and its example codec
-still crosses a prototype JSON boundary.
+still crosses a prototype JSON envelope. Native Rust now computes content-bound commit fingerprints
+from a bounded canonical safe subset and rejects unsupported or hostile values before mutation;
+the full HTTP message codec is not canonical yet.
 It does not make this package a usable sync engine and must not be released as one. The private
 formal specification and comprehensive checker suites are not included. See
 [`crates/SYNC_RUNTIME_ORIGIN.md`](./crates/SYNC_RUNTIME_ORIGIN.md) for the temporary source boundary

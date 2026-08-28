@@ -79,7 +79,11 @@ describe('react-native-surrealdb native core', () => {
 
     await sync.close();
     const reopened = await database.openExperimentalSync(options);
-    expect((await reopened.pending())).toHaveLength(1);
+    const pending = await reopened.pending();
+    expect(pending).toHaveLength(1);
+    const canonicalIdentity = (pending[0] as { identity: typeof identity })
+      .identity;
+    expect(canonicalIdentity.fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     expect((await reopened.status()).pendingCount).toBe(1);
 
     const conflicted = await reopened.recordPushResponse({
@@ -88,7 +92,7 @@ describe('react-native-surrealdb native core', () => {
       clientId: 'client',
       outcome: {
         status: 'conflict',
-        identity,
+        identity: canonicalIdentity,
         record_id: 'person:ada',
         authoritative: { state: 'absent' },
       },
@@ -125,13 +129,17 @@ describe('react-native-surrealdb native core', () => {
       operations: [
         {
           kind: 'upsert',
-          record_id: 'person:http',
+          record_id: 'temp:http',
           base_version: 'absent',
           value: { name: 'HTTP proof' },
           reference: null,
         },
       ],
     });
+    const [pending] = await sync.pending();
+    const canonicalIdentity = (pending as { identity: typeof identity })
+      .identity;
+    expect(canonicalIdentity.fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
 
     const requests: Array<{ url: string; authorization: string | null }> = [];
     let durableCheckpoint: string | undefined;
@@ -149,9 +157,14 @@ describe('react-native-surrealdb native core', () => {
             clientId: options.clientId,
             outcome: {
               status: 'accepted',
-              identity,
+              identity: canonicalIdentity,
               sequence: 1,
-              id_mappings: [],
+              id_mappings: [
+                {
+                  localId: 'temp:http',
+                  canonicalId: 'person:http',
+                },
+              ],
             },
           }),
           { status: 200 },
@@ -205,6 +218,14 @@ describe('react-native-surrealdb native core', () => {
     expect(result.pull.cursorSequence).toBe(1n);
     expect((await sync.status()).pendingCount).toBe(0);
     expect(durableCheckpoint).toBe('checkpoint-http-1');
+    const [mapped] = await database.query<string[]>(
+      'SELECT VALUE name FROM person:http',
+    );
+    const [temporary] = await database.query<string[]>(
+      'SELECT VALUE name FROM temp:http',
+    );
+    expect(mapped?.value).toEqual(['HTTP proof']);
+    expect(temporary?.value).toEqual([]);
     expect(requests).toEqual([
       {
         url: 'https://sync.invalid/v1/sync/push',

@@ -5,6 +5,7 @@
 //! query execution, and lossless value transport.
 
 pub mod sync_client;
+mod sync_codec;
 pub mod sync_state;
 mod wire;
 

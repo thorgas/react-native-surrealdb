@@ -21,7 +21,12 @@ describe('SurrealKV sync process restart recovery', () => {
 
     const sync = await database.openExperimentalSync(syncRestartOptions);
     expect((await sync.status()).pendingCount).toBe(1);
-    expect(await sync.pending()).toHaveLength(1);
+    const pending = await sync.pending();
+    expect(pending).toHaveLength(1);
+    const canonicalIdentity = (
+      pending[0] as { identity: typeof syncRestartIdentity }
+    ).identity;
+    expect(canonicalIdentity.fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
     const [optimistic] = await database.query<string[]>(
       'SELECT VALUE name FROM person:restart',
     );
@@ -33,7 +38,7 @@ describe('SurrealKV sync process restart recovery', () => {
       clientId: syncRestartOptions.clientId,
       outcome: {
         status: 'conflict',
-        identity: syncRestartIdentity,
+        identity: canonicalIdentity,
         record_id: 'person:restart',
         authoritative: { state: 'absent' },
       },

@@ -5,6 +5,7 @@ import type {
   NativeSyncStatus,
 } from "../src/generated/surrealdb_rn_core";
 import { ExperimentalSyncClient } from "../src/sync";
+import { NONE, SurrealRecordId } from "../src/wire";
 
 const initialStatus: NativeSyncStatus = {
   revision: 1n,
@@ -62,5 +63,48 @@ describe("ExperimentalSyncClient", () => {
     expect(native.close).toHaveBeenNthCalledWith(1, { signal });
     expect(native.close).toHaveBeenNthCalledWith(2, { signal });
     expect(client.isClosed).toBe(true);
+  });
+
+  it("preserves canonical bigint, bytes, NONE, and record values", async () => {
+    const native = createNative();
+    const client = new ExperimentalSyncClient(native);
+    const commit = {
+      identity: { clientCommitId: "commit-1", fingerprint: "untrusted" },
+      operations: [
+        {
+          kind: "upsert",
+          recordId: "person:ada",
+          baseVersion: "absent",
+          value: {
+            bytes: new Uint8Array([1, 2, 3]),
+            friend: new SurrealRecordId("person:bob"),
+            maximum: 9223372036854775807n,
+            missing: NONE,
+          },
+        },
+      ],
+    } as const;
+
+    await client.enqueue(commit);
+
+    const encoded = vi.mocked(native.enqueue).mock.calls[0]?.[0];
+    expect(JSON.parse(encoded ?? "null")).toMatchObject({
+      operations: [
+        {
+          value: {
+            bytes: { $surreal: "bytes", base64: "AQID" },
+            friend: {
+              $surreal: "record",
+              value: "person:bob",
+            },
+            maximum: {
+              $surreal: "int",
+              value: "9223372036854775807",
+            },
+            missing: { $surreal: "none" },
+          },
+        },
+      ],
+    });
   });
 });

@@ -14,6 +14,10 @@ use surrealdb_sync_protocol::{
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::SurrealDatabase;
+use crate::sync_codec::{
+    canonical_fingerprint, validate_pull_response_values, validate_push_response_values,
+    validate_state_codec,
+};
 use crate::sync_state::{
     MAX_SYNC_STATE_BYTES, StoredSyncState, SyncStateError, SyncStateKey, SyncStateStore,
 };
@@ -110,6 +114,7 @@ pub async fn open_sync_client(
     {
         return Err(NativeSyncError::Protocol);
     }
+    validate_state_codec(&state)?;
     let runtime = ClientRuntime::open(state).map_err(map_protocol_error)?;
     Ok(Arc::new(NativeSyncClient {
         database,
@@ -120,8 +125,10 @@ pub async fn open_sync_client(
 #[uniffi::export(async_runtime = "tokio")]
 impl NativeSyncClient {
     pub async fn enqueue(&self, commit_json: String) -> Result<NativeSyncStatus, NativeSyncError> {
-        let commit = decode_input::<ClientCommit<JsonValue>>(&commit_json)?;
+        let mut commit = decode_input::<ClientCommit<JsonValue>>(&commit_json)?;
         let mut slot = self.runtime.lock().await;
+        let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
+        commit.identity.fingerprint = canonical_fingerprint(runtime.state(), &commit)?;
         let prepared = slot
             .as_ref()
             .ok_or(NativeSyncError::Closed)?
@@ -135,6 +142,7 @@ impl NativeSyncClient {
         response_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
         let response = decode_input::<PushResponse<JsonValue>>(&response_json)?;
+        validate_push_response_values(&response.outcome)?;
         let mut slot = self.runtime.lock().await;
         let prepared = slot
             .as_ref()
@@ -149,6 +157,7 @@ impl NativeSyncClient {
         response_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
         let response = decode_input::<PullResponse<JsonValue>>(&response_json)?;
+        validate_pull_response_values(&response)?;
         let mut slot = self.runtime.lock().await;
         let prepared = slot
             .as_ref()
@@ -205,6 +214,7 @@ impl NativeSyncClient {
             .state()
             .clone();
         let next = prepared.state().clone();
+        validate_state_codec(&next)?;
         let persisted = SyncStateStore::new(&self.database)
             .apply_transition_atomic(&current, &next)
             .await;
@@ -287,8 +297,8 @@ mod tests {
     use surrealdb::types::{RecordId as NativeRecordId, Value};
     use surrealdb_sync_protocol::{
         AppliedRecord, BaseVersion, Checkpoint, ClientCommitId, CommitIdentity, Cursor,
-        Fingerprint, OpaqueCheckpoint, Operation, PullBatch, PullCommit, PullFrame, RecordId,
-        RecordState, SchemaVersion, ScopeSnapshot,
+        Fingerprint, IdMapping, OpaqueCheckpoint, Operation, PullBatch, PullCommit, PullFrame,
+        RecordId, RecordState, SchemaVersion, ScopeSnapshot,
     };
 
     use super::*;
@@ -318,6 +328,21 @@ mod tests {
                 }),
                 reference: Some(RecordId("person:bob".into())),
             }],
+        }
+    }
+
+    fn checkpoint() -> Checkpoint {
+        Checkpoint {
+            token: OpaqueCheckpoint("checkpoint-1".into()),
+            cursor: Cursor {
+                epoch: 1,
+                sequence: 1,
+            },
+            scope: ScopeSnapshot {
+                identity: ScopeIdentity("all".into()),
+                authorization_revision: 1,
+                subscription_revision: 1,
+            },
         }
     }
 
@@ -356,7 +381,14 @@ mod tests {
             .unwrap();
         assert_eq!(status.revision, 1);
         assert_eq!(status.pending_count, 1);
-        assert_eq!(client.pending_json().await.unwrap().len(), 1);
+        let pending = client.pending_json().await.unwrap();
+        assert_eq!(pending.len(), 1);
+        let pending_commit: ClientCommit<JsonValue> = serde_json::from_str(&pending[0]).unwrap();
+        assert!(pending_commit.identity.fingerprint.0.starts_with("sha256:"));
+        assert_ne!(
+            pending_commit.identity.fingerprint,
+            commit.identity.fingerprint
+        );
         let database_client = database.client().await.unwrap();
         let record: Option<Value> = database_client
             .select(NativeRecordId::parse_simple("person:ada").unwrap())
@@ -381,7 +413,7 @@ mod tests {
             partition_id: PartitionId("partition".into()),
             client_id: ClientId("client".into()),
             outcome: DurableOutcome::Conflict {
-                identity: commit.identity,
+                identity: pending_commit.identity,
                 record_id: RecordId("person:ada".into()),
                 authoritative: RecordState::Absent,
             },
@@ -404,6 +436,64 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn accepted_id_mapping_preserves_original_identity_across_reopen() {
+        let database = database().await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let mut local = commit();
+        local.identity.client_commit_id = ClientCommitId("commit-mapped".into());
+        let Operation::Upsert { record_id, .. } = &mut local.operations[0] else {
+            unreachable!();
+        };
+        *record_id = RecordId("temp:ada".into());
+
+        client
+            .enqueue(serde_json::to_string(&local).unwrap())
+            .await
+            .unwrap();
+        let pending = client.pending_json().await.unwrap();
+        let pending: ClientCommit<JsonValue> = serde_json::from_str(&pending[0]).unwrap();
+        let response: PushResponse<JsonValue> = PushResponse {
+            schema_version: SchemaVersion::V1,
+            partition_id: PartitionId("partition".into()),
+            client_id: ClientId("client".into()),
+            outcome: DurableOutcome::Accepted {
+                identity: pending.identity,
+                sequence: 1,
+                id_mappings: vec![IdMapping {
+                    local_id: RecordId("temp:ada".into()),
+                    canonical_id: RecordId("person:server-ada".into()),
+                }],
+            },
+        };
+
+        let status = client
+            .record_push_response(serde_json::to_string(&response).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(status.pending_count, 0);
+        assert_eq!(status.outcome_count, 1);
+        client.close().await;
+
+        let reopened = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        assert_eq!(reopened.status().await.unwrap().outcome_count, 1);
+        let database_client = database.client().await.unwrap();
+        let local: Option<Value> = database_client
+            .select(NativeRecordId::parse_simple("temp:ada").unwrap())
+            .await
+            .unwrap();
+        let canonical: Option<Value> = database_client
+            .select(NativeRecordId::parse_simple("person:server-ada").unwrap())
+            .await
+            .unwrap();
+        assert_eq!(local, None);
+        assert!(matches!(canonical, Some(Value::Object(_))));
+    }
+
+    #[tokio::test]
     async fn native_facade_rejects_scope_drift_and_malformed_input_without_mutation() {
         let database = database().await;
         let client = open_sync_client(database.clone(), options("all"))
@@ -411,6 +501,71 @@ mod tests {
             .unwrap();
         assert!(matches!(
             client.enqueue("{not-json".into()).await,
+            Err(NativeSyncError::InvalidInput)
+        ));
+        assert_eq!(client.status().await.unwrap().revision, 0);
+
+        let mut unsupported = commit();
+        if let Operation::Upsert { value, .. } = &mut unsupported.operations[0] {
+            *value = json!({"unsupportedFloat": 1.5});
+        }
+        assert!(matches!(
+            client
+                .enqueue(serde_json::to_string(&unsupported).unwrap())
+                .await,
+            Err(NativeSyncError::InvalidInput)
+        ));
+        assert_eq!(client.status().await.unwrap().revision, 0);
+
+        let hostile_push = PushResponse {
+            schema_version: SchemaVersion::V1,
+            partition_id: PartitionId("partition".into()),
+            client_id: ClientId("client".into()),
+            outcome: DurableOutcome::Conflict {
+                identity: commit().identity,
+                record_id: RecordId("person:ada".into()),
+                authoritative: RecordState::Present {
+                    value: json!(1.5),
+                    version: 1,
+                    reference: None,
+                },
+            },
+        };
+        assert!(matches!(
+            client
+                .record_push_response(serde_json::to_string(&hostile_push).unwrap())
+                .await,
+            Err(NativeSyncError::InvalidInput)
+        ));
+
+        let checkpoint = checkpoint();
+        let hostile_pull = PullResponse::Batch(PullBatch {
+            frames: vec![
+                PullFrame::Start {
+                    checkpoint: checkpoint.clone(),
+                },
+                PullFrame::Commit {
+                    checkpoint: checkpoint.token.clone(),
+                    commit: PullCommit {
+                        sequence: 1,
+                        source: None,
+                        records: vec![AppliedRecord {
+                            record_id: RecordId("person:lin".into()),
+                            state: RecordState::Present {
+                                value: json!(1.5),
+                                version: 1,
+                                reference: None,
+                            },
+                        }],
+                    },
+                },
+                PullFrame::End { checkpoint },
+            ],
+        });
+        assert!(matches!(
+            client
+                .apply_pull_response(serde_json::to_string(&hostile_pull).unwrap())
+                .await,
             Err(NativeSyncError::InvalidInput)
         ));
         assert_eq!(client.status().await.unwrap().revision, 0);
@@ -427,18 +582,7 @@ mod tests {
         let client = open_sync_client(database.clone(), options("all"))
             .await
             .unwrap();
-        let checkpoint = Checkpoint {
-            token: OpaqueCheckpoint("checkpoint-1".into()),
-            cursor: Cursor {
-                epoch: 1,
-                sequence: 1,
-            },
-            scope: ScopeSnapshot {
-                identity: ScopeIdentity("all".into()),
-                authorization_revision: 1,
-                subscription_revision: 1,
-            },
-        };
+        let checkpoint = checkpoint();
         let response = PullResponse::Batch(PullBatch {
             frames: vec![
                 PullFrame::Start {

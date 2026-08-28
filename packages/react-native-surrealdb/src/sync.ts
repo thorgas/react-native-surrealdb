@@ -3,13 +3,15 @@ import type {
   NativeSyncStatus,
 } from "./generated/surrealdb_rn_core";
 import type { CallOptions } from "./client";
+import {
+  decodeSurrealValue,
+  encodeSurrealValue,
+  type SurrealScalar,
+} from "./wire";
 
-/** JSON values accepted by the prototype protocol boundary. */
+/** Lossless values accepted by the experimental protocol boundary. */
 export type SyncJsonValue =
-  | null
-  | boolean
-  | number
-  | string
+  | SurrealScalar
   | ReadonlyArray<SyncJsonValue>
   | { readonly [key: string]: SyncJsonValue };
 
@@ -25,8 +27,9 @@ export type ExperimentalSyncStatus = NativeSyncStatus;
 /**
  * Experimental transport-free facade over the native durable sync runtime.
  *
- * Protocol payloads are JSON-compatible values, not the package's lossless
- * SurrealDB value codec. This API is a prototype and is not release-ready.
+ * Payloads use the package's tagged lossless JSON bridge. Native Rust validates
+ * record values against the narrower canonical protocol profile and computes
+ * commit fingerprints. This API is a prototype and is not release-ready.
  */
 export class ExperimentalSyncClient {
   readonly #native: NativeSyncClientLike;
@@ -88,13 +91,9 @@ export class ExperimentalSyncClient {
 }
 
 function encodeProtocolJson(value: SyncJsonValue): string {
-  const encoded = JSON.stringify(value);
-  if (encoded === undefined) {
-    throw new TypeError("sync protocol value must be JSON serializable");
-  }
-  return encoded;
+  return encodeSurrealValue(value);
 }
 
 function decodeProtocolJson<T>(values: ReadonlyArray<string>): T[] {
-  return values.map((value) => JSON.parse(value) as T);
+  return values.map((value) => decodeSurrealValue(value) as T);
 }

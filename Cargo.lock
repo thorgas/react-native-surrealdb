@@ -4186,7 +4186,9 @@ dependencies = [
 name = "surrealdb-sync-protocol"
 version = "0.1.0"
 dependencies = [
+ "ciborium",
  "serde",
+ "sha2",
 ]
 
 [[package]]

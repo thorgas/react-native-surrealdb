@@ -186,13 +186,17 @@ Optimistic records and sync metadata commit together in embedded SurrealDB. The 
 Applications must inject their access-token provider, wire codec, `fetch`, and a durable checkpoint
 store; the adapter saves a complete pull checkpoint only after the native state applies it.
 
-The payload API accepts ordinary JSON-compatible protocol objects. It does not yet use this
-package's lossless SurrealDB value codec, so JavaScript `bigint` and untagged SurrealDB-specific
-values are not accepted. The exported `experimentalJsonSyncHttpCodec` is test/prototype-only: it
-rejects integers outside JavaScript's safe range and is not the canonical protocol codec. Authority
-deployment, automatic retry/backoff, and WebSocket durability or ordering are absent. A WebSocket
-may only notify the application to call `pull()`. Do not ship or advertise this API; see the repository
-[sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
+The payload API uses this package's tagged lossless value bridge for JavaScript `bigint`, bytes,
+`NONE`, and record links. Native Rust ignores any caller-supplied fingerprint, validates record
+values against the bounded canonical protocol safe subset, and emits the content-bound SHA-256
+fingerprint in the durable pending commit. Floats, decimals, UUID/range record keys, dates, sets,
+and other undecided protocol kinds fail closed. The exported `experimentalJsonSyncHttpCodec`
+remains test/prototype-only: it is a JSON envelope codec, not the complete canonical HTTP message
+codec. Authority deployment, automatic retry/backoff, and WebSocket durability or ordering are
+absent. A WebSocket may only notify the application to call `pull()`. Do not ship or advertise this
+API; see the repository [sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
+The example HTTP codec throws when a pending `bigint` lies outside JavaScript's safe integer range;
+applications must not mistake it for the lossless native boundary.
 
 ## Value transport
 

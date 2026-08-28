@@ -20,6 +20,8 @@ explicitly experimental API but is not usable as a synchronization engine.
   restored by `8f9265ba74cea68a1b7d4866d09f9e47d9d1a9e1`.
 - Review: [draft PR #12](https://github.com/thorgas/react-native-surrealdb/pull/12).
 - Published branch: `origin/feat/sync-runtime-crates`.
+- Canonical codec source: private `main` (also `feat/canonical-codec-v1`) at
+  `29c68bda2290e861e7f83ae4cd658cd7287b597d`.
 
 ## Source boundary
 
@@ -27,6 +29,8 @@ explicitly experimental API but is not usable as a synchronization engine.
   `b1e6a01dc4f544fc5d647d85ca2cf5732e1cd35c`.
 - Copied source: private canonical `surrealdb-sync-engine.dev` `main` at
   `056374ac5430e1e09ee73ab30b4d8c20247a2f68`.
+- Canonical codec update: private `main` at
+  `29c68bda2290e861e7f83ae4cd658cd7287b597d`.
 - Included: `surrealdb-sync-protocol`, `surrealdb-sync-client`, and the client's public transition
   regressions.
 - Excluded: Quint specifications, authority implementation, authority-cycle/conformance/adversarial
@@ -63,13 +67,27 @@ mechanism exists, protocol changes must originate in the private canonical repos
 - `ExperimentalSyncClient` is the hand-written TypeScript facade. `SurrealClient` exposes it through
   `openExperimentalSync()` only on embedded databases.
 
-The JSON value/payload choice is a persistence prototype, not the canonical sync wire codec.
+Durable state still stores the existing tagged JSON representation, but native enqueue now ignores
+the caller's prototype fingerprint and recomputes it from the protocol-owned bounded
+`CanonicalValue`/CBOR profile. Enqueue, push conflicts, pull/reset records, loaded state, and every
+prepared replacement fail closed when a value is unsupported, oversized, or over-nested. Pending
+commit fingerprints are revalidated against their content. An accepted ID mapping deliberately
+remaps the resolved recoverable intent while retaining the authority identity bound to the original
+pre-remap commit; remapped content is bounds-validated but cannot be re-fingerprinted as the same
+identity. The TypeScript facade uses the same
+lossless bridge as query variables, preserving `bigint`, bytes, `NONE`, and structured record links.
+The safe subset deliberately excludes floats, decimals, UUID/range record keys, dates, sets, and
+other undecided kinds.
+
+This selects canonical value and commit-fingerprint bytes, not the complete HTTP message encoding.
 `packages/react-native-surrealdb/src/sync-http.ts` adds an application-owned HTTP adapter around
 the facade. It serializes calls, submits each pending commit to `POST /v1/sync/push`, pulls from
 `POST /v1/sync/pull`, forwards the application token, and accepts only HTTP 200 protocol outcomes.
 The application must inject the codec, fetch implementation, and durable checkpoint store. The
 adapter applies the complete pull response before saving its opaque checkpoint; a crash or storage
 failure between those operations replays the prior checkpoint rather than skipping unapplied data.
+Its injected example JSON codec also rejects pending `bigint` values outside JavaScript's safe
+integer range; lossless native values do not make that prototype HTTP envelope lossless.
 It deliberately provides no authority, background scheduler, implicit retry/backoff, or WebSocket
 ordering. WebSockets remain notification hints that cause the application to pull.
 
@@ -89,6 +107,7 @@ cargo fmt --all --check
 cargo clippy -p surrealdb-rn-core --all-targets -- -D warnings
 cargo test -p surrealdb-rn-core sync_state
 cargo test -p surrealdb-rn-core sync_client
+cargo test -p surrealdb-rn-core sync_codec
 pnpm --filter react-native-surrealdb run test
 pnpm --filter react-native-surrealdb run typecheck
 pnpm --filter react-native-surrealdb run build
@@ -100,7 +119,9 @@ pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:android
 ./scripts/verify-core.sh
 ```
 
-The focused adapter tests cover revision conflicts, idempotent retry, explicit rollback, committed
+The focused adapter tests cover native-computed fingerprints, lossless tagged canonical values,
+hostile depth, unsupported enqueue/push/pull values without mutation, revision conflicts,
+idempotent retry, explicit rollback, committed
 replacement, malformed and semantically corrupt payloads, size limits, structured identity keys,
 SurrealKV close/reopen with an uncommitted transaction, atomic optimistic create/delete, facade
 reopen, durable conflict retention, scope drift, malformed input, exact HTTP request shape,
@@ -111,9 +132,9 @@ executes enqueue, optimistic visibility, facade reopen, and conflict reconciliat
 All documented commands passed on 2026-08-28. `./scripts/verify-core.sh` ran formatting,
 warning-denied workspace Clippy, all workspace tests, and Rust checks for the iOS arm64 simulator
 and Android arm64 targets. Package build, type checking, Vitest, package verification, and the
-five-host React Native TypeScript matrix also passed. The RN 0.86 host ran all seven shared Hermes
-tests on both an iPhone 17 Pro simulator and a Pixel 9 Android emulator; the new sync case proved
-optimistic visibility, facade reopen, pending recovery, conflict durability, and canonical rollback.
+five-host React Native TypeScript matrix also passed. The RN 0.86 host runs ten shared Hermes tests;
+the sync cases prove native-computed fingerprints, optimistic visibility, facade reopen, pending
+recovery, accepted temporary-ID mapping, conflict durability, and canonical rollback.
 
 The E2E run also repaired pre-existing harness setup gaps: each host now has a tiny local test proxy
 that imports the shared suites, host app IDs and the iOS scheme are explicit, `e2e:ios` and
@@ -126,8 +147,8 @@ database marker and a pending optimistic sync commit, deliberately leaves both
 native handles open, and lets Harness terminate the process. A separately
 loaded verification file reopens the same database, proves the marker, outbox,
 and optimistic row survived, records a durable conflict, then cleans up. This
-passed on an iPhone 17 Pro simulator and, after the configured Pixel 9 AVD's
-package manager wedged, on an alternate Pixel 4 XL AVD. The test changes no UI.
+passed with the canonical-fingerprint changes on an iPhone 17 Pro simulator and
+a Pixel 9 Android API 36 emulator. The test changes no UI.
 
 The monorepo also carries a narrow pnpm patch for React Native Harness 1.3.0.
 Its Metro resolver previously selected the hoisted RN 0.85 Harness runtime for
@@ -144,9 +165,8 @@ Android. This is a native-boundary E2E, not a deployed-server or real-network te
 
 ## Next implementation slices
 
-1. Select the canonical protocol value codec and fingerprint rules, then replace the prototype JSON
-   boundary in `crates/surrealdb-sync-protocol`, `crates/surrealdb-rn-core`, and
-   `packages/react-native-surrealdb/src/sync.ts`.
+1. Define the complete bounded HTTP request/response envelope codec; the accepted canonical value
+   and commit-fingerprint profile does not make the prototype JSON HTTP codec canonical.
 2. Replace the injected checkpoint-store compatibility boundary with an upstream-compatible native
    durability API once the generated Android binding can evolve safely.
 3. Integrate the reviewed authority endpoint and authorization/checkpoint semantics separately.
@@ -156,7 +176,7 @@ Android. This is a native-boundary E2E, not a deployed-server or real-network te
 
 - The long-term single-source/export mechanism is unresolved.
 - GitHub Actions may remain unavailable until account billing permits runner allocation.
-- The canonical native-value storage/wire codec is not selected yet.
+- The complete canonical HTTP envelope/checkpoint codec is not selected yet.
 - The HTTP adapter is only application-owned orchestration; authority deployment and authentication
   integration remain separate work.
 - This branch must remain a draft and must not be released or advertised as sync support.
