@@ -2,8 +2,7 @@ import type {
   NativeSyncClientLike,
   NativeSyncStatus,
 } from "./generated/surrealdb_rn_core";
-
-export type SyncCallOptions = { signal: AbortSignal };
+import type { CallOptions } from "./client";
 
 /** JSON values accepted by the prototype protocol boundary. */
 export type SyncJsonValue =
@@ -38,14 +37,14 @@ export class ExperimentalSyncClient {
 
   enqueue(
     commit: SyncJsonValue,
-    options?: SyncCallOptions,
+    options?: CallOptions,
   ): Promise<ExperimentalSyncStatus> {
     return this.#native.enqueue(encodeProtocolJson(commit), options);
   }
 
   recordPushResponse(
     response: SyncJsonValue,
-    options?: SyncCallOptions,
+    options?: CallOptions,
   ): Promise<ExperimentalSyncStatus> {
     return this.#native.recordPushResponse(
       encodeProtocolJson(response),
@@ -55,7 +54,7 @@ export class ExperimentalSyncClient {
 
   applyPullResponse(
     response: SyncJsonValue,
-    options?: SyncCallOptions,
+    options?: CallOptions,
   ): Promise<ExperimentalSyncStatus> {
     return this.#native.applyPullResponse(
       encodeProtocolJson(response),
@@ -64,22 +63,22 @@ export class ExperimentalSyncClient {
   }
 
   async pending<T extends SyncJsonValue = SyncJsonValue>(
-    options?: SyncCallOptions,
+    options?: CallOptions,
   ): Promise<T[]> {
     return decodeProtocolJson<T>(await this.#native.pendingJson(options));
   }
 
   async conflicts<T extends SyncJsonValue = SyncJsonValue>(
-    options?: SyncCallOptions,
+    options?: CallOptions,
   ): Promise<T[]> {
     return decodeProtocolJson<T>(await this.#native.conflictsJson(options));
   }
 
-  status(options?: SyncCallOptions): Promise<ExperimentalSyncStatus> {
+  status(options?: CallOptions): Promise<ExperimentalSyncStatus> {
     return this.#native.status(options);
   }
 
-  close(options?: SyncCallOptions): Promise<void> {
+  close(options?: CallOptions): Promise<void> {
     return this.#native.close(options);
   }
 

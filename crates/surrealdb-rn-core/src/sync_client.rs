@@ -286,8 +286,9 @@ mod tests {
     use serde_json::json;
     use surrealdb::types::{RecordId as NativeRecordId, Value};
     use surrealdb_sync_protocol::{
-        BaseVersion, ClientCommitId, CommitIdentity, Fingerprint, Operation, RecordId, RecordState,
-        SchemaVersion,
+        AppliedRecord, BaseVersion, Checkpoint, ClientCommitId, CommitIdentity, Cursor,
+        Fingerprint, OpaqueCheckpoint, Operation, PullBatch, PullCommit, PullFrame, RecordId,
+        RecordState, SchemaVersion, ScopeSnapshot,
     };
 
     use super::*;
@@ -418,5 +419,61 @@ mod tests {
             open_sync_client(database, options("different")).await,
             Err(NativeSyncError::Protocol)
         ));
+    }
+
+    #[tokio::test]
+    async fn native_facade_applies_complete_pull_and_advances_cursor_atomically() {
+        let database = database().await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let checkpoint = Checkpoint {
+            token: OpaqueCheckpoint("checkpoint-1".into()),
+            cursor: Cursor {
+                epoch: 1,
+                sequence: 1,
+            },
+            scope: ScopeSnapshot {
+                identity: ScopeIdentity("all".into()),
+                authorization_revision: 1,
+                subscription_revision: 1,
+            },
+        };
+        let response = PullResponse::Batch(PullBatch {
+            frames: vec![
+                PullFrame::Start {
+                    checkpoint: checkpoint.clone(),
+                },
+                PullFrame::Commit {
+                    checkpoint: checkpoint.token.clone(),
+                    commit: PullCommit {
+                        sequence: 1,
+                        source: None,
+                        records: vec![AppliedRecord {
+                            record_id: RecordId("person:lin".into()),
+                            state: RecordState::Present {
+                                value: json!({"name": "Lin"}),
+                                version: 1,
+                                reference: None,
+                            },
+                        }],
+                    },
+                },
+                PullFrame::End { checkpoint },
+            ],
+        });
+
+        let status = client
+            .apply_pull_response(serde_json::to_string(&response).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(status.cursor_epoch, Some(1));
+        assert_eq!(status.cursor_sequence, Some(1));
+        let database_client = database.client().await.unwrap();
+        let record: Option<Value> = database_client
+            .select(NativeRecordId::parse_simple("person:lin").unwrap())
+            .await
+            .unwrap();
+        assert!(matches!(record, Some(Value::Object(_))));
     }
 }

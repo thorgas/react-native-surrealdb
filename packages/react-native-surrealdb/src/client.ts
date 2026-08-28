@@ -1,6 +1,8 @@
 import {
   LiveAction as NativeLiveAction,
   NativeOutputEncoding,
+  NativeSyncError,
+  NativeSyncError_Tags,
   SurrealRnError,
   SurrealRnError_Tags,
   benchmarkBoundaryNoop as nativeBenchmarkBoundaryNoop,
@@ -26,7 +28,12 @@ import {
   type ExperimentalSyncOpenOptions,
 } from "./sync";
 
-export { SurrealRnError, SurrealRnError_Tags };
+export {
+  NativeSyncError,
+  NativeSyncError_Tags,
+  SurrealRnError,
+  SurrealRnError_Tags,
+};
 export type { ConnectOptions };
 export { LiveSubscription } from "./subscription";
 export type {
