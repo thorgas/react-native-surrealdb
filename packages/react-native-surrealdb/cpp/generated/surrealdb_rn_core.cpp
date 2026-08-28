@@ -203,6 +203,15 @@ uniffi_surrealdb_rn_core_fn_method_nativesyncclient_record_push_response(
 uniffi_surrealdb_rn_core_fn_func_connect(RustBuffer options);
 /*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_func_open_sync_client(
     /*handle*/ uint64_t database, RustBuffer options);
+/*handle*/ uint64_t
+uniffi_surrealdb_rn_core_fn_func_decode_sync_pull_response(RustBuffer bytes);
+/*handle*/ uint64_t
+uniffi_surrealdb_rn_core_fn_func_decode_sync_push_response(RustBuffer bytes);
+/*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_func_encode_sync_pull_request(
+    RustBuffer partition_id, RustBuffer client_id, RustBuffer checkpoint,
+    RustBuffer requested_scope, uint64_t subscription_revision);
+/*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_func_encode_sync_push_request(
+    RustBuffer partition_id, RustBuffer client_id, RustBuffer commit_json);
 RustBuffer
 ffi_surrealdb_rn_core_rustbuffer_alloc(uint64_t size,
                                        RustCallStatus *uniffi_out_err);
@@ -325,6 +334,10 @@ void ffi_surrealdb_rn_core_rust_future_complete_void(
 uint16_t uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_connect();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_open_sync_client();
+uint16_t uniffi_surrealdb_rn_core_checksum_func_decode_sync_pull_response();
+uint16_t uniffi_surrealdb_rn_core_checksum_func_decode_sync_push_response();
+uint16_t uniffi_surrealdb_rn_core_checksum_func_encode_sync_pull_request();
+uint16_t uniffi_surrealdb_rn_core_checksum_func_encode_sync_push_request();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_livequery_close();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed();
 uint16_t uniffi_surrealdb_rn_core_checksum_method_livequery_next();
@@ -2250,6 +2263,56 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
             return this->cpp_uniffi_surrealdb_rn_core_fn_func_open_sync_client(
                 rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_func_decode_sync_pull_response"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_func_"
+                                        "decode_sync_pull_response"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_func_decode_sync_pull_response(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_func_decode_sync_push_response"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_func_"
+                                        "decode_sync_push_response"),
+          1,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_func_decode_sync_push_response(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_func_encode_sync_pull_request"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt,
+              "ubrn_uniffi_surrealdb_rn_core_fn_func_encode_sync_pull_request"),
+          5,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_func_encode_sync_pull_request(
+                    rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_func_encode_sync_push_request"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt,
+              "ubrn_uniffi_surrealdb_rn_core_fn_func_encode_sync_push_request"),
+          3,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_func_encode_sync_push_request(
+                    rt, thisVal, args, count);
+          });
   props["ubrn_ffi_surrealdb_rn_core_rust_future_poll_u8"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -2818,6 +2881,54 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                 ->cpp_uniffi_surrealdb_rn_core_checksum_func_open_sync_client(
                     rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_func_decode_sync_pull_"
+        "response"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "func_decode_sync_pull_response"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_func_decode_sync_pull_response(
+                rt, thisVal, args, count);
+      });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_func_decode_sync_push_"
+        "response"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "func_decode_sync_push_response"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_func_decode_sync_push_response(
+                rt, thisVal, args, count);
+      });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_sync_pull_"
+        "request"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "func_encode_sync_pull_request"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_func_encode_sync_pull_request(
+                rt, thisVal, args, count);
+      });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_sync_push_"
+        "request"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "func_encode_sync_push_request"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_func_encode_sync_push_request(
+                rt, thisVal, args, count);
+      });
   props["ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_close"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -4087,6 +4198,61 @@ NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_func_open_sync_client(
   return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
                                                          value);
 }
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_func_decode_sync_pull_response(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_func_decode_sync_pull_response(
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[0]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_func_decode_sync_push_response(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_func_decode_sync_push_response(
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[0]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_func_encode_sync_pull_request(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_func_encode_sync_pull_request(
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[0]),
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[1]),
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[2]),
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[3]),
+      uniffi_jsi::Bridging<uint64_t>::fromJs(rt, callInvoker, args[4]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_func_encode_sync_push_request(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_func_encode_sync_push_request(
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[0]),
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[1]),
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[2]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
 jsi::Value NativeSurrealdbRnCore::cpp_ffi_surrealdb_rn_core_rust_future_poll_u8(
     jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
     size_t count) {
@@ -4705,6 +4871,42 @@ jsi::Value NativeSurrealdbRnCore::
         jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
         size_t count) {
   auto value = uniffi_surrealdb_rn_core_checksum_func_open_sync_client();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_func_decode_sync_pull_response(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_func_decode_sync_pull_response();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_func_decode_sync_push_response(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_func_decode_sync_push_response();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_func_encode_sync_pull_request(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_func_encode_sync_pull_request();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_func_encode_sync_push_request(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_func_encode_sync_push_request();
 
   return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }

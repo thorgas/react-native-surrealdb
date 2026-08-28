@@ -48,6 +48,8 @@ pub enum CodecError {
     InvalidRecordId,
     DuplicateObjectKey,
     InvalidIdentifier,
+    InvalidFingerprint,
+    InvalidEnvelope,
     DepthLimit,
     ContainerLimit,
     StringLimit,
@@ -65,6 +67,8 @@ impl fmt::Display for CodecError {
             Self::InvalidRecordId => formatter.write_str("invalid record ID"),
             Self::DuplicateObjectKey => formatter.write_str("duplicate object key"),
             Self::InvalidIdentifier => formatter.write_str("invalid or oversized identifier"),
+            Self::InvalidFingerprint => formatter.write_str("invalid commit fingerprint"),
+            Self::InvalidEnvelope => formatter.write_str("invalid protocol envelope"),
             Self::DepthLimit => formatter.write_str("value exceeds the depth limit"),
             Self::ContainerLimit => formatter.write_str("container exceeds the item limit"),
             Self::StringLimit => formatter.write_str("string or byte value exceeds the size limit"),
@@ -154,7 +158,7 @@ fn validate(value: &Value) -> Result<(), CodecError> {
     validate_with_budget(value, 0, &mut remaining_items, &mut remaining_bytes)
 }
 
-fn validate_with_budget(
+pub(crate) fn validate_with_budget(
     value: &Value,
     depth: usize,
     remaining_items: &mut usize,
@@ -222,7 +226,7 @@ fn validate_with_budget(
     }
 }
 
-fn to_cbor(value: &Value) -> Result<CborValue, CodecError> {
+pub(crate) fn to_cbor(value: &Value) -> Result<CborValue, CodecError> {
     Ok(match value {
         Value::None => CborValue::Tag(NONE_TAG, Box::new(CborValue::Null)),
         Value::Null => CborValue::Null,
@@ -257,7 +261,7 @@ fn to_cbor(value: &Value) -> Result<CborValue, CodecError> {
     })
 }
 
-fn from_cbor(value: CborValue) -> Result<Value, CodecError> {
+pub(crate) fn from_cbor(value: CborValue) -> Result<Value, CodecError> {
     match value {
         CborValue::Integer(value) => i64::try_from(value)
             .map(Value::Int)
@@ -370,7 +374,7 @@ fn optional_record_id_to_cbor(record_id: Option<&RecordId>) -> CborValue {
     })
 }
 
-fn encode_cbor_value(value: CborValue) -> Result<Vec<u8>, CodecError> {
+pub(crate) fn encode_cbor_value(value: CborValue) -> Result<Vec<u8>, CodecError> {
     let mut writer = LimitedWriter::new(MAX_ENCODED_BYTES);
     let result = ciborium::ser::into_writer(&value, &mut writer);
     if writer.exceeded {
@@ -415,7 +419,7 @@ impl IoWrite for LimitedWriter {
     }
 }
 
-fn take_bytes(remaining: &mut usize, length: usize) -> Result<(), CodecError> {
+pub(crate) fn take_bytes(remaining: &mut usize, length: usize) -> Result<(), CodecError> {
     *remaining = remaining
         .checked_sub(length)
         .ok_or(CodecError::EncodedLimit)?;
@@ -430,7 +434,7 @@ fn validate_identifier(value: &str) -> Result<(), CodecError> {
     }
 }
 
-fn preflight_canonical_cbor(bytes: &[u8]) -> Result<(), CodecError> {
+pub(crate) fn preflight_canonical_cbor(bytes: &[u8]) -> Result<(), CodecError> {
     let mut cursor = 0;
     let mut remaining_items = MAX_TOTAL_ITEMS;
     scan_cbor_item(bytes, &mut cursor, 0, &mut remaining_items)?;

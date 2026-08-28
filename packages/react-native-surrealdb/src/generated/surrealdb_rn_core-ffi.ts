@@ -200,6 +200,24 @@ interface NativeModuleInterface {
   ): void;
   ubrn_uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop(): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_func_connect(options: Uint8Array): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_decode_sync_pull_response(
+    bytes: Uint8Array,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_decode_sync_push_response(
+    bytes: Uint8Array,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_encode_sync_pull_request(
+    partitionId: Uint8Array,
+    clientId: Uint8Array,
+    checkpoint: Uint8Array,
+    requestedScope: Uint8Array,
+    subscriptionRevision: bigint,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_encode_sync_push_request(
+    partitionId: Uint8Array,
+    clientId: Uint8Array,
+    commitJson: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_func_open_sync_client(
     database: bigint,
     options: Uint8Array,
@@ -338,6 +356,10 @@ interface NativeModuleInterface {
   ubrn_ffi_surrealdb_rn_core_uniffi_contract_version(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_connect(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_decode_sync_pull_response(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_decode_sync_push_response(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_sync_pull_request(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_sync_push_request(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_open_sync_client(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_close(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed(): number;

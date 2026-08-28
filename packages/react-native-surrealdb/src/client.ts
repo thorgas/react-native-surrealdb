@@ -7,6 +7,10 @@ import {
   SurrealRnError_Tags,
   benchmarkBoundaryNoop as nativeBenchmarkBoundaryNoop,
   connect as nativeConnect,
+  decodeSyncPullResponse as nativeDecodeSyncPullResponse,
+  decodeSyncPushResponse as nativeDecodeSyncPushResponse,
+  encodeSyncPullRequest as nativeEncodeSyncPullRequest,
+  encodeSyncPushRequest as nativeEncodeSyncPushRequest,
   openSyncClient as nativeOpenSyncClient,
   type ConnectOptions,
   type LiveQueryLike,
@@ -27,6 +31,10 @@ import {
   ExperimentalSyncClient,
   type ExperimentalSyncOpenOptions,
 } from "./sync";
+import {
+  experimentalCanonicalCborSyncHttpCodec,
+  type ExperimentalSyncHttpCodec,
+} from "./sync-http";
 
 export {
   NativeSyncError,
@@ -35,6 +43,16 @@ export {
   SurrealRnError_Tags,
 };
 export type { ConnectOptions };
+
+/** Create the native, bounded `surrealdb-sync/1` canonical CBOR codec. */
+export function createExperimentalCanonicalCborSyncHttpCodec(): ExperimentalSyncHttpCodec {
+  return experimentalCanonicalCborSyncHttpCodec({
+    encodeSyncPushRequest: nativeEncodeSyncPushRequest,
+    decodeSyncPushResponse: nativeDecodeSyncPushResponse,
+    encodeSyncPullRequest: nativeEncodeSyncPullRequest,
+    decodeSyncPullResponse: nativeDecodeSyncPullResponse,
+  });
+}
 export { LiveSubscription } from "./subscription";
 export type {
   LiveSubscriptionSnapshot,

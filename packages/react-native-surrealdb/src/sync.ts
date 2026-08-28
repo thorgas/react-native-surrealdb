@@ -68,7 +68,28 @@ export class ExperimentalSyncClient {
   async pending<T extends SyncJsonValue = SyncJsonValue>(
     options?: CallOptions,
   ): Promise<T[]> {
-    return decodeProtocolJson<T>(await this.#native.pendingJson(options));
+    return decodeProtocolJson<T>(await this.pendingProtocolJson(options));
+  }
+
+  /** @internal Exact tagged JSON used by the native HTTP codec bridge. */
+  pendingProtocolJson(options?: CallOptions): Promise<string[]> {
+    return this.#native.pendingJson(options);
+  }
+
+  /** @internal Applies one decoded HTTP response without a lossy JS round trip. */
+  recordPushResponseProtocolJson(
+    responseJson: string,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus> {
+    return this.#native.recordPushResponse(responseJson, options);
+  }
+
+  /** @internal Applies one decoded pull response without a lossy JS round trip. */
+  applyPullResponseProtocolJson(
+    responseJson: string,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus> {
+    return this.#native.applyPullResponse(responseJson, options);
   }
 
   async conflicts<T extends SyncJsonValue = SyncJsonValue>(

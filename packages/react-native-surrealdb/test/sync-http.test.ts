@@ -7,8 +7,10 @@ import type {
 import {
   ExperimentalSyncHttpAdapter,
   ExperimentalSyncHttpError,
+  experimentalCanonicalCborSyncHttpCodec,
   experimentalJsonSyncHttpCodec,
   type ExperimentalSyncHttpCodec,
+  type ExperimentalSyncHttpNativeBridge,
 } from "../src/sync-http";
 import { ExperimentalSyncClient } from "../src/sync";
 
@@ -190,10 +192,16 @@ describe("ExperimentalSyncHttpAdapter", () => {
       .mockReturnValueOnce(firstResponse)
       .mockResolvedValueOnce(response(pullResponse()));
     const body = new ArrayBuffer(3);
+    const encode = vi.fn(async () => body);
+    const decode = vi.fn(async (value: Response) =>
+      JSON.stringify(await value.json()),
+    );
     const codec: ExperimentalSyncHttpCodec = {
       mediaType: "application/vnd.surrealdb.sync.test",
-      encode: vi.fn(() => body),
-      decode: vi.fn(async (value) => value.json()),
+      encodePushRequest: encode,
+      decodePushResponse: decode,
+      encodePullRequest: encode,
+      decodePullResponse: decode,
     };
     const { adapter } = createAdapter(fetch, codec);
 
@@ -205,7 +213,7 @@ describe("ExperimentalSyncHttpAdapter", () => {
     await expect(pull).resolves.toEqual(status);
 
     expect(fetch).toHaveBeenCalledTimes(2);
-    expect(codec.encode).toHaveBeenCalledTimes(2);
+    expect(encode).toHaveBeenCalledTimes(2);
     expect(fetch.mock.calls[0]?.[1]?.body).toBe(body);
   });
 
@@ -239,8 +247,55 @@ describe("ExperimentalSyncHttpAdapter", () => {
 
     await adapter.pull({ signal: controller.signal });
     expect(fetch.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
-    expect(() =>
-      experimentalJsonSyncHttpCodec.encode({ value: 2n ** 63n }),
-    ).toThrow("safe range");
+    await expect(
+      experimentalJsonSyncHttpCodec.encodePullRequest({
+        partitionId: "p",
+        clientId: "c",
+        requestedScope: "all",
+        subscriptionRevision: 2n ** 63n,
+      }),
+    ).rejects.toThrow("safe range");
+  });
+
+  it("wires canonical CBOR bytes and raw protocol JSON without coercion", async () => {
+    const pushGolden = Uint8Array.from([0x84, 0x70, 0x73]).buffer;
+    const pullGolden = Uint8Array.from([0x84, 0x70, 0x74]).buffer;
+    const bridge: ExperimentalSyncHttpNativeBridge = {
+      encodeSyncPushRequest: vi.fn(async () => pushGolden),
+      decodeSyncPushResponse: vi.fn(async () => '{"status":"push"}'),
+      encodeSyncPullRequest: vi.fn(async () => pullGolden),
+      decodeSyncPullResponse: vi.fn(async () => '{"status":"pull"}'),
+    };
+    const codec = experimentalCanonicalCborSyncHttpCodec(bridge);
+
+    const pushBody = await codec.encodePushRequest({
+      partitionId: "p",
+      clientId: "c",
+      commitJson: '{"identity":{"clientCommitId":"i"}}',
+    });
+    expect(pushBody).toEqual(pushGolden);
+    expect(await codec.decodePushResponse(new Response(pushGolden))).toBe(
+      '{"status":"push"}',
+    );
+
+    const pullBody = await codec.encodePullRequest({
+      partitionId: "p",
+      clientId: "c",
+      checkpoint: "opaque",
+      requestedScope: "all",
+      subscriptionRevision: 2n ** 63n,
+    });
+    expect(pullBody).toEqual(pullGolden);
+    expect(await codec.decodePullResponse(new Response(pullGolden))).toBe(
+      '{"status":"pull"}',
+    );
+    expect(bridge.encodeSyncPullRequest).toHaveBeenCalledWith(
+      "p",
+      "c",
+      "opaque",
+      "all",
+      2n ** 63n,
+      undefined,
+    );
   });
 });

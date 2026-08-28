@@ -95,7 +95,7 @@ fn validate_commit_identity(
     Ok(())
 }
 
-fn canonical_operation(
+pub(crate) fn canonical_operation(
     operation: &Operation<JsonValue>,
 ) -> Result<Operation<CanonicalValue>, NativeSyncError> {
     Ok(match operation {
@@ -128,7 +128,7 @@ fn validate_record_state(state: &RecordState<JsonValue>) -> Result<(), NativeSyn
     Ok(())
 }
 
-fn canonical_json(value: &JsonValue) -> Result<CanonicalValue, NativeSyncError> {
+pub(crate) fn canonical_json(value: &JsonValue) -> Result<CanonicalValue, NativeSyncError> {
     let value = from_wire_value(value.clone()).map_err(|_| NativeSyncError::InvalidInput)?;
     from_surreal(value).map_err(|_| NativeSyncError::InvalidInput)
 }

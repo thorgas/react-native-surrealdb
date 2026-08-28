@@ -7,8 +7,61 @@ import {
 
 export type ExperimentalSyncHttpCodec = {
   readonly mediaType: string;
-  encode(value: unknown): BodyInit;
-  decode(response: Response): Promise<SyncJsonValue>;
+  encodePushRequest(
+    request: ExperimentalSyncPushRequest,
+    options?: CallOptions,
+  ): Promise<BodyInit>;
+  decodePushResponse(
+    response: Response,
+    options?: CallOptions,
+  ): Promise<string>;
+  encodePullRequest(
+    request: ExperimentalSyncPullRequest,
+    options?: CallOptions,
+  ): Promise<BodyInit>;
+  decodePullResponse(
+    response: Response,
+    options?: CallOptions,
+  ): Promise<string>;
+};
+
+export type ExperimentalSyncPushRequest = {
+  partitionId: string;
+  clientId: string;
+  commitJson: string;
+};
+
+export type ExperimentalSyncPullRequest = {
+  partitionId: string;
+  clientId: string;
+  checkpoint?: string;
+  requestedScope: string;
+  subscriptionRevision: bigint;
+};
+
+export type ExperimentalSyncHttpNativeBridge = {
+  encodeSyncPushRequest(
+    partitionId: string,
+    clientId: string,
+    commitJson: string,
+    options?: CallOptions,
+  ): Promise<ArrayBuffer>;
+  decodeSyncPushResponse(
+    bytes: ArrayBuffer,
+    options?: CallOptions,
+  ): Promise<string>;
+  encodeSyncPullRequest(
+    partitionId: string,
+    clientId: string,
+    checkpoint: string | undefined,
+    requestedScope: string,
+    subscriptionRevision: bigint,
+    options?: CallOptions,
+  ): Promise<ArrayBuffer>;
+  decodeSyncPullResponse(
+    bytes: ArrayBuffer,
+    options?: CallOptions,
+  ): Promise<string>;
 };
 
 export type ExperimentalSyncHttpOptions = {
@@ -45,30 +98,70 @@ export class ExperimentalSyncHttpError extends Error {
  */
 export const experimentalJsonSyncHttpCodec: ExperimentalSyncHttpCodec = {
   mediaType: "application/json",
-  encode(value) {
-    const encoded = JSON.stringify(value, (_key, item: unknown) => {
-      if (typeof item !== "bigint") {
-        return item;
-      }
-      const number = Number(item);
-      if (!Number.isSafeInteger(number)) {
-        throw new RangeError("sync JSON integer exceeds the safe range");
-      }
-      return number;
+  async encodePushRequest(request) {
+    return encodeJson({
+      schemaVersion: "v1",
+      partitionId: request.partitionId,
+      clientId: request.clientId,
+      commit: parseProtocolJson(request.commitJson),
     });
-    if (encoded === undefined) {
-      throw new TypeError("sync HTTP value must be JSON serializable");
-    }
-    return encoded;
   },
-  async decode(response) {
-    const value: unknown = await response.json();
-    if (!isSyncJsonValue(value)) {
-      throw new TypeError("sync HTTP response is not a finite JSON value");
-    }
-    return value;
+  async decodePushResponse(response) {
+    return decodeJsonResponse(response);
+  },
+  async encodePullRequest(request) {
+    return encodeJson({
+      schemaVersion: "v1",
+      partitionId: request.partitionId,
+      clientId: request.clientId,
+      checkpoint: request.checkpoint ?? null,
+      requestedScope: request.requestedScope,
+      subscriptionRevision: request.subscriptionRevision,
+    });
+  },
+  async decodePullResponse(response) {
+    return decodeJsonResponse(response);
   },
 };
+
+/** Complete, bounded surrealdb-sync/1 CBOR codec backed by native Rust. */
+export function experimentalCanonicalCborSyncHttpCodec(
+  native: ExperimentalSyncHttpNativeBridge,
+): ExperimentalSyncHttpCodec {
+  return {
+    mediaType: "application/vnd.surrealdb-sync.v1+cbor",
+    async encodePushRequest(request, options) {
+      return native.encodeSyncPushRequest(
+        request.partitionId,
+        request.clientId,
+        request.commitJson,
+        options,
+      );
+    },
+    async decodePushResponse(response, options) {
+      return native.decodeSyncPushResponse(
+        await responseBytes(response),
+        options,
+      );
+    },
+    async encodePullRequest(request, options) {
+      return native.encodeSyncPullRequest(
+        request.partitionId,
+        request.clientId,
+        request.checkpoint,
+        request.requestedScope,
+        request.subscriptionRevision,
+        options,
+      );
+    },
+    async decodePullResponse(response, options) {
+      return native.decodeSyncPullResponse(
+        await responseBytes(response),
+        options,
+      );
+    },
+  };
+}
 
 /**
  * Application-owned HTTP push/pull orchestration for the experimental client.
@@ -123,21 +216,22 @@ export class ExperimentalSyncHttpAdapter {
   }
 
   async #push(options?: CallOptions): Promise<ExperimentalSyncStatus[]> {
-    const commits = await this.#sync.pending(options);
+    const commits = await this.#sync.pendingProtocolJson(options);
     const statuses: ExperimentalSyncStatus[] = [];
 
     for (const commit of commits) {
-      const response = await this.#post(
+      const responseJson = await this.#postPush(
         "/v1/sync/push",
         {
-          schemaVersion: "v1",
           partitionId: this.#partitionId,
           clientId: this.#clientId,
-          commit,
+          commitJson: commit,
         },
         options,
       );
-      statuses.push(await this.#sync.recordPushResponse(response, options));
+      statuses.push(
+        await this.#sync.recordPushResponseProtocolJson(responseJson, options),
+      );
     }
 
     return statuses;
@@ -145,26 +239,52 @@ export class ExperimentalSyncHttpAdapter {
 
   async #pull(options?: CallOptions): Promise<ExperimentalSyncStatus> {
     const checkpoint = await this.#sync.checkpointToken(options);
-    const response = await this.#post(
+    const responseJson = await this.#postPull(
       "/v1/sync/pull",
       {
-        schemaVersion: "v1",
         partitionId: this.#partitionId,
         clientId: this.#clientId,
-        checkpoint: checkpoint ?? null,
+        checkpoint,
         requestedScope: this.#requestedScope,
         subscriptionRevision: this.#subscriptionRevision,
       },
       options,
     );
-    return this.#sync.applyPullResponse(response, options);
+    return this.#sync.applyPullResponseProtocolJson(responseJson, options);
+  }
+
+  async #postPush(
+    path: string,
+    request: ExperimentalSyncPushRequest,
+    options?: CallOptions,
+  ): Promise<string> {
+    return this.#post(
+      path,
+      await this.#codec.encodePushRequest(request, options),
+      (response) => this.#codec.decodePushResponse(response, options),
+      options,
+    );
+  }
+
+  async #postPull(
+    path: string,
+    request: ExperimentalSyncPullRequest,
+    options?: CallOptions,
+  ): Promise<string> {
+    return this.#post(
+      path,
+      await this.#codec.encodePullRequest(request, options),
+      (response) => this.#codec.decodePullResponse(response, options),
+      options,
+    );
   }
 
   async #post(
     path: string,
-    body: unknown,
+    body: BodyInit,
+    decode: (response: Response) => Promise<string>,
     options?: CallOptions,
-  ): Promise<SyncJsonValue> {
+  ): Promise<string> {
     const token = await this.#accessToken();
     if (token.trim().length === 0) {
       throw new ExperimentalSyncHttpError("sync access token is empty");
@@ -177,7 +297,7 @@ export class ExperimentalSyncHttpAdapter {
         Authorization: `Bearer ${token}`,
         "Content-Type": this.#codec.mediaType,
       },
-      body: this.#codec.encode(body),
+      body,
       signal: options?.signal,
     });
     if (response.status !== 200) {
@@ -186,7 +306,7 @@ export class ExperimentalSyncHttpAdapter {
         response.status,
       );
     }
-    return this.#codec.decode(response);
+    return decode(response);
   }
 
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -197,6 +317,43 @@ export class ExperimentalSyncHttpAdapter {
     );
     return result;
   }
+}
+
+function encodeJson(value: unknown): string {
+  const encoded = JSON.stringify(value, (_key, item: unknown) => {
+    if (typeof item !== "bigint") {
+      return item;
+    }
+    const number = Number(item);
+    if (!Number.isSafeInteger(number)) {
+      throw new RangeError("sync JSON integer exceeds the safe range");
+    }
+    return number;
+  });
+  if (encoded === undefined) {
+    throw new TypeError("sync HTTP value must be JSON serializable");
+  }
+  return encoded;
+}
+
+function parseProtocolJson(json: string): SyncJsonValue {
+  const value: unknown = JSON.parse(json);
+  if (!isSyncJsonValue(value)) {
+    throw new TypeError("sync protocol JSON is not a finite JSON value");
+  }
+  return value;
+}
+
+async function decodeJsonResponse(response: Response): Promise<string> {
+  const value: unknown = await response.json();
+  if (!isSyncJsonValue(value)) {
+    throw new TypeError("sync HTTP response is not a finite JSON value");
+  }
+  return JSON.stringify(value);
+}
+
+async function responseBytes(response: Response): Promise<ArrayBuffer> {
+  return response.arrayBuffer();
 }
 
 function isSyncJsonValue(value: unknown): value is SyncJsonValue {
