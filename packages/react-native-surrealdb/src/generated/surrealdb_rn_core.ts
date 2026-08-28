@@ -1644,6 +1644,9 @@ export interface NativeSyncClientLike {
     responseJson: string,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<NativeSyncStatus>;
+  checkpointToken(asyncOpts_?: {
+    signal: AbortSignal;
+  }) /*throws*/ : Promise<string | undefined>;
   close(asyncOpts_?: { signal: AbortSignal }): Promise<void>;
   conflictsJson(asyncOpts_?: {
     signal: AbortSignal;
@@ -1716,6 +1719,48 @@ export class NativeSyncClient
         // here using the per-callable return-type converter.
         /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
           FfiConverterTypeNativeSyncStatus,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async checkpointToken(asyncOpts_?: {
+    signal: AbortSignal;
+  }): Promise<string | undefined> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_checkpoint_token(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterOptionalString.lift.bind(
+          FfiConverterOptionalString,
         ),
         /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
         /*asyncOpts:*/ asyncOpts_,
@@ -3387,6 +3432,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_pull_response",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_checkpoint_token() !==
+    8153
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_checkpoint_token",
     );
   }
   if (

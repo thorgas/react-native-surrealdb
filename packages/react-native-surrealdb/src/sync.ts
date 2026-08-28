@@ -74,6 +74,10 @@ export class ExperimentalSyncClient {
     return decodeProtocolJson<T>(await this.#native.conflictsJson(options));
   }
 
+  checkpointToken(options?: CallOptions): Promise<string | undefined> {
+    return this.#native.checkpointToken(options);
+  }
+
   status(options?: CallOptions): Promise<ExperimentalSyncStatus> {
     return this.#native.status(options);
   }
