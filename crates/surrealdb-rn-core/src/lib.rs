@@ -4,6 +4,7 @@
 //! SDK while Rust owns engine selection, connection lifetime, authentication,
 //! query execution, and lossless value transport.
 
+pub mod sync_state;
 mod wire;
 
 use std::sync::atomic::{AtomicBool, Ordering};

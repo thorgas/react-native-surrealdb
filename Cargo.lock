@@ -4155,6 +4155,8 @@ dependencies = [
  "serde",
  "serde_json",
  "surrealdb",
+ "surrealdb-sync-client",
+ "surrealdb-sync-protocol",
  "temp-dir",
  "thiserror",
  "tokio",
