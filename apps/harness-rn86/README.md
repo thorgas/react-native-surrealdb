@@ -66,6 +66,17 @@ pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:ios
 pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:android
 ```
 
+The ordinary shared Hermes suite also covers the application-owned HTTP adapter
+with a redacted mocked authority and a real embedded native sync client. Run it
+without rebuilding an already-installed host with:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run test:harness:ios \
+  -- --testPathPatterns shared.harness.ts
+pnpm --filter surrealdb-harness-rn86 run test:harness:android \
+  -- --testPathPatterns shared.harness.ts
+```
+
 Use Node 22.22.0 from the repository `.node-version`. The Android runner may
 stop and restart its configured `Pixel_9` AVD between the seed and verification
 files; do not uninstall the app or pass `HARNESS_APP_PATH` between those phases,

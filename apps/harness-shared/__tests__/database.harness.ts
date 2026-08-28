@@ -1,7 +1,9 @@
 import { afterEach, describe, expect, test } from 'react-native-harness';
 import {
+  ExperimentalSyncHttpAdapter,
   SurrealRecordId,
   connect,
+  experimentalJsonSyncHttpCodec,
   type SurrealClient,
 } from 'react-native-surrealdb';
 
@@ -99,6 +101,121 @@ describe('react-native-surrealdb native core', () => {
     );
     expect(canonical?.value).toEqual([]);
     await reopened.close();
+  });
+
+  test('runs application-owned HTTP sync against a mocked authority', async () => {
+    database = await connect({
+      endpoint: 'memory',
+      namespace: 'harness-sync-http',
+      database: 'harness-sync-http',
+    });
+    const options = {
+      partitionId: 'partition-http',
+      clientId: 'client-http',
+      requestedScope: 'all',
+      subscriptionRevision: 1n,
+    };
+    const identity = {
+      clientCommitId: 'commit-http-1',
+      fingerprint: 'fingerprint-http-1',
+    };
+    const sync = await database.openExperimentalSync(options);
+    await sync.enqueue({
+      identity,
+      operations: [
+        {
+          kind: 'upsert',
+          record_id: 'person:http',
+          base_version: 'absent',
+          value: { name: 'HTTP proof' },
+          reference: null,
+        },
+      ],
+    });
+
+    const requests: Array<{ url: string; authorization: string | null }> = [];
+    let durableCheckpoint: string | undefined;
+    const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      requests.push({
+        url,
+        authorization: new Headers(init?.headers).get('Authorization'),
+      });
+      if (url.endsWith('/v1/sync/push')) {
+        return new Response(
+          JSON.stringify({
+            schemaVersion: 'v1',
+            partitionId: options.partitionId,
+            clientId: options.clientId,
+            outcome: {
+              status: 'accepted',
+              identity,
+              sequence: 1,
+              id_mappings: [],
+            },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          response: 'reset',
+          reason: 'checkpoint_expired',
+          checkpoint: {
+            token: 'checkpoint-http-1',
+            cursor: { epoch: 1, sequence: 1 },
+            scope: {
+              identity: 'all',
+              authorizationRevision: 1,
+              subscriptionRevision: 1,
+            },
+          },
+          records: [
+            {
+              recordId: 'person:http',
+              state: {
+                state: 'present',
+                value: { name: 'HTTP proof' },
+                version: 1,
+                reference: null,
+              },
+            },
+          ],
+        }),
+        { status: 200 },
+      );
+    }) as typeof globalThis.fetch;
+    const adapter = new ExperimentalSyncHttpAdapter({
+      sync,
+      baseUrl: 'https://sync.invalid',
+      ...options,
+      accessToken: () => 'redacted-harness-token',
+      checkpointStore: {
+        load: () => durableCheckpoint,
+        save: checkpoint => {
+          durableCheckpoint = checkpoint;
+        },
+      },
+      codec: experimentalJsonSyncHttpCodec,
+      fetch,
+    });
+
+    const result = await adapter.syncOnce();
+    expect(result.push).toHaveLength(1);
+    expect(result.pull.cursorSequence).toBe(1n);
+    expect((await sync.status()).pendingCount).toBe(0);
+    expect(durableCheckpoint).toBe('checkpoint-http-1');
+    expect(requests).toEqual([
+      {
+        url: 'https://sync.invalid/v1/sync/push',
+        authorization: 'Bearer redacted-harness-token',
+      },
+      {
+        url: 'https://sync.invalid/v1/sync/pull',
+        authorization: 'Bearer redacted-harness-token',
+      },
+    ]);
+    await sync.close();
   });
 
   test('streams live query notifications and closes deterministically', async () => {

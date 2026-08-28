@@ -181,12 +181,17 @@ currently application-managed.
 This development branch exposes `openExperimentalSync()` only to exercise the native protocol
 workflow. The returned transport-free client can enqueue an atomic local commit, inspect its
 durable pending/conflict queues, and apply HTTP push/pull responses supplied by the application.
-Optimistic records and sync metadata commit together in embedded SurrealDB.
+Optimistic records and sync metadata commit together in embedded SurrealDB. The optional
+`ExperimentalSyncHttpAdapter` adds serialized, explicit `push()`, `pull()`, and `syncOnce()` calls.
+Applications must inject their access-token provider, wire codec, `fetch`, and a durable checkpoint
+store; the adapter saves a complete pull checkpoint only after the native state applies it.
 
 The payload API accepts ordinary JSON-compatible protocol objects. It does not yet use this
 package's lossless SurrealDB value codec, so JavaScript `bigint` and untagged SurrealDB-specific
-values are not accepted. Networking, authorization, server deployment, and retry scheduling are
-also absent. Do not ship or advertise this API; see the repository
+values are not accepted. The exported `experimentalJsonSyncHttpCodec` is test/prototype-only: it
+rejects integers outside JavaScript's safe range and is not the canonical protocol codec. Authority
+deployment, automatic retry/backoff, and WebSocket durability or ordering are absent. A WebSocket
+may only notify the application to call `pull()`. Do not ship or advertise this API; see the repository
 [sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
 
 ## Value transport

@@ -126,8 +126,10 @@ conflict, offline recovery, migration, and adversarial failure tests.
 This branch contains temporary copies of the Apache-2.0 `surrealdb-sync-protocol` and
 `surrealdb-sync-client` Rust crates plus an experimental native/TypeScript facade. An enqueue or
 pull transition atomically updates its bounded, revision-checked client state and optimistic domain
-records in the embedded SurrealDB transaction. The facade performs no networking, authority,
-authentication, or automatic retry, and its protocol values still cross a prototype JSON boundary.
+records in the embedded SurrealDB transaction. An optional application-owned HTTP adapter performs
+explicit push/pull calls with injected authentication, codec, fetch, and durable checkpoint storage.
+It provides no authority, scheduler, WebSocket ordering, or automatic retry, and its example codec
+still crosses a prototype JSON boundary.
 It does not make this package a usable sync engine and must not be released as one. The private
 formal specification and comprehensive checker suites are not included. See
 [`crates/SYNC_RUNTIME_ORIGIN.md`](./crates/SYNC_RUNTIME_ORIGIN.md) for the temporary source boundary

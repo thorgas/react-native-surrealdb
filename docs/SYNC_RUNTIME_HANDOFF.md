@@ -15,6 +15,9 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Native/TypeScript facade commit: `1909d60`.
 - Recovery/error contract commit: `c42afbb`.
 - Harness reliability commit: `fdf7beb`.
+- Process-restart E2E commit: `106305f13c6d66829da17f4ec656e9d37cccaee9`.
+- Reverted checkpoint-binding experiment: `8bcf29e288111d8e2c1a8f89877264be96cac559`,
+  restored by `8f9265ba74cea68a1b7d4866d09f9e47d9d1a9e1`.
 - Review: [draft PR #12](https://github.com/thorgas/react-native-surrealdb/pull/12).
 - Published branch: `origin/feat/sync-runtime-crates`.
 
@@ -61,8 +64,21 @@ mechanism exists, protocol changes must originate in the private canonical repos
   `openExperimentalSync()` only on embedded databases.
 
 The JSON value/payload choice is a persistence prototype, not the canonical sync wire codec.
-The facade deliberately performs no network, authentication, authority, retry scheduling, or
-background work.
+`packages/react-native-surrealdb/src/sync-http.ts` adds an application-owned HTTP adapter around
+the facade. It serializes calls, submits each pending commit to `POST /v1/sync/push`, pulls from
+`POST /v1/sync/pull`, forwards the application token, and accepts only HTTP 200 protocol outcomes.
+The application must inject the codec, fetch implementation, and durable checkpoint store. The
+adapter applies the complete pull response before saving its opaque checkpoint; a crash or storage
+failure between those operations replays the prior checkpoint rather than skipping unapplied data.
+It deliberately provides no authority, background scheduler, implicit retry/backoff, or WebSocket
+ordering. WebSockets remain notification hints that cause the application to pull.
+
+The checkpoint store is currently a TypeScript interface rather than another native UniFFI method.
+Adding that method produced incompatible Android host bindings in the current generated bridge,
+including method-table and checksum failures. Commit `8f9265b` restores the previously verified
+native interface. The injected store is therefore an explicit compatibility boundary, not the
+long-term persistence design; applications must bind each stored token to the same partition,
+client, scope, authorization revision, and subscription revision used to request it.
 
 ## Verification
 
@@ -75,6 +91,7 @@ cargo test -p surrealdb-rn-core sync_state
 cargo test -p surrealdb-rn-core sync_client
 pnpm --filter react-native-surrealdb run test
 pnpm --filter react-native-surrealdb run typecheck
+pnpm --filter react-native-surrealdb run build
 pnpm --filter react-native-surrealdb run release:artifacts
 pnpm --filter surrealdb-harness-rn86 run e2e:ios
 pnpm --filter surrealdb-harness-rn86 run e2e:android
@@ -86,7 +103,9 @@ pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:android
 The focused adapter tests cover revision conflicts, idempotent retry, explicit rollback, committed
 replacement, malformed and semantically corrupt payloads, size limits, structured identity keys,
 SurrealKV close/reopen with an uncommitted transaction, atomic optimistic create/delete, facade
-reopen, durable conflict retention, scope drift, and malformed input. The shared native harness
+reopen, durable conflict retention, scope drift, malformed input, exact HTTP request shape,
+authorization failures, lost responses, explicit retry, call serialization, cancellation, injected
+codec use, and checkpoint save ordering/failure replay. The shared native harness
 executes enqueue, optimistic visibility, facade reopen, and conflict reconciliation through Hermes.
 
 All documented commands passed on 2026-08-28. `./scripts/verify-core.sh` ran formatting,
@@ -118,12 +137,18 @@ Metro config likewise pins `react-native-harness` to that host. Without it,
 Harness either attempted to define its immutable Jest guard twice or collected
 tests into a different runtime context.
 
+The RN 0.86 shared harness also exercises the HTTP adapter through Hermes against a redacted mocked
+authority while the embedded native client holds real pending state. It verifies accepted push,
+reset pull, pending removal, cursor advancement, and application checkpoint persistence on iOS and
+Android. This is a native-boundary E2E, not a deployed-server or real-network test.
+
 ## Next implementation slices
 
 1. Select the canonical protocol value codec and fingerprint rules, then replace the prototype JSON
    boundary in `crates/surrealdb-sync-protocol`, `crates/surrealdb-rn-core`, and
    `packages/react-native-surrealdb/src/sync.ts`.
-2. Add an application-owned HTTP push/pull adapter around the facade; keep WebSockets as pull hints.
+2. Replace the injected checkpoint-store compatibility boundary with an upstream-compatible native
+   durability API once the generated Android binding can evolve safely.
 3. Integrate the reviewed authority endpoint and authorization/checkpoint semantics separately.
 4. Replace the copied crates with the agreed single-source/public-export mechanism before release.
 
@@ -132,7 +157,8 @@ tests into a different runtime context.
 - The long-term single-source/export mechanism is unresolved.
 - GitHub Actions may remain unavailable until account billing permits runner allocation.
 - The canonical native-value storage/wire codec is not selected yet.
-- The HTTP authority deployment shape and authentication integration remain separate work.
+- The HTTP adapter is only application-owned orchestration; authority deployment and authentication
+  integration remain separate work.
 - This branch must remain a draft and must not be released or advertised as sync support.
 
 Only GitHub runner/billing availability is a user-side operational blocker. The codec, transport,
