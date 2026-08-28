@@ -7,8 +7,11 @@ clock, or async-runtime work.
 An adapter owns serialization and atomic persistence:
 
 ```rust,ignore
+let expected_revision = runtime.state().revision;
 let prepared = runtime.prepare_enqueue(commit)?;
-storage.save_atomic(prepared.state()).await?;
+storage
+    .save_atomic(Some(expected_revision), prepared.state())
+    .await?;
 runtime.install(prepared)?;
 ```
 
@@ -31,5 +34,6 @@ cargo clippy -p surrealdb-sync-client --all-targets -- -D warnings
 
 The copied public tests cover crash boundaries, duplicate delivery, incomplete pulls, conflicts,
 resets, and ID mapping. The private authority-cycle and comprehensive conformance suites remain in
-the canonical development repository. These tests do not prove a SurrealKV adapter, actual HTTP
-transport, canonical wire codec, or mobile lifecycle.
+the canonical development repository. Separate `surrealdb-rn-core` tests exercise the initial
+SurrealKV adapter; neither suite proves an actual HTTP transport, canonical wire codec, or mobile
+application lifecycle.
