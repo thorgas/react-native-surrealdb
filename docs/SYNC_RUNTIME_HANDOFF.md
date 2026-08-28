@@ -118,6 +118,7 @@ cargo test -p surrealdb-rn-core sync_state
 cargo test -p surrealdb-rn-core sync_client
 cargo test -p surrealdb-rn-core sync_codec
 cargo test -p surrealdb-rn-core sync_http_codec
+cargo test -p surrealdb-rn-core authority_adapter_response_persists_across_surrealkv_reopen
 cargo test -p surrealdb-sync-protocol http_codec
 pnpm --filter react-native-surrealdb run test
 pnpm --filter react-native-surrealdb run typecheck
@@ -182,16 +183,18 @@ restart seed additionally encodes a real pending commit and decodes the private 
 through the public canonical codec on both iOS and Android. This is a native-boundary E2E, not a
 deployed-server test.
 
-Authority coverage is currently a split conformance chain: private commit `2032066` proves canonical
-bytes through the typed authority, the pinned SurrealDB 3.2.4 harness proves atomic authority state
-and SurrealKV restart persistence, this package proves a real TCP client boundary, and the device
-tests prove the same codec through Hermes. A single deployable client-to-authority network E2E is
-not claimed because no HTTP framework or transactional SurrealDB authority adapter has been selected.
+Authority coverage is currently a split conformance chain. Private commit `5a991f9` replays the six
+push-relevant redacted fixtures through the transactional SurrealDB 3.2.4 adapter on SurrealKV and
+RocksDB and pins an accepted canonical-CBOR response. The native test decodes that exact response,
+records it in the embedded client, closes SurrealKV, and proves the durable outcome after reopen.
+The package separately proves a real TCP client boundary, while the device tests prove the same
+codec through Hermes. A single deployed client-to-authority HTTP E2E is still not claimed: HTTP
+routing, authentication integration, and the pull/checkpoint adapter remain separate boundaries.
 
 ## Next implementation slices
 
-1. Integrate the reviewed private authority endpoint with a deployable SurrealDB adapter and run a
-   real authenticated push/pull/checkpoint E2E; framework and new dependency choices remain separate.
+1. Expose the reviewed private push adapter through the selected authenticated deployment boundary,
+   add pull/checkpoint projection, and run one deployed client-to-authority E2E.
 2. Add scheduling, retry/backoff, connectivity policy, and WebSocket-only invalidation hints around
    the explicit HTTP-correctness path.
 3. Replace the copied crates with the agreed single-source/public-export mechanism before release.

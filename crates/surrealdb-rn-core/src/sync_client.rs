@@ -367,6 +367,27 @@ mod tests {
         .unwrap()
     }
 
+    async fn surrealkv_database(path: &std::path::Path) -> Arc<SurrealDatabase> {
+        connect(ConnectOptions {
+            endpoint: format!("surrealkv://{}", path.display()),
+            namespace: Some("native_sync_authority".into()),
+            database: Some("native_sync_authority".into()),
+        })
+        .await
+        .unwrap()
+    }
+
+    fn decode_hex(encoded: &str) -> Vec<u8> {
+        encoded
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| {
+                let pair = std::str::from_utf8(pair).unwrap();
+                u8::from_str_radix(pair, 16).unwrap()
+            })
+            .collect()
+    }
+
     #[tokio::test]
     async fn native_facade_persists_enqueue_reopen_and_conflict_outcome() {
         let database = database().await;
@@ -503,6 +524,70 @@ mod tests {
             .unwrap();
         assert_eq!(local, None);
         assert!(matches!(canonical, Some(Value::Object(_))));
+    }
+
+    #[tokio::test]
+    async fn authority_adapter_response_persists_across_surrealkv_reopen() {
+        const ACCEPTED_RESPONSE: &str = "84707375727265616c64622d73796e632f310001836e666978747572652d676f6c64656e66636c69656e7484008277636f6d6d69742d617574686f726974792d676f6c64656e78477368613235363a666531633736356461616435356432646536323036353836373431353134346338393066656163316463353330326366306164306263356262636637663536300180";
+        let directory = temp_dir::TempDir::new().unwrap();
+        let database = surrealkv_database(directory.path()).await;
+        let open_options = NativeSyncOpenOptions {
+            partition_id: "fixture-golden".into(),
+            client_id: "client".into(),
+            requested_scope: "all".into(),
+            subscription_revision: 1,
+        };
+        let client = open_sync_client(database.clone(), open_options.clone())
+            .await
+            .unwrap();
+        let commit = ClientCommit {
+            identity: CommitIdentity {
+                client_commit_id: ClientCommitId("commit-authority-golden".into()),
+                fingerprint: Fingerprint("recomputed-by-native".into()),
+            },
+            operations: vec![Operation::Upsert {
+                record_id: RecordId("person:ada".into()),
+                base_version: BaseVersion::Absent,
+                value: json!({"name": "Ada"}),
+                reference: None,
+            }],
+        };
+        client
+            .enqueue(serde_json::to_string(&commit).unwrap())
+            .await
+            .unwrap();
+        let pending = client.pending_json().await.unwrap();
+        let pending: ClientCommit<JsonValue> = serde_json::from_str(&pending[0]).unwrap();
+        assert_eq!(
+            pending.identity.fingerprint.0,
+            "sha256:fe1c765daad55d2de62065867415144c890feac1dc5302cf0ad0bc5bbcf7f560"
+        );
+
+        let response =
+            crate::sync_http_codec::decode_sync_push_response(decode_hex(ACCEPTED_RESPONSE))
+                .await
+                .unwrap();
+        let status = client.record_push_response(response).await.unwrap();
+        assert_eq!(status.pending_count, 0);
+        assert_eq!(status.outcome_count, 1);
+        client.close().await;
+        database.close().await.unwrap();
+        drop(database);
+
+        let reopened_database = surrealkv_database(directory.path()).await;
+        let reopened = open_sync_client(reopened_database.clone(), open_options)
+            .await
+            .unwrap();
+        assert_eq!(reopened.status().await.unwrap().pending_count, 0);
+        assert_eq!(reopened.status().await.unwrap().outcome_count, 1);
+        let record: Option<Value> = reopened_database
+            .client()
+            .await
+            .unwrap()
+            .select(NativeRecordId::parse_simple("person:ada").unwrap())
+            .await
+            .unwrap();
+        assert!(matches!(record, Some(Value::Object(_))));
     }
 
     #[tokio::test]
