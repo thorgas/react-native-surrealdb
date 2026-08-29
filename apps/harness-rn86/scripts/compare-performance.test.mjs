@@ -75,7 +75,7 @@ function report(medianMs) {
       device: 'Pixel_9',
       os: '36',
       reactNative: '0.86.0',
-      surrealDb: '3.2.1',
+      surrealDb: '3.2.4',
       profile: 'smoke',
       records: 200,
       samples: 7,

@@ -16,7 +16,7 @@ describe('ospfranco/sqlite-bench adaptation', () => {
           : 'iPhone simulator',
       os: String(Platform.Version),
       reactNative: '0.86.0',
-      surrealDb: '3.2.1',
+      surrealDb: '3.2.4',
       iterations: 5,
       cooldownMs: 0,
       collectAttribution: true,
