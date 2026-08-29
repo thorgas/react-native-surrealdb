@@ -47,18 +47,19 @@ describe("SurrealKV sync process restart seed", () => {
       clientId: syncRestartOptions.clientId,
       commitJson: pendingJson!,
     });
+    if (!(pushBytes instanceof ArrayBuffer)) {
+      throw new Error("canonical sync codec did not return bytes");
+    }
     expect(new Uint8Array(pushBytes).slice(0, 2)).toEqual(
       Uint8Array.from([0x84, 0x70]),
     );
 
     const pullResponse = await codec.decodePullResponse(
-      new Response(
-        Uint8Array.from([
-          0x84, 0x70, 0x73, 0x75, 0x72, 0x72, 0x65, 0x61, 0x6c, 0x64, 0x62,
-          0x2d, 0x73, 0x79, 0x6e, 0x63, 0x2f, 0x31, 0x00, 0x03, 0x82, 0x00,
-          0x80,
-        ]).buffer,
-      ),
+      Uint8Array.from([
+        0x84, 0x70, 0x73, 0x75, 0x72, 0x72, 0x65, 0x61, 0x6c, 0x64, 0x62,
+        0x2d, 0x73, 0x79, 0x6e, 0x63, 0x2f, 0x31, 0x00, 0x03, 0x82, 0x00,
+        0x80,
+      ]).buffer,
     );
     expect(JSON.parse(pullResponse)).toEqual({ response: "batch", frames: [] });
 

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'react-native-harness';
 import {
   ExperimentalSyncHttpAdapter,
+  ExperimentalSyncScheduler,
   SurrealRecordId,
   connect,
   experimentalJsonSyncHttpCodec,
@@ -142,6 +143,16 @@ describe('react-native-surrealdb native core', () => {
     expect(canonicalIdentity.fingerprint).toMatch(/^sha256:[0-9a-f]{64}$/);
 
     const requests: Array<{ url: string; authorization: string | null }> = [];
+    const jsonResponse = (value: unknown): Response => {
+      const body = JSON.stringify(value);
+      return new Response(body, {
+        headers: {
+          'Content-Length': String(new TextEncoder().encode(body).byteLength),
+          'Content-Type': 'application/json',
+        },
+        status: 200,
+      });
+    };
     const fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       requests.push({
@@ -149,53 +160,47 @@ describe('react-native-surrealdb native core', () => {
         authorization: new Headers(init?.headers).get('Authorization'),
       });
       if (url.endsWith('/v1/sync/push')) {
-        return new Response(
-          JSON.stringify({
-            schemaVersion: 'v1',
-            partitionId: options.partitionId,
-            clientId: options.clientId,
-            outcome: {
-              status: 'accepted',
-              identity: canonicalIdentity,
-              sequence: 1,
-              id_mappings: [
-                {
-                  localId: 'temp:http',
-                  canonicalId: 'person:http',
-                },
-              ],
-            },
-          }),
-          { status: 200 },
-        );
+        return jsonResponse({
+          schemaVersion: 'v1',
+          partitionId: options.partitionId,
+          clientId: options.clientId,
+          outcome: {
+            status: 'accepted',
+            identity: canonicalIdentity,
+            sequence: 1,
+            id_mappings: [
+              {
+                localId: 'temp:http',
+                canonicalId: 'person:http',
+              },
+            ],
+          },
+        });
       }
-      return new Response(
-        JSON.stringify({
-          response: 'reset',
-          reason: 'checkpoint_expired',
-          checkpoint: {
-            token: 'checkpoint-http-1',
-            cursor: { epoch: 1, sequence: 1 },
-            scope: {
-              identity: 'all',
-              authorizationRevision: 1,
-              subscriptionRevision: 1,
+      return jsonResponse({
+        response: 'reset',
+        reason: 'checkpoint_expired',
+        checkpoint: {
+          token: 'checkpoint-http-1',
+          cursor: { epoch: 1, sequence: 1 },
+          scope: {
+            identity: 'all',
+            authorizationRevision: 1,
+            subscriptionRevision: 1,
+          },
+        },
+        records: [
+          {
+            recordId: 'person:http',
+            state: {
+              state: 'present',
+              value: { name: 'HTTP proof' },
+              version: 1,
+              reference: null,
             },
           },
-          records: [
-            {
-              recordId: 'person:http',
-              state: {
-                state: 'present',
-                value: { name: 'HTTP proof' },
-                version: 1,
-                reference: null,
-              },
-            },
-          ],
-        }),
-        { status: 200 },
-      );
+        ],
+      });
     }) as typeof globalThis.fetch;
     const adapter = new ExperimentalSyncHttpAdapter({
       sync,
@@ -206,9 +211,36 @@ describe('react-native-surrealdb native core', () => {
       fetch,
     });
 
-    const result = await adapter.syncOnce();
-    expect(result.push).toHaveLength(1);
-    expect(result.pull.cursorSequence).toBe(1n);
+    let onlineListener: ((online: boolean) => void) | undefined;
+    let invalidationHint: (() => void) | undefined;
+    const scheduler = new ExperimentalSyncScheduler({
+      adapter,
+      connectivity: {
+        current: () => false,
+        subscribe: listener => {
+          onlineListener = listener;
+          return () => {
+            onlineListener = undefined;
+          };
+        },
+      },
+      invalidations: {
+        start: onHint => {
+          invalidationHint = onHint;
+          return () => {
+            invalidationHint = undefined;
+          };
+        },
+      },
+    });
+    scheduler.start();
+    expect(scheduler.status.state).toBe('offline');
+    expect(requests).toHaveLength(0);
+    onlineListener?.(true);
+    await eventually(
+      () => scheduler.status.state === 'idle',
+      () => `scheduler remained ${JSON.stringify(scheduler.status)}`,
+    );
     expect((await sync.status()).pendingCount).toBe(0);
     expect(await sync.checkpointToken()).toBe('checkpoint-http-1');
     const [mapped] = await database.query<string[]>(
@@ -229,6 +261,10 @@ describe('react-native-surrealdb native core', () => {
         authorization: 'Bearer redacted-harness-token',
       },
     ]);
+    invalidationHint?.();
+    await eventually(() => requests.length === 3);
+    expect(requests[2]?.url).toBe('https://sync.invalid/v1/sync/pull');
+    scheduler.stop();
     await sync.close();
   });
 
@@ -349,3 +385,14 @@ describe('react-native-surrealdb native core', () => {
     ]);
   });
 });
+
+async function eventually(
+  predicate: () => boolean,
+  describeFailure: () => string = () => 'timed out waiting for harness state',
+): Promise<void> {
+  const deadline = Date.now() + 5_000;
+  while (!predicate()) {
+    if (Date.now() >= deadline) throw new Error(describeFailure());
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+}

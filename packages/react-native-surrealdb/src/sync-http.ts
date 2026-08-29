@@ -508,7 +508,9 @@ function parseProtocolJson(json: string): SyncJsonValue {
 }
 
 async function decodeJsonResponse(bytes: ArrayBuffer): Promise<string> {
-  const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
+  // Hermes exposes Fetch response decoding even on runtimes without a global
+  // TextDecoder. Keep the JSON-only prototype on that existing boundary.
+  const value: unknown = JSON.parse(await new Response(bytes).text());
   if (!isSyncJsonValue(value)) {
     throw new TypeError("sync HTTP response is not a finite JSON value");
   }
