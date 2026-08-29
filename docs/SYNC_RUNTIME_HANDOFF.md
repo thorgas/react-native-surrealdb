@@ -44,6 +44,7 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Cross-platform local-authority lifecycle E2E and documentation commit: `0412b00`.
 - Finite binary64 application-value commit: `5d368a6`.
 - Normalized durable sync-storage commit: `a7b9f9e`.
+- Reproducible cross-version migration runner commit: `8fb9947`.
 - Published application-shaped branch: `origin/feat/normalized-sync-storage-v1`.
 
 ## Source boundary
@@ -329,6 +330,14 @@ transition tests, and 14 protocol tests), package Vitest under the pinned Node 2
 package type checking, and RN 0.86 harness type checking. The fixtures use synthetic recipe-shaped
 nested arrays, record links, and fractional quantities; no intended consumer repository or private
 application data was read or changed.
+
+The v2 storage branch also passed the permanent cross-version migration E2E on both an iOS
+simulator and the Pixel 9 Android emulator under Node 22.22.0: a SurrealDB 3.2.1 native binary
+seeded the app-private database, the runner replaced only the native runtime, and SurrealDB 3.2.4
+reopened the same durable outbox, checkpoint, and optimistic state. The runner now removes a prior
+harness installation only before the historical seed so a database last opened by a newer binary
+cannot contaminate repeat runs; it never clears data between the two asserted phases. Rock still
+prints non-fatal Node type-stripping diagnostics while discovering its TypeScript configuration.
 
 ## Next implementation slices
 
