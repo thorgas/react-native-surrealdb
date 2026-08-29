@@ -5,13 +5,13 @@ The repository keeps one static
 host per supported React Native version. They all import the application,
 integration tests, and benchmark code from `../harness-shared`.
 
-| Workspace package | React Native |
-| --- | --- |
-| `surrealdb-harness-rn82` | 0.82.1 |
-| `surrealdb-harness-rn83` | 0.83.10 |
-| `surrealdb-harness-rn84` | 0.84.1 |
-| `surrealdb-harness-rn85` | 0.85.3 |
-| `surrealdb-harness-rn86` | 0.86.0 |
+| Workspace package        | React Native |
+| ------------------------ | ------------ |
+| `surrealdb-harness-rn82` | 0.82.1       |
+| `surrealdb-harness-rn83` | 0.83.10      |
+| `surrealdb-harness-rn84` | 0.84.1       |
+| `surrealdb-harness-rn85` | 0.85.3       |
+| `surrealdb-harness-rn86` | 0.86.0       |
 
 The versions are declared with named pnpm catalogs in
 `../../pnpm-workspace.yaml`; no script rewrites a `package.json`. Each host also
@@ -78,6 +78,23 @@ pnpm --filter surrealdb-harness-rn86 run test:harness:ios \
 pnpm --filter surrealdb-harness-rn86 run test:harness:android \
   -- --testPathPatterns shared.harness.ts
 ```
+
+To exercise a real local authority rather than the redacted mock, first start the private
+development stack and then run the dedicated opt-in trace. The normal harness suites never require
+its token:
+
+```sh
+/absolute/path/to/surrealdb-sync-engine.dev/scripts/local-dev.sh up
+SYNC_ENGINE_DEV_REPO=/absolute/path/to/surrealdb-sync-engine.dev \
+  pnpm --filter surrealdb-harness-rn86 run e2e:local-authority:ios
+SYNC_ENGINE_DEV_REPO=/absolute/path/to/surrealdb-sync-engine.dev \
+  pnpm --filter surrealdb-harness-rn86 run e2e:local-authority:android
+```
+
+The environment override is optional for the normal sibling checkout layout. The runner reads the
+ignored mode-`600` local credentials without sourcing or printing them and removes its generated
+token module on exit. The trace uses two memory replicas and proves initial pull, concurrent
+optimistic writes, accepted/conflict outcomes, facade reopen, and final convergence.
 
 Use Node 22.22.0 from the repository `.node-version`. The Android runner may
 stop and restart its configured `Pixel_9` AVD between the seed and verification

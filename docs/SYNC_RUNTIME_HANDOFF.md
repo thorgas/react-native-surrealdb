@@ -25,6 +25,8 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Native canonical HTTP codec commit: `c383a11`.
 - Accepted authority outcome persistence commit: `be8be3b`.
 - Authority pull/reset persistence commit: `4aa43a1`.
+- Local-authority host resolver commit: `6a9c921`.
+- Live local-authority device E2E commit: `2e86ddc`.
 
 ## Source boundary
 
@@ -131,8 +133,23 @@ pnpm --filter surrealdb-harness-rn86 run e2e:ios
 pnpm --filter surrealdb-harness-rn86 run e2e:android
 pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:ios
 pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:android
+pnpm --filter surrealdb-harness-rn86 run e2e:local-authority:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:local-authority:android
 ./scripts/verify-core.sh
 ```
+
+The local-authority commands require the private development checkout and its running stack:
+
+```bash
+/absolute/path/to/surrealdb-sync-engine.dev/scripts/local-dev.sh up
+SYNC_ENGINE_DEV_REPO=/absolute/path/to/surrealdb-sync-engine.dev \
+  pnpm --filter surrealdb-harness-rn86 run e2e:local-authority:ios
+```
+
+Omit `SYNC_ENGINE_DEV_REPO` when the private and React Native repositories use their normal sibling
+locations. The runner requires `.local-dev/env` to have mode `600`, validates but never prints the
+token, writes it to one ignored mode-`600` module for the device test, and removes that module on
+exit. Normal unit and harness suites do not depend on the private checkout or live stack.
 
 The focused adapter tests cover native-computed fingerprints, lossless tagged canonical values,
 hostile depth, unsupported enqueue/push/pull values without mutation, revision conflicts,
@@ -193,13 +210,17 @@ CBOR responses. Native tests decode those exact responses, apply them in the emb
 close/drop/reopen SurrealKV, and prove durable outcome, checkpoint/cursor, confirmed records, reset
 replacement, pending outbox, and optimistic replay. The package separately proves a real TCP client
 boundary, while the device tests prove the same codec through Hermes. A single deployed
-client-to-authority HTTP E2E is still not claimed: HTTP routing, authentication integration, the raw
-changefeed scanner, token/retention policy, and production listener remain separate boundaries.
+client-to-authority HTTP E2E is now covered locally by an opt-in RN 0.86 trace on both an iPhone 17
+Pro simulator and Pixel 9 Android emulator. Two memory-backed replicas perform initial pulls,
+concurrent absent-base writes, accepted/conflict pushes, facade reopen, and final convergence through
+the canonical codec. The private gateway uses a fixed development principal/scope and metadata-only
+feed frontier, so this is not a deployed-production claim: the raw changefeed scanner, production
+authentication, and token/retention policy remain separate boundaries.
 
 ## Next implementation slices
 
-1. Expose the reviewed private push/pull adapter through an authenticated deployment boundary and
-   run one deployed client-to-authority E2E.
+1. Replace the fixed local identity and metadata-only frontier with the intended authenticated
+   deployment boundary, privileged raw changefeed scanner, and production checkpoint policy.
 2. Add scheduling, retry/backoff, connectivity policy, and WebSocket-only invalidation hints around
    the explicit HTTP-correctness path.
 3. Replace the copied crates with the agreed single-source/public-export mechanism before release.
@@ -209,8 +230,7 @@ changefeed scanner, token/retention policy, and production listener remain separ
 
 - The long-term single-source/export mechanism is unresolved.
 - GitHub Actions may remain unavailable until account billing permits runner allocation.
-- The HTTP adapter is only application-owned orchestration; authority deployment and authentication
-  integration remain separate work.
+- The local gateway proves HTTP orchestration but not production deployment or authentication.
 - The authority still needs a privileged raw changefeed scanner plus explicit retention and opaque
   checkpoint-token generation/signing before production deployment.
 - This branch must remain a draft and must not be released or advertised as sync support.
