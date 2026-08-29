@@ -150,6 +150,61 @@ Do not imply SQLite equivalence for graph, document, or SurrealQL workloads. Cro
 - task/thread/handle count after repeated open/query/subscribe/close cycles;
 - cancellation latency and close-while-querying latency.
 
+The RN 0.86 host now provides a permanent first lifecycle measurement:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-churn:android
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-churn:ios
+```
+
+It executes 64 open/query/update/read/close cycles against one app-private
+SurrealKV database and records raw application-process RSS samples. On
+2026-08-29 the Pixel 9 API 36 Debug/Harness run recorded 47 samples from
+107,324 to 417,976 KiB (median 261,540; p95 416,436). The iPhone 17 Pro iOS
+26.1 simulator run recorded 25 samples from 195,040 to 783,552 KiB (median
+641,136; p95 733,280). These values include Harness relaunch and Debug runtime
+overhead. They prove collection and lifecycle correctness, not a release-mode
+memory budget. Keep `regressionGate` null until repeated compatible-device
+baselines establish variance.
+
+### Local sync durability profile
+
+The RN 0.86 host can measure the experimental sync runtime's local durable path
+without a server or cloud account:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run benchmark:ios:sync
+pnpm --filter surrealdb-harness-rn86 run benchmark:android:sync
+```
+
+Each run uses app-private persistent SurrealKV and file-backed OP-SQLite with
+WAL plus `synchronous=FULL`. Every enqueue timing starts from the same empty
+logical state, uses three untimed warm-ups and ten measured samples, and
+alternates execution order. A separate fixed 25-commit backlog measures fully
+materialized outbox reads and reopen recovery. The Harness verifies all record
+values, commit IDs, record IDs, and outbox operations with matching semantic
+checksums before emitting a report.
+
+The SQLite path is deliberately a lower bound. It writes the same logical
+application rows and a minimal durable outbox, but it does not perform the sync
+runtime's canonical fingerprinting, protocol validation, optimistic-state
+reconstruction, or conflict bookkeeping. The ratios estimate the current cost
+envelope of those combined responsibilities; they are not an apples-to-apples
+SurrealDB-versus-SQLite engine claim.
+
+First Debug/Harness diagnostic run on 2026-08-29:
+
+| Platform                          | Single durable commit median | SQLite lower bound | Ten-record atomic commit median | SQLite lower bound | Sync reopen with 25 pending |
+| --------------------------------- | ---------------------------: | -----------------: | ------------------------------: | -----------------: | --------------------------: |
+| iPhone 17 Pro simulator, iOS 26.1 |                     12.38 ms |            0.27 ms |                        20.35 ms |            0.77 ms |                    92.10 ms |
+| Android arm64 emulator, API 36    |                      4.61 ms |            2.14 ms |                         8.30 ms |            4.24 ms |                    34.78 ms |
+
+These are single Debug simulator/emulator runs, not release claims or
+regression budgets. Raw samples and p95/MAD summaries are written to ignored
+`apps/harness-rn86/performance-results/<platform>/sync/report.json`. Repeat on
+pinned physical devices in a bundled Release runner before optimizing against
+or publishing these values.
+
 ## Measurement protocol
 
 Every timing benchmark should follow the same protocol:

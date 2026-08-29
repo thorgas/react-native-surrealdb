@@ -1,6 +1,10 @@
 [workspace]
 resolver = "2"
-members = ["crates/surrealdb-rn-core"]
+members = [
+  "crates/surrealdb-rn-core",
+  "crates/surrealdb-sync-client",
+  "crates/surrealdb-sync-protocol",
+]
 
 [workspace.package]
 edition = "2024"

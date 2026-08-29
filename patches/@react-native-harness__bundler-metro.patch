@@ -1,0 +1,80 @@
+diff --git a/dist/resolvers/resolver.js b/dist/resolvers/resolver.js
+index f9035b775331d31ec343c9c359ac235a07f72c76..6e8a83be59b87e2fa8f2aaaac8236c0e9013bcfd 100644
+--- a/dist/resolvers/resolver.js
++++ b/dist/resolvers/resolver.js
+@@ -4,6 +4,14 @@ import { getResolvedEntryPointWithoutExtension } from '../entry-point-utils.js';
+ import { createHarnessResolver } from './composite-resolver.js';
+ import { createTsConfigResolver } from './tsconfig-resolver.js';
+ const require = createRequire(import.meta.url);
++const resolveActiveRuntime = (moduleName) => {
++    const harnessPackage = require.resolve('react-native-harness/package.json', {
++        paths: [process.cwd()],
++    });
++    return require.resolve(moduleName, {
++        paths: [path.dirname(harnessPackage)],
++    });
++};
+ const getExtensionlessAbsolutePath = (basePath, relativePath = '') => {
+     const fullPath = path.resolve(basePath, relativePath);
+     const parsed = path.parse(fullPath);
+@@ -12,7 +20,7 @@ const getExtensionlessAbsolutePath = (basePath, relativePath = '') => {
+ export const createHarnessEntryPointResolver = (harnessConfig) => {
+     const rootPath = path.resolve(process.cwd());
+     const expectedEntryPoint = path.resolve(rootPath, getResolvedEntryPointWithoutExtension(rootPath, harnessConfig.entryPoint));
+-    const resolvedHarnessPath = require.resolve('@react-native-harness/runtime/entry-point');
++    const resolvedHarnessPath = resolveActiveRuntime('@react-native-harness/runtime/entry-point');
+     return (context, moduleName, platform) => {
+         void platform;
+         const currentOrigin = path.resolve(context.originModulePath);
+@@ -42,8 +50,8 @@ export const createJestGlobalsResolver = () => {
+     };
+ };
+ export const createJsxRuntimeResolver = () => {
+-    const resolvedJsxRuntimePath = require.resolve('@react-native-harness/runtime/jsx-runtime');
+-    const resolvedJsxDevRuntimePath = require.resolve('@react-native-harness/runtime/jsx-dev-runtime');
++    const resolvedJsxRuntimePath = resolveActiveRuntime('@react-native-harness/runtime/jsx-runtime');
++    const resolvedJsxDevRuntimePath = resolveActiveRuntime('@react-native-harness/runtime/jsx-dev-runtime');
+     return (_context, moduleName, platform) => {
+         void platform;
+         if (moduleName === '@react-native-harness/runtime/jsx-runtime') {
+diff --git a/src/resolvers/resolver.ts b/src/resolvers/resolver.ts
+index 135a3f59b211be5818e4d1dc20d931546e9de262..1d50be06a8b768b2a26da5adac5cb36ea6789793 100644
+--- a/src/resolvers/resolver.ts
++++ b/src/resolvers/resolver.ts
+@@ -9,6 +9,15 @@ import type { HarnessResolver, MetroResolver } from './types.js';
+ 
+ const require = createRequire(import.meta.url);
+ 
++const resolveActiveRuntime = (moduleName: string): string => {
++  const harnessPackage = require.resolve('react-native-harness/package.json', {
++    paths: [process.cwd()],
++  });
++  return require.resolve(moduleName, {
++    paths: [path.dirname(harnessPackage)],
++  });
++};
++
+ const getExtensionlessAbsolutePath = (
+   basePath: string,
+   relativePath = '',
+@@ -27,7 +36,7 @@ export const createHarnessEntryPointResolver = (
+     getResolvedEntryPointWithoutExtension(rootPath, harnessConfig.entryPoint),
+   );
+   const resolvedHarnessPath =
+-    require.resolve('@react-native-harness/runtime/entry-point');
++    resolveActiveRuntime('@react-native-harness/runtime/entry-point');
+ 
+   return (context, moduleName, platform) => {
+     void platform;
+@@ -69,9 +78,9 @@ export const createJestGlobalsResolver = (): HarnessResolver => {
+ 
+ export const createJsxRuntimeResolver = (): HarnessResolver => {
+   const resolvedJsxRuntimePath =
+-    require.resolve('@react-native-harness/runtime/jsx-runtime');
++    resolveActiveRuntime('@react-native-harness/runtime/jsx-runtime');
+   const resolvedJsxDevRuntimePath =
+-    require.resolve('@react-native-harness/runtime/jsx-dev-runtime');
++    resolveActiveRuntime('@react-native-harness/runtime/jsx-dev-runtime');
+ 
+   return (_context, moduleName, platform) => {
+     void platform;

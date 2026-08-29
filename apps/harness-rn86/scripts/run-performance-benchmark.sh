@@ -2,6 +2,7 @@
 set -euo pipefail
 
 HARNESS_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SHARED_HARNESS_DIR="$(cd "$HARNESS_DIR/../harness-shared" && pwd)"
 PLATFORM="${1:-android}"
 PROFILE="${2:-smoke}"
 RESULTS_DIR="$HARNESS_DIR/performance-results/$PLATFORM/$PROFILE"
@@ -29,14 +30,15 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 if [[ "$PLATFORM" != "android" && "$PLATFORM" != "ios" ]]; then
-  echo "Usage: $0 <android|ios> <smoke|canonical|upstream|sqlite>" >&2
+  echo "Usage: $0 <android|ios> <smoke|canonical|upstream|sqlite|sync>" >&2
   exit 2
 fi
 if [[ "$PROFILE" != "smoke" &&
   "$PROFILE" != "canonical" &&
   "$PROFILE" != "upstream" &&
-  "$PROFILE" != "sqlite" ]]; then
-  echo "Usage: $0 <android|ios> <smoke|canonical|upstream|sqlite>" >&2
+  "$PROFILE" != "sqlite" &&
+  "$PROFILE" != "sync" ]]; then
+  echo "Usage: $0 <android|ios> <smoke|canonical|upstream|sqlite|sync>" >&2
   exit 2
 fi
 mkdir -p "$RESULTS_DIR"
@@ -88,7 +90,7 @@ if [[ "$PLATFORM" == "android" ]]; then
   ) > "$DEVICE_LOG_PATH" 2>&1 &
   DEVICE_LOG_PID=$!
 else
-  bash "$HARNESS_DIR/scripts/prepare-ios.sh"
+  bash "$SHARED_HARNESS_DIR/scripts/prepare-ios.sh"
 
   # The Apple runner may also shut down a simulator that it booted. Wait for a
   # specific simulator, then stream only benchmark chunks while the test runs.
@@ -121,17 +123,21 @@ else
   DEVICE_LOG_PID=$!
 fi
 
-if [[ "$PROFILE" == "sqlite" ]]; then
-  TEST_PATH="__benchmarks__/sqlite-bench.performance.harness.ts"
+TEST_PATH="__benchmarks__/shared.performance.harness.ts"
+if [[ "$PROFILE" == "sync" ]]; then
+  TEST_NAME_PATTERN="local durable sync performance"
+  TEST_TIMEOUT=300000
+elif [[ "$PROFILE" == "sqlite" ]]; then
+  TEST_NAME_PATTERN="SurrealDB and op-sqlite paired sqlite-bench"
   TEST_TIMEOUT=600000
 elif [[ "$PROFILE" == "upstream" ]]; then
-  TEST_PATH="__benchmarks__/surreal-crud.upstream.performance.harness.ts"
+  TEST_NAME_PATTERN="SurrealDB upstream-coverage mobile performance"
   TEST_TIMEOUT=600000
 elif [[ "$PROFILE" == "canonical" ]]; then
-  TEST_PATH="__benchmarks__/surreal-crud.canonical.performance.harness.ts"
+  TEST_NAME_PATTERN="SurrealDB canonical mobile performance"
   TEST_TIMEOUT=300000
 else
-  TEST_PATH="__benchmarks__/surreal-crud.performance.harness.ts"
+  TEST_NAME_PATTERN="SurrealDB mobile performance"
   TEST_TIMEOUT=120000
 fi
 
@@ -141,6 +147,7 @@ pnpm exec react-native-harness \
   --harnessRunner "$PLATFORM" \
   --testTimeout "$TEST_TIMEOUT" \
   --runTestsByPath "$TEST_PATH" \
+  --testNamePattern "$TEST_NAME_PATTERN" \
   --json \
   --outputFile "$JEST_RESULT_PATH" \
   2>&1 | tee "$LOG_PATH"

@@ -5,13 +5,13 @@ The repository keeps one static
 host per supported React Native version. They all import the application,
 integration tests, and benchmark code from `../harness-shared`.
 
-| Workspace package | React Native |
-| --- | --- |
-| `surrealdb-harness-rn82` | 0.82.1 |
-| `surrealdb-harness-rn83` | 0.83.10 |
-| `surrealdb-harness-rn84` | 0.84.1 |
-| `surrealdb-harness-rn85` | 0.85.3 |
-| `surrealdb-harness-rn86` | 0.86.0 |
+| Workspace package        | React Native |
+| ------------------------ | ------------ |
+| `surrealdb-harness-rn82` | 0.82.1       |
+| `surrealdb-harness-rn83` | 0.83.10      |
+| `surrealdb-harness-rn84` | 0.84.1       |
+| `surrealdb-harness-rn85` | 0.85.3       |
+| `surrealdb-harness-rn86` | 0.86.0       |
 
 The versions are declared with named pnpm catalogs in
 `../../pnpm-workspace.yaml`; no script rewrites a `package.json`. Each host also
@@ -55,6 +55,89 @@ pnpm --filter surrealdb-harness-rn86 run rock:ios
 pnpm --filter surrealdb-harness-rn84 run test:harness:android
 pnpm typecheck:react-native-matrix
 ```
+
+The RN 0.86 host also has a two-phase sync recovery check. Each command builds
+and launches the host, seeds an app-private SurrealKV database, crosses a real
+Harness process-termination boundary, and verifies the durable outbox and
+optimistic record after reopening. The seed phase also calls the public native
+canonical-CBOR codec, checks a real pending push envelope, and decodes the
+private pull-response golden message through Hermes:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:android
+```
+
+The permanent cross-version fixture builds the historical `e0c200b` revision
+with its exact SurrealDB `3.2.1` pin, seeds the app-private database, replaces
+only the native runtime with the current exact `3.2.4` build, reinstalls without
+clearing application data, and verifies the existing restart assertions:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-migration:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-migration:android
+```
+
+The first run needs a frozen install and full historical Rust builds in a
+temporary detached worktree. The runner removes that worktree and restores the
+current native artifact even after a failure. It does not remove this active
+checkout's `node_modules` or Cargo target cache.
+
+The lifecycle resource proof repeatedly opens, writes, reads, and closes the
+same SurrealKV database 64 times while sampling the application process RSS:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-churn:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-churn:android
+```
+
+Reports are written below the ignored
+`performance-results/<platform>/surrealkv-churn/` directory. They contain every
+raw sample and min/median/p95/max summaries. The commands require at least five
+valid samples but deliberately have no memory regression threshold: Debug,
+Metro, Harness, simulator/emulator, relaunch, and allocator behavior make these
+diagnostic baselines rather than production memory claims.
+
+The ordinary shared Hermes suite also covers the application-owned HTTP adapter
+with a redacted mocked authority and a real embedded native sync client. Run it
+without rebuilding an already-installed host with:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run test:harness:ios \
+  -- --testPathPatterns shared.harness.ts
+pnpm --filter surrealdb-harness-rn86 run test:harness:android \
+  -- --testPathPatterns shared.harness.ts
+```
+
+To exercise a real local authority rather than the redacted mock, first start the private
+development stack and then run the dedicated opt-in trace. The normal harness suites never require
+its token:
+
+```sh
+/absolute/path/to/surrealdb-sync-engine.dev/scripts/local-dev.sh up
+SYNC_ENGINE_DEV_REPO=/absolute/path/to/surrealdb-sync-engine.dev \
+  pnpm --filter surrealdb-harness-rn86 run e2e:local-authority:ios
+SYNC_ENGINE_DEV_REPO=/absolute/path/to/surrealdb-sync-engine.dev \
+  pnpm --filter surrealdb-harness-rn86 run e2e:local-authority:android
+```
+
+The environment override is optional for the normal sibling checkout layout. The runner reads the
+ignored mode-`600` local credentials without sourcing or printing them and removes its generated
+token module on exit. The trace proves initial pull, concurrent optimistic writes,
+accepted/conflict outcomes, facade reopen, and final convergence. Its second scenario keeps a
+durable mutation queued while offline, recovers one real `401` by swapping the injected token,
+stops the scheduler in background, catches an authority write on foreground, and recovers another
+write through the 250 ms test-only periodic pull without a WebSocket hint. Lifecycle events are
+injected: physically backgrounding the host would suspend Hermes and prevent in-process assertions.
+
+Use Node 22.22.0 from the repository `.node-version`. The Android runner may
+stop and restart its configured `Pixel_9` AVD between the seed and verification
+files; do not uninstall the app or pass `HARNESS_APP_PATH` between those phases,
+because either action can erase the app-private database being verified.
+The migration runner removes an earlier harness installation once, before installing the historical
+seed binary, so a database last opened by a newer SurrealKV cannot contaminate the baseline. It
+never clears app data between the historical seed and current-runtime reopen phases. The runner
+fails before building when the active Node major is outside the repository's supported 20–22 range.
 
 Locally, Rock reads a token from `GITHUB_TOKEN` or the authenticated GitHub CLI.
 CI passes `GITHUB_TOKEN` to the pinned Rock Android and iOS actions and grants
@@ -151,6 +234,21 @@ reads; 15% and 50% mixed-write runs; index build/removal; and all three BM25
 queries. It adds one bridge baseline and two graph traversals for this package,
 for 141 measured variants in total. Each measurement includes the complete
 Hermes → JSI → UniFFI → Rust → SurrealDB round trip and result decoding.
+
+The local sync durability profile requires no authority or cloud account. It
+compares persistent sync enqueue, pending-state materialization, and reopen
+recovery with a file-backed OP-SQLite lower bound in the same native app:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run benchmark:android:sync
+pnpm --filter surrealdb-harness-rn86 run benchmark:ios:sync
+```
+
+The benchmark resets logical tables before every enqueue sample, retains both
+physical stores between samples, uses WAL and `synchronous=FULL` for SQLite,
+and rejects semantically different materialized records or outboxes. It does
+not measure HTTP, an authority, authentication, conflicts, or changefeeds. See
+`../../PERFORMANCE.md` for current results and interpretation limits.
 
 Run the short profile on the configured emulator/simulator:
 

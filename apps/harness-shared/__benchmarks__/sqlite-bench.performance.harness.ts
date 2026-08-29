@@ -51,7 +51,7 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
   test('measures SurrealDB then op-sqlite without diagnostics', async () => {
     const firstOrderSurrealReport = await runSQLiteBenchBenchmark({
       ...environment,
-      surrealDb: '3.2.1',
+      surrealDb: '3.2.4',
     });
     const firstOrderOpSQLiteReport = await runOpSQLiteBenchBenchmark(
       environment,
@@ -73,7 +73,7 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
     );
     const secondOrderSurrealReport = await runSQLiteBenchBenchmark({
       ...environment,
-      surrealDb: '3.2.1',
+      surrealDb: '3.2.4',
     });
     expect(firstOrderSurrealReport.source.url).toBe(
       'https://github.com/ospfranco/sqlite-bench',
@@ -160,7 +160,7 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
   test('collects the first dedicated SurrealDB attribution sample', async () => {
     firstAttributionReport = await runSQLiteBenchBenchmark({
       ...environment,
-      surrealDb: '3.2.1',
+      surrealDb: '3.2.4',
       collectAttribution: true,
     });
   });
@@ -180,7 +180,7 @@ describe('SurrealDB and op-sqlite paired sqlite-bench', () => {
     } = pairedContext;
     const secondAttributionReport = await runSQLiteBenchBenchmark({
       ...environment,
-      surrealDb: '3.2.1',
+      surrealDb: '3.2.4',
       collectAttribution: true,
     });
     const comparisonSurrealMetrics = combineMetricSamples(
