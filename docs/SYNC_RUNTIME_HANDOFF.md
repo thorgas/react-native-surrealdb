@@ -1,6 +1,6 @@
 # Sync runtime adapter handoff
 
-Updated: 2026-08-29
+Updated: 2026-08-30
 
 ## Branch goal
 
@@ -42,6 +42,9 @@ explicitly experimental API but is not usable as a synchronization engine.
   `9dbf2befad234b6d66332092c313e5dea9810040`.
 - Application lifecycle/authentication coordinator commit: `df9b6c4`.
 - Cross-platform local-authority lifecycle E2E and documentation commit: `0412b00`.
+- Finite binary64 application-value commit: `5d368a6`.
+- Normalized durable sync-storage commit: `a7b9f9e`.
+- Published application-shaped branch: `origin/feat/normalized-sync-storage-v1`.
 
 ## Source boundary
 
@@ -100,6 +103,11 @@ single aggregate state blob with normalized private rows:
 Normalized persistence removes the former 4 MiB whole-replica ceiling and reduces write
 amplification, but `ClientRuntime` still clones the complete in-memory durable state while preparing
 a transition. A storage-aware transition interface remains necessary for very large replicas.
+
+The normalized loader also inventories every component table for the client and fails closed on
+missing metadata, orphan or extra rows, duplicate identities, oversized keys, noncanonical tagged
+JSON, and same-revision state divergence. Migration is deliberately one-way: a v2 sentinel replaces
+the legacy aggregate row so an older binary cannot resume from stale durable state.
 
 Durable state still stores the existing tagged JSON representation, but native enqueue now ignores
 the caller's prototype fingerprint and recomputes it from the protocol-owned bounded
@@ -314,6 +322,13 @@ bounded raw changefeed worker renews the durable frontier while clients are idle
 retains a fail-closed catch-up gate. This is not a deployed-production claim: production
 authentication, certified retention/rebootstrap operations, and checkpoint issuance remain
 separate boundaries.
+
+The application-shaped storage slice passed on 2026-08-30: workspace formatting, warning-denied
+Clippy, all workspace tests (41 RN-core tests plus one ignored Docker-only case, nine client
+transition tests, and 14 protocol tests), package Vitest under the pinned Node 22.22.0 runtime,
+package type checking, and RN 0.86 harness type checking. The fixtures use synthetic recipe-shaped
+nested arrays, record links, and fractional quantities; no intended consumer repository or private
+application data was read or changed.
 
 ## Next implementation slices
 
