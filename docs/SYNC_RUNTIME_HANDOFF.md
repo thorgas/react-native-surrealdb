@@ -27,6 +27,8 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Authority pull/reset persistence commit: `4aa43a1`.
 - Local-authority host resolver commit: `6a9c921`.
 - Live local-authority device E2E commit: `2e86ddc`.
+- SurrealDB 3.2.4 alignment branch: `origin/feat/surrealdb-3.2.4-alignment`.
+- Exact engine/benchmark metadata alignment commit: `8b02b2d`.
 
 ## Source boundary
 
@@ -45,6 +47,11 @@ explicitly experimental API but is not usable as a synchronization engine.
 The source files are intentionally unchanged from the canonical commit. Only Cargo manifests,
 public documentation, and the reduced public-test boundary differ. Until a proper export/dependency
 mechanism exists, protocol changes must originate in the private canonical repository.
+
+The native runtime now pins SurrealDB `3.2.4`, matching the private authority and local Docker
+stack. The lockfile changes only the six SurrealDB-family packages; the storage engine remains
+`surrealkv 0.21.2`, exactly as under the previous SurrealDB `3.2.1` pin. This removes the known
+cross-repository engine-version mismatch but is not evidence for every upstream behavioral change.
 
 ## Implemented local prototype
 
@@ -174,6 +181,16 @@ five-host React Native TypeScript matrix also passed. The RN 0.86 host runs ten 
 the sync cases prove native-computed fingerprints, optimistic visibility, facade reopen, pending
 recovery, accepted temporary-ID mapping, conflict durability, and canonical rollback.
 
+The SurrealDB 3.2.4 alignment passed again on 2026-08-29: workspace formatting, warning-denied
+Clippy, 53 Rust tests with one existing ignored test, 21 package tests, type checking, package build,
+`verify-core.sh`, regenerated iOS device/simulator plus Android arm64/x86_64 release artifacts, and
+`release:check`. The live local-authority trace passed on iOS and Android against the separate
+scanner process. The SurrealKV seed/process-termination/reopen suites also passed on both platforms.
+The default iPhone 17 Pro launch stalled once; rebuilding on the existing Hauswirtschaft E2E
+simulator succeeded without deleting either simulator. Node 26 remains outside the documented
+`>=20 <23` range and emits non-fatal type-stripping warnings; the cached exact pnpm 11.5.0 runner
+completed every test. No UI changed, so screenshots are not applicable.
+
 The E2E run also repaired pre-existing harness setup gaps: each host now has a tiny local test proxy
 that imports the shared suites, host app IDs and the iOS scheme are explicit, `e2e:ios` and
 `e2e:android` perform build/install/test in one command, and `.node-version` selects Node 22.22.0.
@@ -213,14 +230,17 @@ boundary, while the device tests prove the same codec through Hermes. A single d
 client-to-authority HTTP E2E is now covered locally by an opt-in RN 0.86 trace on both an iPhone 17
 Pro simulator and Pixel 9 Android emulator. Two memory-backed replicas perform initial pulls,
 concurrent absent-base writes, accepted/conflict pushes, facade reopen, and final convergence through
-the canonical codec. The private gateway uses a fixed development principal/scope and metadata-only
-feed frontier, so this is not a deployed-production claim: the raw changefeed scanner, production
-authentication, and token/retention policy remain separate boundaries.
+the canonical codec. The private gateway uses a fixed development principal/scope. Its separate
+bounded raw changefeed worker renews the durable frontier while clients are idle and every pull
+retains a fail-closed catch-up gate. This is not a deployed-production claim: production
+authentication, certified retention/rebootstrap operations, and checkpoint issuance remain
+separate boundaries.
 
 ## Next implementation slices
 
-1. Replace the fixed local identity and metadata-only frontier with the intended authenticated
-   deployment boundary, privileged raw changefeed scanner, and production checkpoint policy.
+1. Replace the fixed local identity and development checkpoint digest with the intended
+   authenticated deployment boundary and production checkpoint policy; certify scanner retention,
+   alerting, and administrator rebootstrap on that deployment.
 2. Add scheduling, retry/backoff, connectivity policy, and WebSocket-only invalidation hints around
    the explicit HTTP-correctness path.
 3. Replace the copied crates with the agreed single-source/public-export mechanism before release.
@@ -231,8 +251,11 @@ authentication, and token/retention policy remain separate boundaries.
 - The long-term single-source/export mechanism is unresolved.
 - GitHub Actions may remain unavailable until account billing permits runner allocation.
 - The local gateway proves HTTP orchestration but not production deployment or authentication.
-- The authority still needs a privileged raw changefeed scanner plus explicit retention and opaque
-  checkpoint-token generation/signing before production deployment.
+- The authority has a privileged independent scanner, but production retention/alerting/rebootstrap
+  operations and opaque checkpoint issuance are still unresolved.
+- A genuine SurrealDB 3.2.1-seeded to 3.2.4-reopened mobile fixture is not yet permanent. Both pins
+  resolve to the same `surrealkv 0.21.2`, and current-version restart coverage remains green, but a
+  cross-version seed/reopen run is still required before release.
 - This branch must remain a draft and must not be released or advertised as sync support.
 
 Only GitHub runner/billing availability is a user-side operational blocker. The codec, transport,
