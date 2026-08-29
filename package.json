@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@11.5.0",
   "engines": {
-    "node": ">=20",
+    "node": ">=20 <23",
     "pnpm": ">=11"
   },
   "scripts": {
@@ -13,5 +13,9 @@
     "lint": "pnpm --recursive --if-present run lint",
     "test": "pnpm --recursive --if-present run test",
     "typecheck:react-native-matrix": "pnpm --filter \"./apps/harness-rn*\" --workspace-concurrency=1 run typecheck"
+  },
+  "devDependencies": {
+    "@babel/plugin-transform-class-static-block": "7.29.7",
+    "@babel/plugin-transform-react-jsx": "7.29.7"
   }
 }

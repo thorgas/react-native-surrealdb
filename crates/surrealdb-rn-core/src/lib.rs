@@ -4,6 +4,10 @@
 //! SDK while Rust owns engine selection, connection lifetime, authentication,
 //! query execution, and lossless value transport.
 
+pub mod sync_client;
+mod sync_codec;
+mod sync_http_codec;
+pub mod sync_state;
 mod wire;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -120,6 +124,7 @@ pub struct SurrealDatabase {
     inner: AsyncRwLock<Option<Surreal<Any>>>,
     live_queries: Mutex<Vec<Weak<LiveQuery>>>,
     transactions: Mutex<Vec<Weak<SurrealTransaction>>>,
+    embedded: bool,
     closed: AtomicBool,
 }
 
@@ -237,6 +242,7 @@ pub async fn connect(options: ConnectOptions) -> Result<Arc<SurrealDatabase>, Su
         inner: AsyncRwLock::new(Some(client)),
         live_queries: Mutex::new(Vec::new()),
         transactions: Mutex::new(Vec::new()),
+        embedded: is_embedded_endpoint(&options.endpoint),
         closed: AtomicBool::new(false),
     }))
 }
@@ -725,9 +731,7 @@ fn live_action(action: Action) -> LiveAction {
 }
 
 fn validate_endpoint(endpoint: &str) -> Result<(), SurrealRnError> {
-    let supported = endpoint == "memory"
-        || endpoint.starts_with("mem://")
-        || endpoint.starts_with("surrealkv://")
+    let supported = is_embedded_endpoint(endpoint)
         || endpoint.starts_with("ws://")
         || endpoint.starts_with("wss://");
 
@@ -736,10 +740,14 @@ fn validate_endpoint(endpoint: &str) -> Result<(), SurrealRnError> {
     } else {
         Err(SurrealRnError::InvalidEndpoint {
             message: format!(
-                "unsupported endpoint '{endpoint}'; expected mem://, surrealkv://, ws://, or wss://"
+                "unsupported endpoint '{endpoint}'; expected memory, mem://, surrealkv://, ws://, or wss://"
             ),
         })
     }
+}
+
+fn is_embedded_endpoint(endpoint: &str) -> bool {
+    endpoint == "memory" || endpoint.starts_with("mem://") || endpoint.starts_with("surrealkv://")
 }
 
 async fn connect_with_shutdown_retry(endpoint: &str) -> Result<Surreal<Any>, SurrealRnError> {

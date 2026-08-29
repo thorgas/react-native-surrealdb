@@ -121,6 +121,40 @@ project.
 No sync capability will be advertised until it has explicit authorization,
 conflict, offline recovery, migration, and adversarial failure tests.
 
+### Unusable sync-runtime staging
+
+This branch contains temporary copies of the Apache-2.0 `surrealdb-sync-protocol` and
+`surrealdb-sync-client` Rust crates plus an experimental native/TypeScript facade. An enqueue or
+pull transition atomically updates its bounded, revision-checked client state and optimistic domain
+records in the embedded SurrealDB transaction. An optional application-owned HTTP adapter performs
+explicit push/pull calls with injected authentication, codec, and `fetch`; checkpoints live in the
+same native durable state as the applied records and cursor. A native bounded canonical-CBOR codec
+implements the private `surrealdb-sync/1` push/pull envelope, while the JSON codec remains an
+explicitly lossy test fallback. The optional application-owned scheduler provides single-flight
+cycles, connectivity pause/resume, bounded transient retry, periodic pull, and pull-only WebSocket
+invalidation hints. Its timing state is intentionally non-durable and WebSockets provide no ordering
+or durability. An injected application lifecycle coordinator stops scheduling outside the active
+state, aborts stale token refresh, and allows one explicit credential refresh per `401`/`403`
+challenge without owning login state. HTTPS/WSS are required outside explicit loopback-only development escape hatches,
+and the 60-second default periodic pull is the correctness fallback. It provides no deployable
+authority. Native Rust computes content-bound commit fingerprints from a bounded canonical
+safe subset and rejects unsupported or hostile values before mutation.
+Native conformance tests also decode exact accepted, pull-batch, and reset bytes produced by the
+private SurrealDB authority adapter. They apply those messages through the native client, fully
+close and reopen the same SurrealKV database, and verify durable outcome, cursor/checkpoint,
+confirmed records, pending outbox, and reconstructed optimistic state. This proves the local bridge;
+it does not provide or deploy the authenticated authority endpoint. A dedicated opt-in RN 0.86 E2E
+can connect embedded clients to the private repository's development-only local gateway and has
+passed on iOS and Android. It now covers offline durable work, invalid-to-valid token recovery,
+background stop, foreground catch-up, missed-hint periodic pull, and the prior two-client conflict;
+its local identity, checkpoint token, and feed frontier are not production mechanisms.
+The Harness functional suites run Debug/Metro applications. `release:artifacts` builds distributable
+native binaries but is artifact-generation evidence, not a functional Release-app test.
+It does not make this package a usable sync engine and must not be released as one. The private
+formal specification and comprehensive checker suites are not included. See
+[`crates/SYNC_RUNTIME_ORIGIN.md`](./crates/SYNC_RUNTIME_ORIGIN.md) for the temporary source boundary
+and [the handoff](./docs/SYNC_RUNTIME_HANDOFF.md) for current limitations.
+
 ## Maintenance
 
 This is not a one-off experiment. I use the package in a production app every
@@ -179,7 +213,9 @@ React Native package, and five static compatibility apps:
 
 | Path                                      | Purpose                                                                 |
 | ----------------------------------------- | ----------------------------------------------------------------------- |
-| `crates/surrealdb-rn-core`                | Rust API exposed through UniFFI                                         |
+| `crates/surrealdb-rn-core`                | UniFFI Rust core plus the experimental embedded sync adapter            |
+| `crates/surrealdb-sync-protocol`          | Temporarily copied transport-neutral sync message types                 |
+| `crates/surrealdb-sync-client`            | Temporarily copied storage-neutral client state transitions             |
 | `packages/react-native-surrealdb`         | Published TypeScript, JSI/C++, iOS, and Android package                 |
 | `apps/harness-shared`                     | Application, integration tests, and benchmarks shared by every test app |
 | `apps/harness-rn82` … `apps/harness-rn86` | One React Native Test App host per supported React Native version       |
@@ -221,8 +257,11 @@ dependencies instead of installing the command globally:
 pnpm install --frozen-lockfile
 ```
 
-The repository requires Node.js 20 or newer and pnpm 11 or newer; CI currently
-uses Node.js 22 and pnpm 11.5.0. Platform builds additionally require Xcode and
+The repository pins Node.js 22.22.0 in `.node-version` and pnpm 11.5.0 in
+`package.json`. Run `fnm use` (or select that version with your Node manager)
+before platform tooling; Node 23 and newer are intentionally excluded because
+their type stripping cannot load the current pinned Rock configuration files.
+Platform builds additionally require Xcode and
 CocoaPods on macOS, or an Android SDK, NDK 27, Java, and `cargo-ndk` for
 Android. The complete Rust target list is recorded in
 [`packages/react-native-surrealdb/RELEASING.md`](./packages/react-native-surrealdb/RELEASING.md).
@@ -258,13 +297,13 @@ Android check uses `ANDROID_NDK_HOME` when set, otherwise it looks below
 The `ubrn:*` scripts live in
 [`packages/react-native-surrealdb/package.json`](./packages/react-native-surrealdb/package.json):
 
-| Command                                                      | Result                                                                                                                                                                                    |
-| ------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Command                                                      | Result                                                                                                                                                                                           |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `pnpm --filter react-native-surrealdb run ubrn:ios`          | Builds release libraries for arm64 iOS devices and Apple Silicon simulators, creates `SurrealDbRnFramework.xcframework`, and regenerates the UniFFI bindings. The deployment target is iOS 15.1. |
-| `pnpm --filter react-native-surrealdb run ubrn:android`      | Builds release `.so` files for arm64-v8a and x86_64 under `android/src/main/jniLibs`, and regenerates the bindings.                                                                         |
-| `pnpm --filter react-native-surrealdb run ubrn:android:size` | Builds only arm64 Android, which is sufficient for the controlled release-size benchmark. Do not use this reduced artifact set for publishing.                                            |
-| `pnpm --filter react-native-surrealdb run release:artifacts` | Runs the full iOS and Android `ubrn` builds, then strips non-runtime symbols from the distributable native libraries.                                                                     |
-| `pnpm --filter react-native-surrealdb run format:generated`  | Rewrites the generated TurboModule entry files with Prettier. The `ubrn:*` scripts run it automatically.                                                                                  |
+| `pnpm --filter react-native-surrealdb run ubrn:android`      | Builds release `.so` files for arm64-v8a and x86_64 under `android/src/main/jniLibs`, and regenerates the bindings.                                                                              |
+| `pnpm --filter react-native-surrealdb run ubrn:android:size` | Builds only arm64 Android, which is sufficient for the controlled release-size benchmark. Do not use this reduced artifact set for publishing.                                                   |
+| `pnpm --filter react-native-surrealdb run release:artifacts` | Runs the full iOS and Android `ubrn` builds, then strips non-runtime symbols from the distributable native libraries.                                                                            |
+| `pnpm --filter react-native-surrealdb run format:generated`  | Rewrites the generated TurboModule entry files with Prettier. The `ubrn:*` scripts run it automatically.                                                                                         |
 
 `--and-generate` in these scripts means “build Rust and regenerate bindings”;
 `--release` selects optimized Rust artifacts; `--targets` lists the Rust target
@@ -325,19 +364,21 @@ Each static RNTA host imports the same code from `apps/harness-shared`:
 
 Replace the filter in these examples to test another supported version:
 
-| Command                                                     | Purpose                                                                                                                              |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `pnpm --filter surrealdb-harness-rn86 run start`            | Starts Metro through Rock.                                                                                                           |
-| `... run rock:android`                                      | Builds or restores the Android app through Rock, then runs it.                                                                       |
-| `... run rock:ios`                                          | Prepares iOS artifacts and Pods, then builds or restores and runs through Rock.                                                      |
-| `... run android`                                           | Uses the React Native CLI directly instead of Rock.                                                                                  |
-| `... run ios`                                               | Prepares iOS, then uses the React Native CLI directly. Set `SURREALDB_IOS_SIMULATOR` to override the default simulator.              |
-| `... run prepare:ios`                                       | Creates the missing XCFramework and JS bundle, and runs `bundle exec pod install` when the Pods project does not link the framework. |
-| `... run build:android` / `... run build:ios`               | Produces a development JS bundle and assets in `dist/`; these do not compile a native app.                                           |
-| `... run test:harness:android` / `... run test:harness:ios` | Runs device integration tests with React Native Harness. A compatible emulator/simulator or `HARNESS_APP_PATH` must be available.    |
-| `... run lint`                                              | Lints shared app/test code using that React Native version's ESLint configuration.                                                   |
-| `... run typecheck`                                         | Type-checks shared code against that host's React Native and React versions.                                                         |
-| `... run configure`                                         | Runs RNTA's `configure-test-app` generator. Use only after intentionally changing `app.json` or RNTA/native configuration.           |
+| Command                                                             | Purpose                                                                                                                                                  |
+| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm --filter surrealdb-harness-rn86 run start`                    | Starts Metro through Rock.                                                                                                                               |
+| `... run rock:android`                                              | Builds or restores the Android app through Rock, then runs it.                                                                                           |
+| `... run rock:ios`                                                  | Prepares iOS artifacts and Pods, then builds or restores and runs through Rock.                                                                          |
+| `... run android`                                                   | Uses the React Native CLI directly instead of Rock.                                                                                                      |
+| `... run ios`                                                       | Prepares iOS, then uses the React Native CLI directly. Set `SURREALDB_IOS_SIMULATOR` to override the default simulator.                                  |
+| `... run prepare:ios`                                               | Creates the missing XCFramework and JS bundle, and runs `bundle exec pod install` when the Pods project does not link the framework.                     |
+| `... run build:android` / `... run build:ios`                       | Produces a development JS bundle and assets in `dist/`; these do not compile a native app.                                                               |
+| `... run test:harness:android` / `... run test:harness:ios`         | Runs device integration tests with React Native Harness. A compatible emulator/simulator or `HARNESS_APP_PATH` must be available.                        |
+| `... run e2e:android` / `... run e2e:ios`                           | Builds, installs, launches, and tests a host in one command; use these for a clean machine or changed native artifacts.                                  |
+| `... run e2e:sync-restart:android` / `... run e2e:sync-restart:ios` | Seeds durable optimistic sync state, lets Harness terminate the app process, then reopens the same app-private SurrealKV database and verifies recovery. |
+| `... run lint`                                                      | Lints shared app/test code using that React Native version's ESLint configuration.                                                                       |
+| `... run typecheck`                                                 | Type-checks shared code against that host's React Native and React versions.                                                                             |
+| `... run configure`                                                 | Runs RNTA's `configure-test-app` generator. Use only after intentionally changing `app.json` or RNTA/native configuration.                               |
 
 `configure` is not a routine prerequisite. It can rewrite `android/`, `ios/`,
 and package metadata based on RNTA defaults. Always run it in only the intended
@@ -349,9 +390,17 @@ For example:
 
 ```sh
 pnpm --filter surrealdb-harness-rn82 run rock:android
-pnpm --filter surrealdb-harness-rn84 run test:harness:android
+pnpm --filter surrealdb-harness-rn86 run e2e:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:android
 pnpm typecheck:react-native-matrix
 ```
+
+`e2e:ios` uses `iPhone 17 Pro` by default; set `SURREALDB_IOS_SIMULATOR` to an
+available simulator name. `e2e:android` uses the connected emulator selected by
+the React Native CLI; the harness then requires the configured `Pixel_9` AVD.
+The local proxy test in each static host imports the single shared suite from
+`apps/harness-shared`, which keeps the tests bundleable without duplicating
+their behavior.
 
 Rock fingerprints each host's native files, resolved dependencies, React Native
 version, and the shared Rust/package sources. Locally, its GitHub provider reads
@@ -374,6 +423,7 @@ These scripts are intentionally not duplicated in older hosts:
 | `... run size:android:benchmark`                                          | Builds a fresh stock baseline and the candidate, then performs the paired comparison. Run `ubrn:android:size` first. |
 | `... run benchmark:android` / `... run benchmark:ios`                     | Runs the short `smoke` device benchmark.                                                                             |
 | `... run benchmark:android:canonical` / `... run benchmark:ios:canonical` | Runs the 2,000-record regression profile.                                                                            |
+| `... run benchmark:android:sync` / `... run benchmark:ios:sync`           | Measures local durable sync enqueue, pending reads, and reopen against a persistent SQLite lower bound.             |
 | `... run benchmark:android:upstream` / `... run benchmark:ios:upstream`   | Runs the 10,000-record upstream-shaped profile.                                                                      |
 | `... run test:benchmark-tools`                                            | Tests the Node report extraction and comparison utilities without a device.                                          |
 

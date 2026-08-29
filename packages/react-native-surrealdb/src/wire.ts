@@ -82,7 +82,12 @@ export function encodeQueryVariables(variables: QueryVariables): string {
   if (!isPlainObject(variables)) {
     throw new TypeError("query variables must be a plain object");
   }
-  return JSON.stringify(encodeValue(variables, new WeakSet<object>()));
+  return encodeSurrealValue(variables);
+}
+
+/** Encode one lossless SurrealDB value tree for a native JSON boundary. */
+export function encodeSurrealValue(value: unknown): string {
+  return JSON.stringify(encodeValue(value, new WeakSet<object>()));
 }
 
 export function decodeSurrealValue(

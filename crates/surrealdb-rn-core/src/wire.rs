@@ -11,6 +11,7 @@ use surrealdb::types::{Array, Bytes, Decimal, Number, Object, RecordId, Set, ToS
 use crate::SurrealRnError;
 
 const TAG: &str = "$surreal";
+const MAX_WIRE_DEPTH: usize = 128;
 
 pub fn encode_value(value: Value) -> Result<String, SurrealRnError> {
     serde_json::to_string(&WireValue(&value)).map_err(|error| SurrealRnError::Codec {
@@ -206,7 +207,17 @@ fn to_wire_value(value: Value) -> JsonValue {
     }
 }
 
-fn from_wire_value(value: JsonValue) -> Result<Value, SurrealRnError> {
+pub(crate) fn from_wire_value(value: JsonValue) -> Result<Value, SurrealRnError> {
+    from_wire_value_at_depth(value, 0)
+}
+
+fn from_wire_value_at_depth(value: JsonValue, depth: usize) -> Result<Value, SurrealRnError> {
+    if depth > MAX_WIRE_DEPTH {
+        return Err(invalid_variables(
+            "value nesting exceeds the supported depth",
+        ));
+    }
+
     match value {
         JsonValue::Null => Ok(Value::Null),
         JsonValue::Bool(value) => Ok(Value::Bool(value)),
@@ -222,18 +233,20 @@ fn from_wire_value(value: JsonValue) -> Result<Value, SurrealRnError> {
         JsonValue::String(value) => Ok(Value::String(value)),
         JsonValue::Array(values) => values
             .into_iter()
-            .map(from_wire_value)
+            .map(|value| from_wire_value_at_depth(value, depth + 1))
             .collect::<Result<Vec<_>, _>>()
             .map(Array::from)
             .map(Value::Array),
         JsonValue::Object(mut object) => {
             if let Some(tag) = object.remove(TAG) {
-                return decode_tagged_value(tag, object);
+                return decode_tagged_value(tag, object, depth);
             }
 
             object
                 .into_iter()
-                .map(|(key, value)| from_wire_value(value).map(|value| (key, value)))
+                .map(|(key, value)| {
+                    from_wire_value_at_depth(value, depth + 1).map(|value| (key, value))
+                })
                 .collect::<Result<BTreeMap<_, _>, _>>()
                 .map(Object::from)
                 .map(Value::Object)
@@ -244,6 +257,7 @@ fn from_wire_value(value: JsonValue) -> Result<Value, SurrealRnError> {
 fn decode_tagged_value(
     tag: JsonValue,
     mut object: JsonMap<String, JsonValue>,
+    depth: usize,
 ) -> Result<Value, SurrealRnError> {
     let tag = tag
         .as_str()
@@ -283,7 +297,7 @@ fn decode_tagged_value(
                 .ok_or_else(|| invalid_variables("set requires a values array"))?;
             values
                 .into_iter()
-                .map(from_wire_value)
+                .map(|value| from_wire_value_at_depth(value, depth + 1))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Set::from)
                 .map(Value::Set)
@@ -361,5 +375,20 @@ mod tests {
             Some(&Value::Number(Number::Int(9_007_199_254_740_993)))
         );
         assert_eq!(variables.get("missing"), Some(&Value::None));
+    }
+
+    #[test]
+    fn rejects_excessively_nested_values_before_recursive_decoding() {
+        let mut value = JsonValue::Null;
+        for _ in 0..=MAX_WIRE_DEPTH {
+            value = JsonValue::Array(vec![value]);
+        }
+        let error = from_wire_value(value).unwrap_err();
+        assert!(matches!(error, SurrealRnError::InvalidVariables { .. }));
+        assert!(
+            error
+                .to_string()
+                .contains("nesting exceeds the supported depth")
+        );
     }
 }

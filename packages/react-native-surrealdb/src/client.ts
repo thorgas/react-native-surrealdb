@@ -1,10 +1,17 @@
 import {
   LiveAction as NativeLiveAction,
   NativeOutputEncoding,
+  NativeSyncError,
+  NativeSyncError_Tags,
   SurrealRnError,
   SurrealRnError_Tags,
   benchmarkBoundaryNoop as nativeBenchmarkBoundaryNoop,
   connect as nativeConnect,
+  decodeSyncPullResponse as nativeDecodeSyncPullResponse,
+  decodeSyncPushResponse as nativeDecodeSyncPushResponse,
+  encodeSyncPullRequest as nativeEncodeSyncPullRequest,
+  encodeSyncPushRequest as nativeEncodeSyncPushRequest,
+  openSyncClient as nativeOpenSyncClient,
   type ConnectOptions,
   type LiveQueryLike,
   type NativeBatchQuery,
@@ -20,9 +27,32 @@ import {
   type SurrealValue,
 } from "./wire";
 import { LiveSubscription } from "./subscription";
+import {
+  ExperimentalSyncClient,
+  type ExperimentalSyncOpenOptions,
+} from "./sync";
+import {
+  experimentalCanonicalCborSyncHttpCodec,
+  type ExperimentalSyncHttpCodec,
+} from "./sync-http";
 
-export { SurrealRnError, SurrealRnError_Tags };
+export {
+  NativeSyncError,
+  NativeSyncError_Tags,
+  SurrealRnError,
+  SurrealRnError_Tags,
+};
 export type { ConnectOptions };
+
+/** Create the native, bounded `surrealdb-sync/1` canonical CBOR codec. */
+export function createExperimentalCanonicalCborSyncHttpCodec(): ExperimentalSyncHttpCodec {
+  return experimentalCanonicalCborSyncHttpCodec({
+    encodeSyncPushRequest: nativeEncodeSyncPushRequest,
+    decodeSyncPushResponse: nativeDecodeSyncPushResponse,
+    encodeSyncPullRequest: nativeEncodeSyncPullRequest,
+    decodeSyncPullResponse: nativeDecodeSyncPullResponse,
+  });
+}
 export { LiveSubscription } from "./subscription";
 export type {
   LiveSubscriptionSnapshot,
@@ -333,6 +363,16 @@ export class SurrealClient {
     options?: CallOptions,
   ): Promise<LiveSubscription<T>> {
     return new LiveSubscription(await this.live<T>(surql, variables, options));
+  }
+
+  /** Open the unreleased, transport-free sync protocol prototype. */
+  async openExperimentalSync(
+    options: ExperimentalSyncOpenOptions,
+    callOptions?: CallOptions,
+  ): Promise<ExperimentalSyncClient> {
+    return new ExperimentalSyncClient(
+      await nativeOpenSyncClient(this.#native, options, callOptions),
+    );
   }
 
   use(namespace: string, database: string, options?: CallOptions) {
