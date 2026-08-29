@@ -13,6 +13,8 @@
     "e2e:local-authority:ios": "pnpm run prepare:ios && react-native run-ios --scheme SurrealDbHarness --simulator \"${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}\" --no-packager && bash scripts/run-local-authority-e2e.sh ios",
     "e2e:sync-restart:android": "react-native run-android --appId com.surrealdbharness.rn86 --no-packager && react-native-harness --harnessRunner android --testPathPatterns surrealkv-seed && react-native-harness --harnessRunner android --testPathPatterns surrealkv-restart",
     "e2e:sync-restart:ios": "pnpm run prepare:ios && react-native run-ios --scheme SurrealDbHarness --simulator \"${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}\" --no-packager && react-native-harness --harnessRunner ios --testPathPatterns surrealkv-seed && react-native-harness --harnessRunner ios --testPathPatterns surrealkv-restart",
+    "e2e:surrealkv-migration:android": "bash scripts/run-surrealkv-migration-e2e.sh android",
+    "e2e:surrealkv-migration:ios": "bash scripts/run-surrealkv-migration-e2e.sh ios",
     "ios": "pnpm run prepare:ios && react-native run-ios --scheme SurrealDbHarness --simulator \"${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}\"",
     "lint": "eslint --config .eslintrc.js ../harness-shared index.js",
     "prepare:ios": "bash ../harness-shared/scripts/prepare-ios.sh",
