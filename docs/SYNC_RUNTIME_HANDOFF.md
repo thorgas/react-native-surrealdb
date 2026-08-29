@@ -36,7 +36,8 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Pull-only WebSocket hints commit: `d03e322`.
 - Scheduler documentation commit: `cc2a255`.
 - Cross-platform Hermes scheduler E2E commit: `394b269`.
-- Integrated draft branch head: `394b2696447cc0a79b215a066e239577cf69109a`.
+- Scheduler hardening commit and integrated draft head:
+  `9dbf2befad234b6d66332092c313e5dea9810040`.
 
 ## Source boundary
 
@@ -223,6 +224,13 @@ and checkpoint through the native facade, and handles a WebSocket-style hint as 
 The standard scripts exclude the dedicated process-restart seed/verify fixtures; those retain their
 own explicit two-phase commands. Harness runs are Debug/Metro functional evidence, not bundled
 Release-app evidence.
+
+The final adversarial audit raised the package suite to 39 tests. It proved terminal errors cannot
+be retriggered by hints/timers, a lost hint is recovered by the default periodic pull, a hung token
+provider or codec cannot wedge the serialized queue, stale work cannot mutate a restarted lifecycle,
+and insecure remote HTTP/WS endpoints fail closed. The hardened standard Harness suites again passed
+13/13 on iOS and Android, and the live local-authority trace passed on both platforms through the
+explicit simulator/emulator loopback escape hatch.
 
 The permanent cross-version fixture also passed on iOS and Android on
 2026-08-29. It built historical revision `e0c200b` with SurrealDB 3.2.1,
