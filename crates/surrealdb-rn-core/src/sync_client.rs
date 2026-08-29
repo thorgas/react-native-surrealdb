@@ -729,4 +729,93 @@ mod tests {
             Some("checkpoint-1")
         );
     }
+
+    #[tokio::test]
+    async fn adapter_pull_cbor_reopens_with_durable_batch_and_reset_state() {
+        const BATCH: &str = "84707375727265616c64622d73796e632f3100038200838200837820636865636b706f696e742d617574686f726974792d70756c6c2d676f6c64656e8201018363616c6c010183017820636865636b706f696e742d617574686f726974792d70756c6c2d676f6c64656e820181826a706572736f6e3a6c696e8401a1646e616d65634c696e01f68202837820636865636b706f696e742d617574686f726974792d70756c6c2d676f6c64656e8201018363616c6c0101";
+        const RESET: &str = "84707375727265616c64622d73796e632f310003840100837821636865636b706f696e742d617574686f726974792d72657365742d676f6c64656e8201018363616c6c010181826a706572736f6e3a6c696e8401a1646e616d65634c696e01f6";
+        let directory = temp_dir::TempDir::new().unwrap();
+
+        let database = surrealkv_database(directory.path()).await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let batch_json = crate::sync_http_codec::decode_sync_pull_response(decode_hex(BATCH))
+            .await
+            .unwrap();
+        let status = client.apply_pull_response(batch_json).await.unwrap();
+        assert_eq!(status.cursor_epoch, Some(1));
+        assert_eq!(status.cursor_sequence, Some(1));
+        assert_eq!(
+            client.checkpoint_token().await.unwrap().as_deref(),
+            Some("checkpoint-authority-pull-golden")
+        );
+        client.close().await;
+        database.close().await.unwrap();
+        drop(client);
+        drop(database);
+
+        let reopened_database = surrealkv_database(directory.path()).await;
+        let reopened = open_sync_client(reopened_database.clone(), options("all"))
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened.checkpoint_token().await.unwrap().as_deref(),
+            Some("checkpoint-authority-pull-golden")
+        );
+        assert_eq!(reopened.status().await.unwrap().cursor_sequence, Some(1));
+        let confirmed: Option<Value> = reopened_database
+            .client()
+            .await
+            .unwrap()
+            .select(NativeRecordId::parse_simple("person:lin").unwrap())
+            .await
+            .unwrap();
+        assert!(matches!(confirmed, Some(Value::Object(_))));
+        reopened.close().await;
+        reopened_database.close().await.unwrap();
+        drop(reopened);
+        drop(reopened_database);
+
+        let reset_database = surrealkv_database(directory.path()).await;
+        let reset_client = open_sync_client(reset_database.clone(), options("all"))
+            .await
+            .unwrap();
+        let pending = serde_json::to_string(&commit()).unwrap();
+        reset_client.enqueue(pending).await.unwrap();
+        let reset_json = crate::sync_http_codec::decode_sync_pull_response(decode_hex(RESET))
+            .await
+            .unwrap();
+        let reset_status = reset_client.apply_pull_response(reset_json).await.unwrap();
+        assert_eq!(reset_status.cursor_sequence, Some(1));
+        assert_eq!(reset_client.pending_json().await.unwrap().len(), 1);
+        reset_client.close().await;
+        reset_database.close().await.unwrap();
+        drop(reset_client);
+        drop(reset_database);
+
+        let final_database = surrealkv_database(directory.path()).await;
+        let final_client = open_sync_client(final_database.clone(), options("all"))
+            .await
+            .unwrap();
+        assert_eq!(
+            final_client.checkpoint_token().await.unwrap().as_deref(),
+            Some("checkpoint-authority-reset-golden")
+        );
+        assert_eq!(final_client.status().await.unwrap().pending_count, 1);
+        let database_client = final_database.client().await.unwrap();
+        let confirmed: Option<Value> = database_client
+            .select(NativeRecordId::parse_simple("person:lin").unwrap())
+            .await
+            .unwrap();
+        let optimistic: Option<Value> = database_client
+            .select(NativeRecordId::parse_simple("person:ada").unwrap())
+            .await
+            .unwrap();
+        assert!(matches!(confirmed, Some(Value::Object(_))));
+        assert!(matches!(optimistic, Some(Value::Object(_))));
+        drop(database_client);
+        final_client.close().await;
+        final_database.close().await.unwrap();
+    }
 }
