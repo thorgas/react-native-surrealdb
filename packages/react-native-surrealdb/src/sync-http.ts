@@ -10,20 +10,37 @@ export type ExperimentalSyncHttpCodec = {
   encodePushRequest(
     request: ExperimentalSyncPushRequest,
     options?: CallOptions,
-  ): Promise<BodyInit>;
+  ): Promise<ExperimentalSyncHttpBody>;
   decodePushResponse(
-    response: Response,
+    bytes: ArrayBuffer,
     options?: CallOptions,
   ): Promise<string>;
   encodePullRequest(
     request: ExperimentalSyncPullRequest,
     options?: CallOptions,
-  ): Promise<BodyInit>;
+  ): Promise<ExperimentalSyncHttpBody>;
   decodePullResponse(
-    response: Response,
+    bytes: ArrayBuffer,
     options?: CallOptions,
   ): Promise<string>;
 };
+
+export type ExperimentalSyncHttpBody = string | ArrayBuffer;
+
+export type ExperimentalSyncHttpLimits = {
+  requestTimeoutMs: number;
+  maxRequestBytes: number;
+  maxResponseBytes: number;
+};
+
+export type ExperimentalSyncHttpErrorKind =
+  | "aborted"
+  | "timeout"
+  | "network"
+  | "http"
+  | "content_type"
+  | "body_limit"
+  | "protocol";
 
 export type ExperimentalSyncPushRequest = {
   partitionId: string;
@@ -74,6 +91,7 @@ export type ExperimentalSyncHttpOptions = {
   accessToken: () => string | Promise<string>;
   codec: ExperimentalSyncHttpCodec;
   fetch?: typeof globalThis.fetch;
+  limits?: Partial<ExperimentalSyncHttpLimits>;
 };
 
 export type ExperimentalSyncOnceResult = {
@@ -85,6 +103,7 @@ export type ExperimentalSyncOnceResult = {
 export class ExperimentalSyncHttpError extends Error {
   constructor(
     message: string,
+    readonly kind: ExperimentalSyncHttpErrorKind,
     readonly status?: number,
   ) {
     super(message);
@@ -106,8 +125,8 @@ export const experimentalJsonSyncHttpCodec: ExperimentalSyncHttpCodec = {
       commit: parseProtocolJson(request.commitJson),
     });
   },
-  async decodePushResponse(response) {
-    return decodeJsonResponse(response);
+  async decodePushResponse(bytes) {
+    return decodeJsonResponse(bytes);
   },
   async encodePullRequest(request) {
     return encodeJson({
@@ -119,8 +138,8 @@ export const experimentalJsonSyncHttpCodec: ExperimentalSyncHttpCodec = {
       subscriptionRevision: request.subscriptionRevision,
     });
   },
-  async decodePullResponse(response) {
-    return decodeJsonResponse(response);
+  async decodePullResponse(bytes) {
+    return decodeJsonResponse(bytes);
   },
 };
 
@@ -138,11 +157,8 @@ export function experimentalCanonicalCborSyncHttpCodec(
         options,
       );
     },
-    async decodePushResponse(response, options) {
-      return native.decodeSyncPushResponse(
-        await responseBytes(response),
-        options,
-      );
+    async decodePushResponse(bytes, options) {
+      return native.decodeSyncPushResponse(bytes, options);
     },
     async encodePullRequest(request, options) {
       return native.encodeSyncPullRequest(
@@ -154,11 +170,8 @@ export function experimentalCanonicalCborSyncHttpCodec(
         options,
       );
     },
-    async decodePullResponse(response, options) {
-      return native.decodeSyncPullResponse(
-        await responseBytes(response),
-        options,
-      );
+    async decodePullResponse(bytes, options) {
+      return native.decodeSyncPullResponse(bytes, options);
     },
   };
 }
@@ -179,6 +192,7 @@ export class ExperimentalSyncHttpAdapter {
   readonly #accessToken: () => string | Promise<string>;
   readonly #codec: ExperimentalSyncHttpCodec;
   readonly #fetch: typeof globalThis.fetch;
+  readonly #limits: ExperimentalSyncHttpLimits;
   #tail: Promise<void> = Promise.resolve();
 
   constructor(options: ExperimentalSyncHttpOptions) {
@@ -189,6 +203,7 @@ export class ExperimentalSyncHttpAdapter {
     if (options.codec.mediaType.trim().length === 0) {
       throw new TypeError("sync HTTP codec mediaType is required");
     }
+    this.#limits = limits(options.limits);
     this.#sync = options.sync;
     this.#baseUrl = baseUrl;
     this.#partitionId = options.partitionId;
@@ -281,32 +296,95 @@ export class ExperimentalSyncHttpAdapter {
 
   async #post(
     path: string,
-    body: BodyInit,
-    decode: (response: Response) => Promise<string>,
+    body: ExperimentalSyncHttpBody,
+    decode: (bytes: ArrayBuffer) => Promise<string>,
     options?: CallOptions,
   ): Promise<string> {
     const token = await this.#accessToken();
     if (token.trim().length === 0) {
-      throw new ExperimentalSyncHttpError("sync access token is empty");
-    }
-
-    const response = await this.#fetch(`${this.#baseUrl}${path}`, {
-      method: "POST",
-      headers: {
-        Accept: this.#codec.mediaType,
-        Authorization: `Bearer ${token}`,
-        "Content-Type": this.#codec.mediaType,
-      },
-      body,
-      signal: options?.signal,
-    });
-    if (response.status !== 200) {
       throw new ExperimentalSyncHttpError(
-        `sync HTTP request failed with status ${response.status}`,
-        response.status,
+        "sync access token is empty",
+        "protocol",
       );
     }
-    return decode(response);
+    if (bodyBytes(body) > this.#limits.maxRequestBytes) {
+      throw new ExperimentalSyncHttpError(
+        "sync HTTP request exceeds the configured byte limit",
+        "body_limit",
+      );
+    }
+    if (options?.signal.aborted) {
+      throw new ExperimentalSyncHttpError(
+        "sync HTTP request was aborted",
+        "aborted",
+      );
+    }
+
+    const controller = new AbortController();
+    let timedOut = false;
+    const onAbort = () => controller.abort();
+    options?.signal.addEventListener("abort", onAbort, { once: true });
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.#limits.requestTimeoutMs);
+    let receivedResponse = false;
+    try {
+      const response = await this.#fetch(`${this.#baseUrl}${path}`, {
+        method: "POST",
+        headers: {
+          Accept: this.#codec.mediaType,
+          Authorization: `Bearer ${token}`,
+          "Content-Type": this.#codec.mediaType,
+        },
+        body,
+        signal: controller.signal,
+      });
+      receivedResponse = true;
+      if (response.status !== 200) {
+        throw new ExperimentalSyncHttpError(
+          `sync HTTP request failed with status ${response.status}`,
+          "http",
+          response.status,
+        );
+      }
+      const contentType = response.headers
+        .get("Content-Type")
+        ?.split(";", 1)[0]
+        ?.trim();
+      if (contentType !== this.#codec.mediaType) {
+        throw new ExperimentalSyncHttpError(
+          "sync HTTP response has an unexpected content type",
+          "content_type",
+        );
+      }
+      const bytes = await boundedResponseBytes(
+        response,
+        this.#limits.maxResponseBytes,
+      );
+      return await decode(bytes);
+    } catch (error) {
+      if (timedOut)
+        throw new ExperimentalSyncHttpError(
+          "sync HTTP request timed out",
+          "timeout",
+        );
+      if (options?.signal.aborted)
+        throw new ExperimentalSyncHttpError(
+          "sync HTTP request was aborted",
+          "aborted",
+        );
+      if (error instanceof ExperimentalSyncHttpError) throw error;
+      throw new ExperimentalSyncHttpError(
+        receivedResponse
+          ? "sync HTTP response failed protocol decoding"
+          : "sync HTTP network request failed",
+        receivedResponse ? "protocol" : "network",
+      );
+    } finally {
+      clearTimeout(timeout);
+      options?.signal.removeEventListener("abort", onAbort);
+    }
   }
 
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
@@ -317,6 +395,91 @@ export class ExperimentalSyncHttpAdapter {
     );
     return result;
   }
+}
+
+const DEFAULT_HTTP_LIMITS: ExperimentalSyncHttpLimits = {
+  requestTimeoutMs: 30_000,
+  maxRequestBytes: 4 * 1024 * 1024,
+  maxResponseBytes: 4 * 1024 * 1024,
+};
+
+function limits(
+  configured?: Partial<ExperimentalSyncHttpLimits>,
+): ExperimentalSyncHttpLimits {
+  const result = { ...DEFAULT_HTTP_LIMITS, ...configured };
+  for (const [name, value] of Object.entries(result)) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new TypeError(`sync HTTP ${name} must be a positive safe integer`);
+    }
+  }
+  return result;
+}
+
+function bodyBytes(body: ExperimentalSyncHttpBody): number {
+  if (typeof body === "string")
+    return new TextEncoder().encode(body).byteLength;
+  return body.byteLength;
+}
+
+async function boundedResponseBytes(
+  response: Response,
+  maximum: number,
+): Promise<ArrayBuffer> {
+  const declared = response.headers.get("Content-Length");
+  if (declared != null) {
+    if (!/^\d+$/u.test(declared)) {
+      throw new ExperimentalSyncHttpError(
+        "sync HTTP response has an invalid content length",
+        "body_limit",
+      );
+    }
+    if (Number(declared) > maximum) {
+      throw new ExperimentalSyncHttpError(
+        "sync HTTP response exceeds the configured byte limit",
+        "body_limit",
+      );
+    }
+  }
+
+  const reader = response.body?.getReader();
+  if (reader != null) {
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      length += value.byteLength;
+      if (length > maximum) {
+        await reader.cancel();
+        throw new ExperimentalSyncHttpError(
+          "sync HTTP response exceeds the configured byte limit",
+          "body_limit",
+        );
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(length);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return bytes.buffer;
+  }
+  if (declared == null) {
+    throw new ExperimentalSyncHttpError(
+      "sync HTTP response cannot be bounded before allocation",
+      "body_limit",
+    );
+  }
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength > maximum) {
+    throw new ExperimentalSyncHttpError(
+      "sync HTTP response exceeds the configured byte limit",
+      "body_limit",
+    );
+  }
+  return bytes;
 }
 
 function encodeJson(value: unknown): string {
@@ -344,16 +507,12 @@ function parseProtocolJson(json: string): SyncJsonValue {
   return value;
 }
 
-async function decodeJsonResponse(response: Response): Promise<string> {
-  const value: unknown = await response.json();
+async function decodeJsonResponse(bytes: ArrayBuffer): Promise<string> {
+  const value: unknown = JSON.parse(new TextDecoder().decode(bytes));
   if (!isSyncJsonValue(value)) {
     throw new TypeError("sync HTTP response is not a finite JSON value");
   }
   return JSON.stringify(value);
-}
-
-async function responseBytes(response: Response): Promise<ArrayBuffer> {
-  return response.arrayBuffer();
 }
 
 function isSyncJsonValue(value: unknown): value is SyncJsonValue {

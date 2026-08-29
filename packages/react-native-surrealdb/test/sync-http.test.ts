@@ -10,6 +10,7 @@ import {
   experimentalCanonicalCborSyncHttpCodec,
   experimentalJsonSyncHttpCodec,
   type ExperimentalSyncHttpCodec,
+  type ExperimentalSyncHttpLimits,
   type ExperimentalSyncHttpNativeBridge,
 } from "../src/sync-http";
 import { ExperimentalSyncClient } from "../src/sync";
@@ -47,9 +48,13 @@ function createSync() {
   };
 }
 
-function response(value: unknown, statusCode = 200): Response {
+function response(
+  value: unknown,
+  statusCode = 200,
+  contentType = "application/json",
+): Response {
   return new Response(JSON.stringify(value), {
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": contentType },
     status: statusCode,
   });
 }
@@ -74,6 +79,7 @@ function pullResponse(checkpoint = "checkpoint-1") {
 function createAdapter(
   fetch: typeof globalThis.fetch,
   codec: ExperimentalSyncHttpCodec = experimentalJsonSyncHttpCodec,
+  limits?: Partial<ExperimentalSyncHttpLimits>,
 ) {
   const { native, sync } = createSync();
   const adapter = new ExperimentalSyncHttpAdapter({
@@ -86,6 +92,7 @@ function createAdapter(
     accessToken: async () => "redacted-test-token",
     codec,
     fetch,
+    limits,
   });
   return { adapter, native };
 }
@@ -176,7 +183,7 @@ describe("ExperimentalSyncHttpAdapter", () => {
       );
     const { adapter, native } = createAdapter(fetch);
 
-    await expect(adapter.push()).rejects.toThrow("network lost");
+    await expect(adapter.push()).rejects.toMatchObject({ kind: "network" });
     expect(native.recordPushResponse).not.toHaveBeenCalled();
     await expect(adapter.push()).resolves.toEqual([status]);
     expect(native.recordPushResponse).toHaveBeenCalledOnce();
@@ -185,16 +192,25 @@ describe("ExperimentalSyncHttpAdapter", () => {
   it("uses an injected codec and serializes concurrent operations", async () => {
     let releaseFirst: (() => void) | undefined;
     const firstResponse = new Promise<Response>((resolve) => {
-      releaseFirst = () => resolve(response({ status: "accepted" }));
+      releaseFirst = () =>
+        resolve(
+          response(
+            { status: "accepted" },
+            200,
+            "application/vnd.surrealdb.sync.test",
+          ),
+        );
     });
     const fetch = vi
       .fn<typeof globalThis.fetch>()
       .mockReturnValueOnce(firstResponse)
-      .mockResolvedValueOnce(response(pullResponse()));
+      .mockResolvedValueOnce(
+        response(pullResponse(), 200, "application/vnd.surrealdb.sync.test"),
+      );
     const body = new ArrayBuffer(3);
     const encode = vi.fn(async () => body);
-    const decode = vi.fn(async (value: Response) =>
-      JSON.stringify(await value.json()),
+    const decode = vi.fn(async (value: ArrayBuffer) =>
+      new TextDecoder().decode(value),
     );
     const codec: ExperimentalSyncHttpCodec = {
       mediaType: "application/vnd.surrealdb.sync.test",
@@ -246,7 +262,7 @@ describe("ExperimentalSyncHttpAdapter", () => {
     const controller = new AbortController();
 
     await adapter.pull({ signal: controller.signal });
-    expect(fetch.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+    expect(fetch.mock.calls[0]?.[1]?.signal).not.toBe(controller.signal);
     await expect(
       experimentalJsonSyncHttpCodec.encodePullRequest({
         partitionId: "p",
@@ -255,6 +271,80 @@ describe("ExperimentalSyncHttpAdapter", () => {
         subscriptionRevision: 2n ** 63n,
       }),
     ).rejects.toThrow("safe range");
+  });
+
+  it("bounds request and response bodies before protocol decoding", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const oversizedCodec: ExperimentalSyncHttpCodec = {
+      ...experimentalJsonSyncHttpCodec,
+      encodePushRequest: vi.fn(async () => new ArrayBuffer(5)),
+    };
+    const request = createAdapter(fetch, oversizedCodec, {
+      maxRequestBytes: 4,
+    }).adapter;
+    await expect(request.push()).rejects.toMatchObject({ kind: "body_limit" });
+    expect(fetch).not.toHaveBeenCalled();
+
+    const declared = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      new Response("12345", {
+        headers: {
+          "Content-Length": "5",
+          "Content-Type": "application/json",
+        },
+      }),
+    );
+    const declaredAdapter = createAdapter(declared, undefined, {
+      maxResponseBytes: 4,
+    }).adapter;
+    await expect(declaredAdapter.pull()).rejects.toMatchObject({
+      kind: "body_limit",
+    });
+
+    const streamed = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(response("12345"));
+    const streamedAdapter = createAdapter(streamed, undefined, {
+      maxResponseBytes: 4,
+    }).adapter;
+    await expect(streamedAdapter.pull()).rejects.toMatchObject({
+      kind: "body_limit",
+    });
+  });
+
+  it("rejects wrong content types without decoding the body", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(response(pullResponse(), 200, "text/plain"));
+    const { adapter, native } = createAdapter(fetch);
+
+    await expect(adapter.pull()).rejects.toMatchObject({
+      kind: "content_type",
+    });
+    expect(native.applyPullResponse).not.toHaveBeenCalled();
+  });
+
+  it("distinguishes timeout from caller cancellation", async () => {
+    const abortingFetch = vi.fn<typeof globalThis.fetch>(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("aborted", "AbortError")),
+          );
+        }),
+    );
+    const timeoutAdapter = createAdapter(abortingFetch, undefined, {
+      requestTimeoutMs: 1,
+    }).adapter;
+    await expect(timeoutAdapter.pull()).rejects.toMatchObject({
+      kind: "timeout",
+    });
+
+    const controller = new AbortController();
+    const cancelled = createAdapter(abortingFetch).adapter.pull({
+      signal: controller.signal,
+    });
+    controller.abort();
+    await expect(cancelled).rejects.toMatchObject({ kind: "aborted" });
   });
 
   it("wires canonical CBOR bytes and raw protocol JSON without coercion", async () => {
@@ -274,7 +364,7 @@ describe("ExperimentalSyncHttpAdapter", () => {
       commitJson: '{"identity":{"clientCommitId":"i"}}',
     });
     expect(pushBody).toEqual(pushGolden);
-    expect(await codec.decodePushResponse(new Response(pushGolden))).toBe(
+    expect(await codec.decodePushResponse(pushGolden)).toBe(
       '{"status":"push"}',
     );
 
@@ -286,7 +376,7 @@ describe("ExperimentalSyncHttpAdapter", () => {
       subscriptionRevision: 2n ** 63n,
     });
     expect(pullBody).toEqual(pullGolden);
-    expect(await codec.decodePullResponse(new Response(pullGolden))).toBe(
+    expect(await codec.decodePullResponse(pullGolden)).toBe(
       '{"status":"pull"}',
     );
     expect(bridge.encodeSyncPullRequest).toHaveBeenCalledWith(
