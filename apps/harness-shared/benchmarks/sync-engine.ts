@@ -465,6 +465,7 @@ function benchmarkValue(suffix: string, index: number) {
     title: `Benchmark record ${suffix}-${index}`,
     completed: index % 2 === 0,
     priority: index,
+    quantity: index + 0.25,
     tags: ['local', 'durable', `batch-${index}`],
   };
 }
@@ -477,7 +478,7 @@ async function semanticSurrealChecksum(
 ): Promise<string> {
   const pending = normalizeSurrealPending(await sync.pending());
   const results = await database.query<BenchmarkValue[]>(
-    'SELECT VALUE { title: title, completed: completed, priority: priority, tags: tags } FROM sync_bench_record ORDER BY title',
+    'SELECT VALUE { title: title, completed: completed, priority: priority, quantity: quantity, tags: tags } FROM sync_bench_record ORDER BY title',
   );
   const values = results.at(-1)?.value;
   if (!Array.isArray(values)) {
@@ -578,25 +579,26 @@ function normalizeBenchmarkValue(value: unknown): string {
   if (!isRecord(value)) {
     throw new Error('Benchmark value is not an object');
   }
-  const { title, completed, priority, tags } = value;
+  const { title, completed, priority, quantity, tags } = value;
   if (
     typeof title !== 'string' ||
     typeof completed !== 'boolean' ||
     (typeof priority !== 'number' && typeof priority !== 'bigint') ||
+    typeof quantity !== 'number' ||
     !Array.isArray(tags) ||
     !tags.every(tag => typeof tag === 'string')
   ) {
     throw new Error(
       `Benchmark value is invalid (keys=${Object.keys(value).join(
         ',',
-      )}; title=${typeof title}, completed=${typeof completed}, priority=${typeof priority}, tags=${
+      )}; title=${typeof title}, completed=${typeof completed}, priority=${typeof priority}, quantity=${typeof quantity}, tags=${
         Array.isArray(tags)
           ? tags.map(tag => typeof tag).join(',')
           : typeof tags
       })`,
     );
   }
-  return `${title}|${completed}|${priority}|${tags.join(',')}`;
+  return `${title}|${completed}|${priority}|${quantity}|${tags.join(',')}`;
 }
 
 function semanticChecksum(records: string[], pending: string[]): string {

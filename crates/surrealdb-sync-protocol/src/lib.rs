@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 pub mod canonical;
 pub mod http_codec;
 pub use canonical::{
-    CanonicalValue, CodecError, MAX_CONTAINER_ITEMS, MAX_DEPTH, MAX_ENCODED_BYTES,
+    CanonicalFloat, CanonicalValue, CodecError, MAX_CONTAINER_ITEMS, MAX_DEPTH, MAX_ENCODED_BYTES,
     MAX_STRING_BYTES, MAX_TOTAL_ITEMS, canonical_cbor, decode_canonical_cbor, fingerprint_commit,
 };
 pub use http_codec::{

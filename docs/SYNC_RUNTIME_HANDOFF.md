@@ -21,6 +21,7 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Review: [draft PR #12](https://github.com/thorgas/react-native-surrealdb/pull/12).
 - Published branch: `origin/feat/sync-runtime-crates`.
 - Local durable benchmark implementation: `1a2d738`.
+- Finite binary64 source: private `feat/application-shaped-runtime-v1` at `d26e07b`.
 - Canonical codec source: private `main` (also `feat/canonical-codec-v1`) at
   `2032066722ccb0202f2f8481f30fd5c70f4d681e`.
 - Native canonical HTTP codec commit: `c383a11`.
@@ -98,10 +99,11 @@ prepared replacement fail closed when a value is unsupported, oversized, or over
 commit fingerprints are revalidated against their content. An accepted ID mapping deliberately
 remaps the resolved recoverable intent while retaining the authority identity bound to the original
 pre-remap commit; remapped content is bounds-validated but cannot be re-fingerprinted as the same
-identity. The TypeScript facade uses the same
-lossless bridge as query variables, preserving `bigint`, bytes, `NONE`, and structured record links.
-The safe subset deliberately excludes floats, decimals, UUID/range record keys, dates, sets, and
-other undecided kinds.
+identity. Finite binary64 values now cover recipe-shaped fractional quantities and measurements;
+signed zero normalizes, integers remain a distinct protocol type, and decimals remain unsupported.
+The TypeScript facade uses the same lossless bridge as query variables, preserving `bigint`, bytes,
+`NONE`, and structured record links. The safe subset deliberately excludes decimals, UUID/range
+record keys, dates, sets, and other undecided kinds.
 
 `packages/react-native-surrealdb/src/sync-http.ts` adds an application-owned HTTP adapter around
 the facade. It serializes calls, submits each pending commit to `POST /v1/sync/push`, pulls from

@@ -70,7 +70,7 @@ describe("ExperimentalSyncClient", () => {
     expect(client.isClosed).toBe(true);
   });
 
-  it("preserves canonical bigint, bytes, NONE, and record values", async () => {
+  it("preserves canonical bigint, bytes, fractions, NONE, and record values", async () => {
     const native = createNative();
     const client = new ExperimentalSyncClient(native);
     const commit = {
@@ -85,6 +85,7 @@ describe("ExperimentalSyncClient", () => {
             friend: new SurrealRecordId("person:bob"),
             maximum: 9223372036854775807n,
             missing: NONE,
+            servings: 2.5,
           },
         },
       ],
@@ -107,6 +108,7 @@ describe("ExperimentalSyncClient", () => {
               value: "9223372036854775807",
             },
             missing: { $surreal: "none" },
+            servings: 2.5,
           },
         },
       ],

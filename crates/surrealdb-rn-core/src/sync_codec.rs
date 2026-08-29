@@ -6,8 +6,8 @@ use serde_json::Value as JsonValue;
 use surrealdb::types::{Number as SurrealNumber, RecordIdKey, Value as SurrealValue};
 use surrealdb_sync_client::DurableClientState;
 use surrealdb_sync_protocol::{
-    CanonicalValue, ClientCommit, DurableOutcome, Fingerprint, Operation, RecordState,
-    canonical_cbor, fingerprint_commit,
+    CanonicalFloat, CanonicalValue, ClientCommit, DurableOutcome, Fingerprint, Operation,
+    RecordState, canonical_cbor, fingerprint_commit,
 };
 
 use crate::sync_client::NativeSyncError;
@@ -139,7 +139,10 @@ fn from_surreal(value: SurrealValue) -> Result<CanonicalValue, ()> {
         SurrealValue::Null => Ok(CanonicalValue::Null),
         SurrealValue::Bool(value) => Ok(CanonicalValue::Bool(value)),
         SurrealValue::Number(SurrealNumber::Int(value)) => Ok(CanonicalValue::Int(value)),
-        SurrealValue::Number(SurrealNumber::Float(_) | SurrealNumber::Decimal(_)) => Err(()),
+        SurrealValue::Number(SurrealNumber::Float(value)) => CanonicalFloat::new(value)
+            .map(CanonicalValue::Float)
+            .map_err(|_| ()),
+        SurrealValue::Number(SurrealNumber::Decimal(_)) => Err(()),
         SurrealValue::String(value) => Ok(CanonicalValue::String(value)),
         SurrealValue::Bytes(value) => Ok(CanonicalValue::Bytes(value.to_vec())),
         SurrealValue::Array(value) => value
@@ -220,7 +223,8 @@ mod tests {
             "bytes": {"$surreal": "bytes", "base64": "AQID"},
             "friend": {"$surreal": "record", "value": "person:bob"},
             "maximum": {"$surreal": "int", "value": i64::MAX.to_string()},
-            "missing": {"$surreal": "none"}
+            "missing": {"$surreal": "none"},
+            "servings": 2.5
         }));
 
         let fingerprint = canonical_fingerprint(&state(), &commit).unwrap();
@@ -230,7 +234,11 @@ mod tests {
 
     #[test]
     fn unsupported_and_hostile_values_fail_closed() {
-        assert!(canonical_fingerprint(&state(), &commit(json!(1.5))).is_err());
+        let fractional = canonical_json(&json!(1.5)).unwrap();
+        let CanonicalValue::Float(value) = fractional else {
+            panic!("expected canonical float");
+        };
+        assert_eq!(value.get().to_bits(), 1.5_f64.to_bits());
 
         let mut nested = JsonValue::Null;
         for _ in 0..=surrealdb_sync_protocol::MAX_DEPTH {

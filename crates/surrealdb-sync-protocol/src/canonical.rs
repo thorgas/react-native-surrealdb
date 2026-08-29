@@ -20,12 +20,34 @@ pub const MAX_TOTAL_ITEMS: usize = 4_096;
 pub const MAX_STRING_BYTES: usize = 1_048_576;
 pub const MAX_ENCODED_BYTES: usize = 4_194_304;
 
+/// A finite IEEE-754 binary64 value with one canonical zero representation.
+///
+/// Storing normalized bits keeps equality total without adding a float-wrapper
+/// dependency. This is exact binary64 semantics, not decimal arithmetic.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CanonicalFloat(u64);
+
+impl CanonicalFloat {
+    pub fn new(value: f64) -> Result<Self, CodecError> {
+        if !value.is_finite() {
+            return Err(CodecError::Unsupported("non-finite float"));
+        }
+        let normalized = if value == 0.0 { 0.0 } else { value };
+        Ok(Self(normalized.to_bits()))
+    }
+
+    pub fn get(self) -> f64 {
+        f64::from_bits(self.0)
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CanonicalValue {
     None,
     Null,
     Bool(bool),
     Int(i64),
+    Float(CanonicalFloat),
     String(String),
     Bytes(Vec<u8>),
     Array(Vec<CanonicalValue>),
@@ -232,6 +254,7 @@ pub(crate) fn to_cbor(value: &Value) -> Result<CborValue, CodecError> {
         Value::Null => CborValue::Null,
         Value::Bool(value) => CborValue::Bool(*value),
         Value::Int(value) => CborValue::Integer((*value).into()),
+        Value::Float(value) => CborValue::Float(value.get()),
         Value::String(value) => CborValue::Text(value.clone()),
         Value::Bytes(value) => CborValue::Bytes(value.clone()),
         Value::Array(values) => {
@@ -267,7 +290,7 @@ pub(crate) fn from_cbor(value: CborValue) -> Result<Value, CodecError> {
             .map(Value::Int)
             .map_err(|_| CodecError::Unsupported("integer outside i64")),
         CborValue::Bytes(value) => Ok(Value::Bytes(value)),
-        CborValue::Float(_) => Err(CodecError::Unsupported("float")),
+        CborValue::Float(value) => CanonicalFloat::new(value).map(Value::Float),
         CborValue::Text(value) => Ok(Value::String(value)),
         CborValue::Bool(value) => Ok(Value::Bool(value)),
         CborValue::Null => Ok(Value::Null),
@@ -585,6 +608,53 @@ mod tests {
     }
 
     #[test]
+    fn finite_float_vectors_are_shortest_exact_binary64() {
+        let vectors = [
+            (1.5, "f93e00"),
+            (100_000.0, "fa47c35000"),
+            (1.1, "fb3ff199999999999a"),
+            (-0.0, "f90000"),
+        ];
+        for (input, expected) in vectors {
+            let value = Value::Float(CanonicalFloat::new(input).unwrap());
+            assert_eq!(hex(&canonical_cbor(&value).unwrap()), expected);
+            let Value::Float(decoded) =
+                decode_canonical_cbor(&canonical_cbor(&value).unwrap()).unwrap()
+            else {
+                panic!("expected float");
+            };
+            assert_eq!(decoded.get().to_bits(), value_float_bits(&value));
+        }
+        assert_eq!(CanonicalFloat::new(-0.0).unwrap().get().to_bits(), 0);
+    }
+
+    #[test]
+    fn nonfinite_and_noncanonical_float_inputs_fail_closed() {
+        for value in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                CanonicalFloat::new(value),
+                Err(CodecError::Unsupported("non-finite float"))
+            );
+        }
+        assert_eq!(
+            decode_canonical_cbor(&[0xf9, 0x80, 0x00]),
+            Err(CodecError::NonCanonical)
+        );
+        assert_eq!(
+            decode_canonical_cbor(&[0xfa, 0x3f, 0xc0, 0x00, 0x00]),
+            Err(CodecError::NonCanonical)
+        );
+        assert_eq!(
+            decode_canonical_cbor(&[0xf9, 0x7e, 0x00]),
+            Err(CodecError::Unsupported("non-finite float"))
+        );
+        assert_eq!(
+            decode_canonical_cbor(&[0xf9, 0x7c, 0x00]),
+            Err(CodecError::Unsupported("non-finite float"))
+        );
+    }
+
+    #[test]
     fn decoder_rejects_noncanonical_duplicate_and_trailing_inputs() {
         assert_eq!(
             decode_canonical_cbor(&[0xa2, 0x62, b'a', b'a', 0x01, 0x61, b'b', 0x02]),
@@ -704,6 +774,26 @@ mod tests {
             integer_fingerprint
         );
 
+        insert_rank(
+            &mut altered_type,
+            Value::Float(CanonicalFloat::new(1.0).unwrap()),
+        );
+        let float_fingerprint =
+            fingerprint_commit(&partition, &client, &commit, &altered_type).unwrap();
+        assert_ne!(float_fingerprint, integer_fingerprint);
+
+        let mut fractional = sample_operations();
+        insert_rank(
+            &mut fractional,
+            Value::Float(CanonicalFloat::new(1.5).unwrap()),
+        );
+        assert_eq!(
+            fingerprint_commit(&partition, &client, &commit, &fractional)
+                .unwrap()
+                .0,
+            "sha256:21ab1eee234f831a0f0af7a157b673cfcf4c0bda90824b025dadb43ddf9a828c"
+        );
+
         let mut same_object_different_insertion = sample_operations();
         let Operation::Upsert { value, .. } = &mut same_object_different_insertion[0] else {
             unreachable!();
@@ -736,5 +826,12 @@ mod tests {
             unreachable!();
         };
         object.insert("rank".into(), rank);
+    }
+
+    fn value_float_bits(value: &Value) -> u64 {
+        match value {
+            Value::Float(value) => value.get().to_bits(),
+            _ => unreachable!(),
+        }
     }
 }

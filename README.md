@@ -138,7 +138,9 @@ state, aborts stale token refresh, and allows one explicit credential refresh pe
 challenge without owning login state. HTTPS/WSS are required outside explicit loopback-only development escape hatches,
 and the 60-second default periodic pull is the correctness fallback. It provides no deployable
 authority. Native Rust computes content-bound commit fingerprints from a bounded canonical
-safe subset and rejects unsupported or hostile values before mutation.
+safe subset, including finite fractional JavaScript numbers, and rejects unsupported or hostile
+values before mutation. Integers and fractions remain distinct protocol types; NaN, infinities,
+and decimal values fail closed.
 Native conformance tests also decode exact accepted, pull-batch, and reset bytes produced by the
 private SurrealDB authority adapter. They apply those messages through the native client, fully
 close and reopen the same SurrealKV database, and verify durable outcome, cursor/checkpoint,

@@ -251,12 +251,15 @@ lifecycle.stop();
 The example URL is intentionally non-routable: this package does not supply or deploy the authority.
 
 The payload API uses this package's tagged lossless value bridge for JavaScript `bigint`, bytes,
-`NONE`, and record links. Native Rust ignores any caller-supplied fingerprint, validates record
+`NONE`, record links, and finite fractional JavaScript numbers. Native Rust ignores any caller-supplied fingerprint, validates record
 values against the bounded canonical protocol safe subset, and emits the content-bound SHA-256
-fingerprint in the durable pending commit. Floats, decimals, UUID/range record keys, dates, sets,
-and other undecided protocol kinds fail closed. `createExperimentalCanonicalCborSyncHttpCodec()`
+fingerprint in the durable pending commit. NaN, infinities, decimals, UUID/range record keys, dates,
+sets, and other undecided protocol kinds fail closed. Integers and fractions are different typed
+values, and this binary64 support does not provide decimal money arithmetic.
+`createExperimentalCanonicalCborSyncHttpCodec()`
 uses the copied protocol crate's bounded, deterministic `surrealdb-sync/1` request/response codec;
-its golden messages match private commit `2032066722ccb0202f2f8481f30fd5c70f4d681e`. The exported
+its finite-value profile matches private branch commit
+`d26e07b` (`feat/application-shaped-runtime-v1`). The exported
 `experimentalJsonSyncHttpCodec` remains test/prototype-only and throws when a pending `bigint` lies
 outside JavaScript's safe integer range. The optional scheduler coalesces triggers, performs only one
 cycle at a time, pauses offline, and applies bounded full-jitter retry to transient failures. Its

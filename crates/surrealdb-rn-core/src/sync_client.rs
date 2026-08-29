@@ -305,7 +305,7 @@ fn map_persistence_error(error: SyncStateError) -> NativeSyncError {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use surrealdb::types::{RecordId as NativeRecordId, Value};
+    use surrealdb::types::{Number as SurrealNumber, RecordId as NativeRecordId, Value};
     use surrealdb_sync_protocol::{
         AppliedRecord, BaseVersion, Checkpoint, ClientCommitId, CommitIdentity, Cursor,
         Fingerprint, IdMapping, OpaqueCheckpoint, Operation, PullBatch, PullCommit, PullFrame,
@@ -469,6 +469,55 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn fractional_recipe_value_survives_surrealkv_reopen() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let database = surrealkv_database(directory.path()).await;
+        let mut fractional = commit();
+        if let Operation::Upsert {
+            record_id, value, ..
+        } = &mut fractional.operations[0]
+        {
+            *record_id = RecordId("recipe:oatmeal".into());
+            *value = json!({"title": "Oatmeal", "servings": 2.5, "proteinGrams": 13.75});
+        }
+
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        client
+            .enqueue(serde_json::to_string(&fractional).unwrap())
+            .await
+            .unwrap();
+        client.close().await;
+        database.close().await.unwrap();
+        drop(database);
+
+        let reopened_database = surrealkv_database(directory.path()).await;
+        let reopened = open_sync_client(reopened_database.clone(), options("all"))
+            .await
+            .unwrap();
+        assert_eq!(reopened.status().await.unwrap().pending_count, 1);
+        let record: Option<Value> = reopened_database
+            .client()
+            .await
+            .unwrap()
+            .select(NativeRecordId::parse_simple("recipe:oatmeal").unwrap())
+            .await
+            .unwrap();
+        let Value::Object(record) = record.unwrap() else {
+            panic!("expected recipe object");
+        };
+        assert_eq!(
+            record.get("servings"),
+            Some(&Value::Number(SurrealNumber::Float(2.5)))
+        );
+        assert_eq!(
+            record.get("proteinGrams"),
+            Some(&Value::Number(SurrealNumber::Float(13.75)))
+        );
+    }
+
+    #[tokio::test]
     async fn accepted_id_mapping_preserves_original_identity_across_reopen() {
         let database = database().await;
         let client = open_sync_client(database.clone(), options("all"))
@@ -604,7 +653,7 @@ mod tests {
 
         let mut unsupported = commit();
         if let Operation::Upsert { value, .. } = &mut unsupported.operations[0] {
-            *value = json!({"unsupportedFloat": 1.5});
+            *value = json!({"unsupportedDecimal": {"$surreal": "decimal", "value": "1.50"}});
         }
         assert!(matches!(
             client
@@ -622,7 +671,7 @@ mod tests {
                 identity: commit().identity,
                 record_id: RecordId("person:ada".into()),
                 authoritative: RecordState::Present {
-                    value: json!(1.5),
+                    value: json!({"$surreal": "decimal", "value": "1.50"}),
                     version: 1,
                     reference: None,
                 },
@@ -649,7 +698,7 @@ mod tests {
                         records: vec![AppliedRecord {
                             record_id: RecordId("person:lin".into()),
                             state: RecordState::Present {
-                                value: json!(1.5),
+                                value: json!({"$surreal": "decimal", "value": "1.50"}),
                                 version: 1,
                                 reference: None,
                             },

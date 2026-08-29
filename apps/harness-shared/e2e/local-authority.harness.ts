@@ -116,7 +116,7 @@ describe("live local authority", () => {
               kind: "upsert",
               record_id: recordId,
               base_version: "absent",
-              value: { winner: "client-a" },
+              value: { winner: "client-a", servings: 2.5 },
               reference: null,
             },
           ],
@@ -131,7 +131,7 @@ describe("live local authority", () => {
               kind: "upsert",
               record_id: recordId,
               base_version: "absent",
-              value: { winner: "client-b" },
+              value: { winner: "client-b", servings: 3.75 },
               reference: null,
             },
           ],
@@ -168,10 +168,16 @@ describe("live local authority", () => {
       expect(pulledB.cursorSequence).toBe(pulledA.cursorSequence);
 
       const [recordsA, recordsB] = await Promise.all([
-        databaseA.query<string[]>(`SELECT VALUE winner FROM ${recordId}`),
-        databaseB.query<string[]>(`SELECT VALUE winner FROM ${recordId}`),
+        databaseA.query<Array<{ winner: string; servings: number }>>(
+          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`,
+        ),
+        databaseB.query<Array<{ winner: string; servings: number }>>(
+          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`,
+        ),
       ]);
-      expect(recordsA[0]?.value).toEqual(["client-a"]);
+      expect(recordsA[0]?.value).toEqual([
+        { winner: "client-a", servings: 2.5 },
+      ]);
       expect(recordsB[0]?.value).toEqual(recordsA[0]?.value);
       expect(await syncB.conflicts()).toHaveLength(1);
 

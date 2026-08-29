@@ -195,6 +195,9 @@ fn canonical_to_json(value: CanonicalValue) -> Result<JsonValue, NativeSyncError
         CanonicalValue::Null => JsonValue::Null,
         CanonicalValue::Bool(value) => JsonValue::Bool(value),
         CanonicalValue::Int(value) => json!({ TAG: "int", "value": value.to_string() }),
+        CanonicalValue::Float(value) => serde_json::Number::from_f64(value.get())
+            .map(JsonValue::Number)
+            .ok_or(NativeSyncError::Protocol)?,
         CanonicalValue::String(value) => JsonValue::String(value),
         CanonicalValue::Bytes(value) => json!({ TAG: "bytes", "base64": BASE64.encode(value) }),
         CanonicalValue::Array(values) => JsonValue::Array(
@@ -255,6 +258,7 @@ fn canonical_to_surreal(value: CanonicalValue) -> Result<SurrealValue, NativeSyn
         CanonicalValue::Null => SurrealValue::Null,
         CanonicalValue::Bool(value) => SurrealValue::Bool(value),
         CanonicalValue::Int(value) => SurrealValue::Number(SurrealNumber::Int(value)),
+        CanonicalValue::Float(value) => SurrealValue::Number(SurrealNumber::Float(value.get())),
         CanonicalValue::String(value) => SurrealValue::String(value),
         CanonicalValue::Bytes(value) => SurrealValue::Bytes(value.into()),
         CanonicalValue::Array(values) => SurrealValue::Array(SurrealArray::from(
@@ -356,6 +360,10 @@ mod tests {
             ("bool".into(), CanonicalValue::Bool(true)),
             ("bytes".into(), CanonicalValue::Bytes(vec![0, 1, 2])),
             ("int".into(), CanonicalValue::Int(i64::MAX)),
+            (
+                "servings".into(),
+                CanonicalValue::Float(surrealdb_sync_protocol::CanonicalFloat::new(2.5).unwrap()),
+            ),
             ("none".into(), CanonicalValue::None),
             ("null".into(), CanonicalValue::Null),
             (

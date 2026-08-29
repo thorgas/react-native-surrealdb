@@ -823,6 +823,7 @@ fn decode_reset_reason(value: u64) -> Result<ResetReason, CodecError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CanonicalFloat;
     use std::collections::BTreeMap;
 
     fn identity() -> CommitIdentity {
@@ -853,6 +854,10 @@ mod tests {
         CanonicalValue::Object(BTreeMap::from([
             ("none".into(), CanonicalValue::None),
             ("number".into(), CanonicalValue::Int(-7)),
+            (
+                "ratio".into(),
+                CanonicalValue::Float(CanonicalFloat::new(1.5).unwrap()),
+            ),
             (
                 "record".into(),
                 CanonicalValue::RecordId {
