@@ -1,6 +1,6 @@
 # Sync runtime adapter handoff
 
-Updated: 2026-08-28
+Updated: 2026-08-29
 
 ## Branch goal
 
@@ -23,6 +23,8 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Canonical codec source: private `main` (also `feat/canonical-codec-v1`) at
   `2032066722ccb0202f2f8481f30fd5c70f4d681e`.
 - Native canonical HTTP codec commit: `c383a11`.
+- Accepted authority outcome persistence commit: `be8be3b`.
+- Authority pull/reset persistence commit: `4aa43a1`.
 
 ## Source boundary
 
@@ -119,6 +121,7 @@ cargo test -p surrealdb-rn-core sync_client
 cargo test -p surrealdb-rn-core sync_codec
 cargo test -p surrealdb-rn-core sync_http_codec
 cargo test -p surrealdb-rn-core authority_adapter_response_persists_across_surrealkv_reopen
+cargo test -p surrealdb-rn-core adapter_pull_cbor_reopens_with_durable_batch_and_reset_state
 cargo test -p surrealdb-sync-protocol http_codec
 pnpm --filter react-native-surrealdb run test
 pnpm --filter react-native-surrealdb run typecheck
@@ -183,18 +186,20 @@ restart seed additionally encodes a real pending commit and decodes the private 
 through the public canonical codec on both iOS and Android. This is a native-boundary E2E, not a
 deployed-server test.
 
-Authority coverage is currently a split conformance chain. Private commit `5a991f9` replays the six
-push-relevant redacted fixtures through the transactional SurrealDB 3.2.4 adapter on SurrealKV and
-RocksDB and pins an accepted canonical-CBOR response. The native test decodes that exact response,
-records it in the embedded client, closes SurrealKV, and proves the durable outcome after reopen.
-The package separately proves a real TCP client boundary, while the device tests prove the same
-codec through Hermes. A single deployed client-to-authority HTTP E2E is still not claimed: HTTP
-routing, authentication integration, and the pull/checkpoint adapter remain separate boundaries.
+Authority coverage is currently a split conformance chain. Private branch
+`feat/surrealdb-authority-pull` replays all nine redacted fixtures through the transactional
+SurrealDB 3.2.4 adapter on SurrealKV and RocksDB and pins accepted, pull-batch, and reset canonical
+CBOR responses. Native tests decode those exact responses, apply them in the embedded client, fully
+close/drop/reopen SurrealKV, and prove durable outcome, checkpoint/cursor, confirmed records, reset
+replacement, pending outbox, and optimistic replay. The package separately proves a real TCP client
+boundary, while the device tests prove the same codec through Hermes. A single deployed
+client-to-authority HTTP E2E is still not claimed: HTTP routing, authentication integration, the raw
+changefeed scanner, token/retention policy, and production listener remain separate boundaries.
 
 ## Next implementation slices
 
-1. Expose the reviewed private push adapter through the selected authenticated deployment boundary,
-   add pull/checkpoint projection, and run one deployed client-to-authority E2E.
+1. Expose the reviewed private push/pull adapter through an authenticated deployment boundary and
+   run one deployed client-to-authority E2E.
 2. Add scheduling, retry/backoff, connectivity policy, and WebSocket-only invalidation hints around
    the explicit HTTP-correctness path.
 3. Replace the copied crates with the agreed single-source/public-export mechanism before release.
@@ -206,6 +211,8 @@ routing, authentication integration, and the pull/checkpoint adapter remain sepa
 - GitHub Actions may remain unavailable until account billing permits runner allocation.
 - The HTTP adapter is only application-owned orchestration; authority deployment and authentication
   integration remain separate work.
+- The authority still needs a privileged raw changefeed scanner plus explicit retention and opaque
+  checkpoint-token generation/signing before production deployment.
 - This branch must remain a draft and must not be released or advertised as sync support.
 
 Only GitHub runner/billing availability is a user-side operational blocker. The codec, transport,

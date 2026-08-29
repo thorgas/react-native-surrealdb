@@ -133,6 +133,11 @@ implements the private `surrealdb-sync/1` push/pull envelope, while the JSON cod
 explicitly lossy test fallback. It provides no deployable authority, scheduler, WebSocket ordering,
 or automatic retry. Native Rust computes content-bound commit fingerprints from a bounded canonical
 safe subset and rejects unsupported or hostile values before mutation.
+Native conformance tests also decode exact accepted, pull-batch, and reset bytes produced by the
+private SurrealDB authority adapter. They apply those messages through the native client, fully
+close and reopen the same SurrealKV database, and verify durable outcome, cursor/checkpoint,
+confirmed records, pending outbox, and reconstructed optimistic state. This proves the local bridge;
+it does not provide or deploy the authenticated authority endpoint.
 It does not make this package a usable sync engine and must not be released as one. The private
 formal specification and comprehensive checker suites are not included. See
 [`crates/SYNC_RUNTIME_ORIGIN.md`](./crates/SYNC_RUNTIME_ORIGIN.md) for the temporary source boundary

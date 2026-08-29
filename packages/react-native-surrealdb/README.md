@@ -225,6 +225,11 @@ WebSocket durability or ordering are absent. A WebSocket may only notify the app
 `pull()`. Do not ship or advertise this API; see the repository
 [sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
 
+Native conformance tests consume exact accepted, pull-batch, and reset CBOR emitted by the private
+SurrealDB authority adapter. The pull/reset test applies the messages, closes and drops the embedded
+database handle, reopens the same SurrealKV path, and verifies the checkpoint, confirmed record,
+pending outbox, and optimistic replay. This is a local storage/codec proof, not a deployed service.
+
 ## Value transport
 
 The JavaScript/Rust boundary preserves 64-bit integers, decimals, record IDs,
