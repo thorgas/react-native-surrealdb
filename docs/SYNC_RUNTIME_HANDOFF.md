@@ -39,6 +39,7 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Scheduler hardening commit and integrated draft head:
   `9dbf2befad234b6d66332092c313e5dea9810040`.
 - Application lifecycle/authentication coordinator commit: `df9b6c4`.
+- Cross-platform local-authority lifecycle E2E and documentation commit: `0412b00`.
 
 ## Source boundary
 
