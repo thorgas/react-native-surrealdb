@@ -29,6 +29,8 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Live local-authority device E2E commit: `2e86ddc`.
 - SurrealDB 3.2.4 alignment branch: `origin/feat/surrealdb-3.2.4-alignment`.
 - Exact engine/benchmark metadata alignment commit: `8b02b2d`.
+- Cross-version SurrealKV reopen commit: `f69a285`.
+- SurrealKV lifecycle/RSS commit: `24b0818`.
 
 ## Source boundary
 
@@ -142,6 +144,10 @@ pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:ios
 pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:android
 pnpm --filter surrealdb-harness-rn86 run e2e:local-authority:ios
 pnpm --filter surrealdb-harness-rn86 run e2e:local-authority:android
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-migration:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-migration:android
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-churn:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-churn:android
 ./scripts/verify-core.sh
 ```
 
@@ -190,6 +196,15 @@ The default iPhone 17 Pro launch stalled once; rebuilding on the existing Hauswi
 simulator succeeded without deleting either simulator. Node 26 remains outside the documented
 `>=20 <23` range and emits non-fatal type-stripping warnings; the cached exact pnpm 11.5.0 runner
 completed every test. No UI changed, so screenshots are not applicable.
+
+The permanent cross-version fixture also passed on iOS and Android on
+2026-08-29. It built historical revision `e0c200b` with SurrealDB 3.2.1,
+seeded app-private SurrealKV, replaced the native artifact and app in place,
+then reopened the same data with SurrealDB 3.2.4. The 64-cycle lifecycle test
+passed on both platforms and emitted raw RSS reports. Android recorded 47
+samples (107,324–417,976 KiB; median 261,540; p95 416,436); iOS recorded 25
+samples (195,040–783,552 KiB; median 641,136; p95 733,280). These Debug/Harness
+measurements have no regression gate and are not release-memory claims.
 
 The E2E run also repaired pre-existing harness setup gaps: each host now has a tiny local test proxy
 that imports the shared suites, host app IDs and the iOS scheme are explicit, `e2e:ios` and
@@ -245,17 +260,16 @@ separate boundaries.
    the explicit HTTP-correctness path.
 3. Replace the copied crates with the agreed single-source/public-export mechanism before release.
 4. Extend the canonical value profile only through private protocol decisions and golden vectors.
+5. Establish repeated Release-build physical-device RSS baselines before defining a memory budget.
 
 ## Hard blockers
 
 - The long-term single-source/export mechanism is unresolved.
 - GitHub Actions may remain unavailable until account billing permits runner allocation.
 - The local gateway proves HTTP orchestration but not production deployment or authentication.
-- The authority has a privileged independent scanner, but production retention/alerting/rebootstrap
-  operations and opaque checkpoint issuance are still unresolved.
-- A genuine SurrealDB 3.2.1-seeded to 3.2.4-reopened mobile fixture is not yet permanent. Both pins
-  resolve to the same `surrealkv 0.21.2`, and current-version restart coverage remains green, but a
-  cross-version seed/reopen run is still required before release.
+- The private authority now has bounded checkpoint collection, durable scanner health, and
+  fail-closed single-partition rebootstrap operations, but production deployment validation and
+  opaque checkpoint issuance remain unresolved.
 - This branch must remain a draft and must not be released or advertised as sync support.
 
 Only GitHub runner/billing availability is a user-side operational blocker. The codec, transport,

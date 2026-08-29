@@ -68,6 +68,36 @@ pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:ios
 pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:android
 ```
 
+The permanent cross-version fixture builds the historical `e0c200b` revision
+with its exact SurrealDB `3.2.1` pin, seeds the app-private database, replaces
+only the native runtime with the current exact `3.2.4` build, reinstalls without
+clearing application data, and verifies the existing restart assertions:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-migration:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-migration:android
+```
+
+The first run needs a frozen install and full historical Rust builds in a
+temporary detached worktree. The runner removes that worktree and restores the
+current native artifact even after a failure. It does not remove this active
+checkout's `node_modules` or Cargo target cache.
+
+The lifecycle resource proof repeatedly opens, writes, reads, and closes the
+same SurrealKV database 64 times while sampling the application process RSS:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-churn:ios
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-churn:android
+```
+
+Reports are written below the ignored
+`performance-results/<platform>/surrealkv-churn/` directory. They contain every
+raw sample and min/median/p95/max summaries. The commands require at least five
+valid samples but deliberately have no memory regression threshold: Debug,
+Metro, Harness, simulator/emulator, relaunch, and allocator behavior make these
+diagnostic baselines rather than production memory claims.
+
 The ordinary shared Hermes suite also covers the application-owned HTTP adapter
 with a redacted mocked authority and a real embedded native sync client. Run it
 without rebuilding an already-installed host with:

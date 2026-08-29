@@ -150,6 +150,23 @@ Do not imply SQLite equivalence for graph, document, or SurrealQL workloads. Cro
 - task/thread/handle count after repeated open/query/subscribe/close cycles;
 - cancellation latency and close-while-querying latency.
 
+The RN 0.86 host now provides a permanent first lifecycle measurement:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-churn:android
+pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-churn:ios
+```
+
+It executes 64 open/query/update/read/close cycles against one app-private
+SurrealKV database and records raw application-process RSS samples. On
+2026-08-29 the Pixel 9 API 36 Debug/Harness run recorded 47 samples from
+107,324 to 417,976 KiB (median 261,540; p95 416,436). The iPhone 17 Pro iOS
+26.1 simulator run recorded 25 samples from 195,040 to 783,552 KiB (median
+641,136; p95 733,280). These values include Harness relaunch and Debug runtime
+overhead. They prove collection and lifecycle correctness, not a release-mode
+memory budget. Keep `regressionGate` null until repeated compatible-device
+baselines establish variance.
+
 ## Measurement protocol
 
 Every timing benchmark should follow the same protocol:
