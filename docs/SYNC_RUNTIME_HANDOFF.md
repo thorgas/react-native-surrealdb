@@ -31,6 +31,12 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Exact engine/benchmark metadata alignment commit: `8b02b2d`.
 - Cross-version SurrealKV reopen commit: `f69a285`.
 - SurrealKV lifecycle/RSS commit: `24b0818`.
+- Bounded HTTP transport commit: `fbb86d7`.
+- Durable retry scheduler commit: `5cfaebd`.
+- Pull-only WebSocket hints commit: `d03e322`.
+- Scheduler documentation commit: `cc2a255`.
+- Cross-platform Hermes scheduler E2E commit: `394b269`.
+- Integrated draft branch head: `394b2696447cc0a79b215a066e239577cf69109a`.
 
 ## Source boundary
 
@@ -203,6 +209,15 @@ The default iPhone 17 Pro launch stalled once; rebuilding on the existing Hauswi
 simulator succeeded without deleting either simulator. Node 26 remains outside the documented
 `>=20 <23` range and emits non-fatal type-stripping warnings; the cached exact pnpm 11.5.0 runner
 completed every test. No UI changed, so screenshots are not applicable.
+
+The scheduler slice passed package build/typecheck and 33 Vitest cases, `verify-core.sh`, Release
+artifact generation, and `release:check`. The standard RN 0.86 Harness suite passed 13 tests on an
+iPhone 17 Pro/iOS 26.1 simulator and 13 tests on a Pixel 9/Android 16 emulator. The mocked-authority
+trace starts offline, resumes a single push/pull cycle on connectivity, persists the mapped record
+and checkpoint through the native facade, and handles a WebSocket-style hint as a pull-only wakeup.
+The standard scripts exclude the dedicated process-restart seed/verify fixtures; those retain their
+own explicit two-phase commands. Harness runs are Debug/Metro functional evidence, not bundled
+Release-app evidence.
 
 The permanent cross-version fixture also passed on iOS and Android on
 2026-08-29. It built historical revision `e0c200b` with SurrealDB 3.2.1,
