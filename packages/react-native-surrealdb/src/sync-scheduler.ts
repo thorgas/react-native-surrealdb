@@ -58,7 +58,7 @@ export class ExperimentalSyncScheduler {
   readonly #invalidations?: ExperimentalSyncInvalidationSource;
   readonly #baseRetryMs: number;
   readonly #maxRetryMs: number;
-  readonly #periodicPullMs?: number;
+  readonly #periodicPullMs: number;
   readonly #now: () => number;
   readonly #random: () => number;
   readonly #setTimer: NonNullable<ExperimentalSyncSchedulerOptions["setTimer"]>;
@@ -79,6 +79,8 @@ export class ExperimentalSyncScheduler {
   #unsubscribeConnectivity?: () => void;
   #stopInvalidations?: () => void;
   #authenticationBlocked = false;
+  #terminalBlocked = false;
+  #generation = 0;
 
   constructor(options: ExperimentalSyncSchedulerOptions) {
     this.#adapter = options.adapter;
@@ -91,10 +93,10 @@ export class ExperimentalSyncScheduler {
         "sync scheduler maxRetryMs must not be below baseRetryMs",
       );
     }
-    this.#periodicPullMs =
-      options.periodicPullMs == null
-        ? undefined
-        : positive(options.periodicPullMs, "periodicPullMs");
+    this.#periodicPullMs = positive(
+      options.periodicPullMs ?? 60_000,
+      "periodicPullMs",
+    );
     this.#now = options.now ?? Date.now;
     this.#random = options.random ?? Math.random;
     this.#setTimer = options.setTimer ?? setTimeout;
@@ -108,6 +110,9 @@ export class ExperimentalSyncScheduler {
   start(): void {
     if (this.#started) return;
     this.#started = true;
+    this.#generation += 1;
+    this.#authenticationBlocked = false;
+    this.#terminalBlocked = false;
     this.#online = this.#connectivity?.current() !== false;
     this.#unsubscribeConnectivity = this.#connectivity?.subscribe((online) =>
       this.#setOnline(online),
@@ -136,6 +141,7 @@ export class ExperimentalSyncScheduler {
 
   requestSync(reason: "local_mutation" | "manual" = "manual"): void {
     this.#authenticationBlocked = false;
+    this.#terminalBlocked = false;
     this.#cancelRetry();
     this.#queue("sync", reason, true);
   }
@@ -158,7 +164,6 @@ export class ExperimentalSyncScheduler {
     explicit: boolean,
   ): void {
     if (!this.#started) return;
-    if (explicit) this.#authenticationBlocked = false;
     if (explicit || this.#pending?.cycle !== "sync") {
       this.#pending = { cycle, reason };
     }
@@ -168,6 +173,7 @@ export class ExperimentalSyncScheduler {
     }
     if (
       this.#authenticationBlocked ||
+      this.#terminalBlocked ||
       this.#active != null ||
       this.#retryTimer != null
     )
@@ -185,6 +191,7 @@ export class ExperimentalSyncScheduler {
     )
       return;
     this.#pending = undefined;
+    const generation = this.#generation;
     const controller = new AbortController();
     this.#active = { controller, cycle: pending.cycle };
     this.#publish({ state: "syncing", reason: pending.reason });
@@ -194,12 +201,12 @@ export class ExperimentalSyncScheduler {
       } else {
         await this.#adapter.pull({ signal: controller.signal });
       }
-      if (!this.#started) return;
+      if (!this.#started || generation !== this.#generation) return;
       this.#retryAttempt = 0;
       this.#publish({ state: "idle", lastSuccessAt: this.#now() });
       this.#schedulePeriodic();
     } catch (error) {
-      if (!this.#started) return;
+      if (!this.#started || generation !== this.#generation) return;
       if (!this.#online) {
         this.#pending = prefer(this.#pending, pending);
         this.#publish({ state: "offline" });
@@ -219,6 +226,8 @@ export class ExperimentalSyncScheduler {
         return;
       }
       if (!retryable(failure)) {
+        this.#terminalBlocked = true;
+        this.#pending = undefined;
         this.#publish({ state: "failed", error: failure });
         return;
       }
@@ -231,8 +240,10 @@ export class ExperimentalSyncScheduler {
       if (this.#active?.controller === controller) this.#active = undefined;
       if (
         this.#started &&
+        generation === this.#generation &&
         this.#retryTimer == null &&
-        !this.#authenticationBlocked
+        !this.#authenticationBlocked &&
+        !this.#terminalBlocked
       ) {
         void this.#drain();
       }
@@ -255,9 +266,8 @@ export class ExperimentalSyncScheduler {
       this.#publish({ state: "offline" });
       return;
     }
-    this.#authenticationBlocked = false;
     this.#startInvalidations();
-    this.#queue("sync", "online", true);
+    this.#queue("sync", "online", false);
   }
 
   #scheduleRetry(): void {
@@ -280,12 +290,7 @@ export class ExperimentalSyncScheduler {
   }
 
   #schedulePeriodic(): void {
-    if (
-      !this.#started ||
-      this.#periodicPullMs == null ||
-      this.#periodicTimer != null
-    )
-      return;
+    if (!this.#started || this.#periodicTimer != null) return;
     this.#periodicTimer = this.#setTimer(() => {
       this.#periodicTimer = undefined;
       this.requestPull("periodic");

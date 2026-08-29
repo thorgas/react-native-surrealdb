@@ -139,6 +139,52 @@ describe("ExperimentalSyncScheduler", () => {
     protocolScheduler.stop();
   });
 
+  it("keeps terminal failures halted until an explicit recovery request", async () => {
+    vi.useFakeTimers();
+    let hint: (() => void) | undefined;
+    const transport = adapter();
+    transport.syncOnce
+      .mockRejectedValueOnce(
+        new ExperimentalSyncHttpError("invalid", "protocol"),
+      )
+      .mockResolvedValueOnce(onceResult);
+    const scheduler = new ExperimentalSyncScheduler({
+      adapter: transport,
+      invalidations: {
+        start: (onHint) => {
+          hint = onHint;
+          return () => undefined;
+        },
+      },
+    });
+
+    scheduler.start();
+    await vi.waitFor(() => expect(scheduler.status.state).toBe("failed"));
+    hint?.();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(transport.syncOnce).toHaveBeenCalledOnce();
+    expect(transport.pull).not.toHaveBeenCalled();
+
+    scheduler.requestSync("manual");
+    await vi.waitFor(() => expect(transport.syncOnce).toHaveBeenCalledTimes(2));
+    expect(scheduler.status.state).toBe("idle");
+    scheduler.stop();
+  });
+
+  it("uses periodic HTTP pull when an invalidation hint is lost", async () => {
+    vi.useFakeTimers();
+    const transport = adapter();
+    const scheduler = new ExperimentalSyncScheduler({ adapter: transport });
+
+    scheduler.start();
+    await vi.waitFor(() => expect(transport.syncOnce).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(59_999);
+    expect(transport.pull).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await vi.waitFor(() => expect(transport.pull).toHaveBeenCalledOnce());
+    scheduler.stop();
+  });
+
   it("treats invalidations as pull-only hints", async () => {
     let hint: (() => void) | undefined;
     const stopHints = vi.fn();
@@ -179,5 +225,27 @@ describe("ExperimentalSyncScheduler", () => {
     scheduler.stop();
     expect(signal?.aborted).toBe(true);
     expect(scheduler.status).toEqual({ state: "stopped" });
+  });
+
+  it("ignores stale completion from a stopped lifecycle after restart", async () => {
+    const oldCycle = deferred<never>();
+    const newCycle = deferred<never>();
+    const transport = adapter();
+    transport.syncOnce
+      .mockReturnValueOnce(oldCycle.promise)
+      .mockReturnValueOnce(newCycle.promise);
+    const scheduler = new ExperimentalSyncScheduler({ adapter: transport });
+
+    scheduler.start();
+    scheduler.stop();
+    scheduler.start();
+    expect(transport.syncOnce).toHaveBeenCalledTimes(2);
+    oldCycle.resolve(onceResult);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(scheduler.status.state).toBe("syncing");
+    newCycle.resolve(onceResult);
+    await vi.waitFor(() => expect(scheduler.status.state).toBe("idle"));
+    scheduler.stop();
   });
 });

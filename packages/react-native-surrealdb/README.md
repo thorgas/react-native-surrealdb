@@ -187,7 +187,11 @@ Applications must inject their access-token provider, wire codec, and `fetch`. T
 last complete checkpoint from native durable client state; applying a pull atomically persists its
 records, cursor, scope snapshot, and opaque checkpoint before the next request can observe it.
 Requests and responses are bounded to 4 MiB by default, the complete fetch/body/decode operation is
-timed out, content types are checked, and bodies without a stream or declared length fail closed.
+timed out (including token acquisition and codec work), content types are checked, and bodies
+without a stream or declared length fail closed. HTTPS is required; development HTTP is accepted
+only for an explicitly enabled loopback URL (including Android emulator host alias `10.0.2.2`). The token provider receives the bounded call's abort
+signal and should stop its own work when aborted; the adapter still releases its serialized queue if
+the provider ignores that signal.
 
 The native codec constructor is the only complete wire codec on this branch:
 
@@ -238,8 +242,10 @@ outside JavaScript's safe integer range. The optional scheduler coalesces trigge
 cycle at a time, pauses offline, and applies bounded full-jitter retry to transient failures. Its
 timers are advisory and non-durable: the native outbox and checkpoint remain the recovery source.
 WebSocket hints only wake a pull, use a fresh application-supplied URL/ticket for every connection,
-and never define durability or ordering; periodic pull remains the fallback. Authority deployment
-is absent. Do not ship or advertise this API; see the repository
+and never define durability or ordering; a 60-second periodic pull is the default fallback.
+Production hints require WSS. The client closes an oversized frame after receipt, but the authority
+or proxy must enforce its own pre-allocation frame limit. Authority deployment is absent. Do not
+ship or advertise this API; see the repository
 [sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
 
 Native conformance tests consume exact accepted, pull-batch, and reset CBOR emitted by the private

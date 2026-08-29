@@ -88,10 +88,11 @@ export type ExperimentalSyncHttpOptions = {
   clientId: string;
   requestedScope: string;
   subscriptionRevision: bigint;
-  accessToken: () => string | Promise<string>;
+  accessToken: (options?: CallOptions) => string | Promise<string>;
   codec: ExperimentalSyncHttpCodec;
   fetch?: typeof globalThis.fetch;
   limits?: Partial<ExperimentalSyncHttpLimits>;
+  allowInsecureLocalhost?: boolean;
 };
 
 export type ExperimentalSyncOnceResult = {
@@ -189,7 +190,7 @@ export class ExperimentalSyncHttpAdapter {
   readonly #clientId: string;
   readonly #requestedScope: string;
   readonly #subscriptionRevision: bigint;
-  readonly #accessToken: () => string | Promise<string>;
+  readonly #accessToken: ExperimentalSyncHttpOptions["accessToken"];
   readonly #codec: ExperimentalSyncHttpCodec;
   readonly #fetch: typeof globalThis.fetch;
   readonly #limits: ExperimentalSyncHttpLimits;
@@ -197,9 +198,7 @@ export class ExperimentalSyncHttpAdapter {
 
   constructor(options: ExperimentalSyncHttpOptions) {
     const baseUrl = options.baseUrl.replace(/\/+$/, "");
-    if (!/^https?:\/\//u.test(baseUrl)) {
-      throw new TypeError("sync HTTP baseUrl must use http or https");
-    }
+    assertSecureHttpUrl(baseUrl, options.allowInsecureLocalhost === true);
     if (options.codec.mediaType.trim().length === 0) {
       throw new TypeError("sync HTTP codec mediaType is required");
     }
@@ -273,11 +272,13 @@ export class ExperimentalSyncHttpAdapter {
     request: ExperimentalSyncPushRequest,
     options?: CallOptions,
   ): Promise<string> {
-    return this.#post(
-      path,
-      await this.#codec.encodePushRequest(request, options),
-      (response) => this.#codec.decodePushResponse(response, options),
-      options,
+    return this.#withDeadline(options, async (boundedOptions) =>
+      this.#post(
+        path,
+        await this.#codec.encodePushRequest(request, boundedOptions),
+        (response) => this.#codec.decodePushResponse(response, boundedOptions),
+        boundedOptions,
+      ),
     );
   }
 
@@ -286,11 +287,13 @@ export class ExperimentalSyncHttpAdapter {
     request: ExperimentalSyncPullRequest,
     options?: CallOptions,
   ): Promise<string> {
-    return this.#post(
-      path,
-      await this.#codec.encodePullRequest(request, options),
-      (response) => this.#codec.decodePullResponse(response, options),
-      options,
+    return this.#withDeadline(options, async (boundedOptions) =>
+      this.#post(
+        path,
+        await this.#codec.encodePullRequest(request, boundedOptions),
+        (response) => this.#codec.decodePullResponse(response, boundedOptions),
+        boundedOptions,
+      ),
     );
   }
 
@@ -300,7 +303,7 @@ export class ExperimentalSyncHttpAdapter {
     decode: (bytes: ArrayBuffer) => Promise<string>,
     options?: CallOptions,
   ): Promise<string> {
-    const token = await this.#accessToken();
+    const token = await this.#accessToken(options);
     if (token.trim().length === 0) {
       throw new ExperimentalSyncHttpError(
         "sync access token is empty",
@@ -320,14 +323,6 @@ export class ExperimentalSyncHttpAdapter {
       );
     }
 
-    const controller = new AbortController();
-    let timedOut = false;
-    const onAbort = () => controller.abort();
-    options?.signal.addEventListener("abort", onAbort, { once: true });
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, this.#limits.requestTimeoutMs);
     let receivedResponse = false;
     try {
       const response = await this.#fetch(`${this.#baseUrl}${path}`, {
@@ -338,7 +333,7 @@ export class ExperimentalSyncHttpAdapter {
           "Content-Type": this.#codec.mediaType,
         },
         body,
-        signal: controller.signal,
+        signal: options?.signal,
       });
       receivedResponse = true;
       if (response.status !== 200) {
@@ -364,11 +359,6 @@ export class ExperimentalSyncHttpAdapter {
       );
       return await decode(bytes);
     } catch (error) {
-      if (timedOut)
-        throw new ExperimentalSyncHttpError(
-          "sync HTTP request timed out",
-          "timeout",
-        );
       if (options?.signal.aborted)
         throw new ExperimentalSyncHttpError(
           "sync HTTP request was aborted",
@@ -381,6 +371,46 @@ export class ExperimentalSyncHttpAdapter {
           : "sync HTTP network request failed",
         receivedResponse ? "protocol" : "network",
       );
+    }
+  }
+
+  async #withDeadline<T>(
+    options: CallOptions | undefined,
+    operation: (options: CallOptions) => Promise<T>,
+  ): Promise<T> {
+    if (options?.signal.aborted) {
+      throw new ExperimentalSyncHttpError(
+        "sync HTTP request was aborted",
+        "aborted",
+      );
+    }
+    const controller = new AbortController();
+    let timedOut = false;
+    const onAbort = () => controller.abort();
+    options?.signal.addEventListener("abort", onAbort, { once: true });
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.#limits.requestTimeoutMs);
+    try {
+      return await Promise.race([
+        operation({ signal: controller.signal }),
+        abortFailure(controller.signal),
+      ]);
+    } catch (error) {
+      if (timedOut) {
+        throw new ExperimentalSyncHttpError(
+          "sync HTTP request timed out",
+          "timeout",
+        );
+      }
+      if (options?.signal.aborted) {
+        throw new ExperimentalSyncHttpError(
+          "sync HTTP request was aborted",
+          "aborted",
+        );
+      }
+      throw error;
     } finally {
       clearTimeout(timeout);
       options?.signal.removeEventListener("abort", onAbort);
@@ -394,6 +424,40 @@ export class ExperimentalSyncHttpAdapter {
       () => undefined,
     );
     return result;
+  }
+}
+
+function abortFailure(signal: AbortSignal): Promise<never> {
+  return new Promise((_, reject) => {
+    signal.addEventListener(
+      "abort",
+      () =>
+        reject(
+          new ExperimentalSyncHttpError(
+            "sync HTTP request was aborted",
+            "aborted",
+          ),
+        ),
+      { once: true },
+    );
+  });
+}
+
+function assertSecureHttpUrl(baseUrl: string, allowLocal: boolean): void {
+  let url: URL;
+  try {
+    url = new URL(baseUrl);
+  } catch {
+    throw new TypeError("sync HTTP baseUrl must be an absolute URL");
+  }
+  if (url.protocol === "https:") return;
+  const local = ["localhost", "127.0.0.1", "[::1]", "10.0.2.2"].includes(
+    url.hostname,
+  );
+  if (url.protocol !== "http:" || !allowLocal || !local) {
+    throw new TypeError(
+      "sync HTTP baseUrl must use https unless insecure localhost is explicitly enabled",
+    );
   }
 }
 

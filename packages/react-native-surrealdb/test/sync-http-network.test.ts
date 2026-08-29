@@ -22,7 +22,11 @@ const status: NativeSyncStatus = {
 describe("ExperimentalSyncHttpAdapter network boundary", () => {
   let server: Server;
   let baseUrl: string;
-  const requests: Array<{ authorization: string | undefined; body: unknown; url: string }> = [];
+  const requests: Array<{
+    authorization: string | undefined;
+    body: unknown;
+    url: string;
+  }> = [];
 
   beforeAll(async () => {
     server = createServer((request, response) => {
@@ -65,7 +69,9 @@ describe("ExperimentalSyncHttpAdapter network boundary", () => {
         );
       });
     });
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     const address = server.address();
     if (address == null || typeof address === "string") {
       throw new Error("sync test server did not bind a TCP port");
@@ -103,6 +109,7 @@ describe("ExperimentalSyncHttpAdapter network boundary", () => {
     const adapter = new ExperimentalSyncHttpAdapter({
       sync: new ExperimentalSyncClient(native),
       baseUrl,
+      allowInsecureLocalhost: true,
       partitionId: "partition-1",
       clientId: "client-1",
       requestedScope: "all",
@@ -119,7 +126,12 @@ describe("ExperimentalSyncHttpAdapter network boundary", () => {
       "/v1/sync/push",
       "/v1/sync/pull",
     ]);
-    expect(requests.every(({ authorization }) => authorization === "Bearer redacted-network-test-token")).toBe(true);
+    expect(
+      requests.every(
+        ({ authorization }) =>
+          authorization === "Bearer redacted-network-test-token",
+      ),
+    ).toBe(true);
     expect(requests[1]?.body).toMatchObject({ checkpoint: "checkpoint-0" });
     expect(native.recordPushResponse).toHaveBeenCalledOnce();
     expect(native.applyPullResponse).toHaveBeenCalledOnce();

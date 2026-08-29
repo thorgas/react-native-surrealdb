@@ -32,6 +32,7 @@ function transport(sync: ExperimentalSyncClient, clientId: string) {
   return new ExperimentalSyncHttpAdapter({
     sync,
     baseUrl: resolveLocalAuthorityUrl(),
+    allowInsecureLocalhost: true,
     partitionId,
     clientId,
     requestedScope,

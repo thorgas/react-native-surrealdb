@@ -12,6 +12,7 @@ import {
   type ExperimentalSyncHttpCodec,
   type ExperimentalSyncHttpLimits,
   type ExperimentalSyncHttpNativeBridge,
+  type ExperimentalSyncHttpOptions,
 } from "../src/sync-http";
 import { ExperimentalSyncClient } from "../src/sync";
 
@@ -80,6 +81,8 @@ function createAdapter(
   fetch: typeof globalThis.fetch,
   codec: ExperimentalSyncHttpCodec = experimentalJsonSyncHttpCodec,
   limits?: Partial<ExperimentalSyncHttpLimits>,
+  accessToken: ExperimentalSyncHttpOptions["accessToken"] = async () =>
+    "redacted-test-token",
 ) {
   const { native, sync } = createSync();
   const adapter = new ExperimentalSyncHttpAdapter({
@@ -89,7 +92,7 @@ function createAdapter(
     clientId: "client-1",
     requestedScope: "all",
     subscriptionRevision: 7n,
-    accessToken: async () => "redacted-test-token",
+    accessToken,
     codec,
     fetch,
     limits,
@@ -345,6 +348,81 @@ describe("ExperimentalSyncHttpAdapter", () => {
     });
     controller.abort();
     await expect(cancelled).rejects.toMatchObject({ kind: "aborted" });
+  });
+
+  it("bounds token acquisition and encoding before fetch", async () => {
+    const tokenFetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(response(pullResponse()));
+    let tokenSignal: AbortSignal | undefined;
+    const accessToken = vi
+      .fn<ExperimentalSyncHttpOptions["accessToken"]>()
+      .mockImplementationOnce((options) => {
+        tokenSignal = options?.signal;
+        return new Promise<string>(() => undefined);
+      })
+      .mockResolvedValue("redacted-test-token");
+    const tokenAdapter = createAdapter(
+      tokenFetch,
+      undefined,
+      { requestTimeoutMs: 1 },
+      accessToken,
+    ).adapter;
+    await expect(tokenAdapter.pull()).rejects.toMatchObject({
+      kind: "timeout",
+    });
+    expect(tokenSignal?.aborted).toBe(true);
+    await expect(tokenAdapter.pull()).resolves.toEqual(status);
+    expect(tokenFetch).toHaveBeenCalledOnce();
+
+    const fetch = vi.fn<typeof globalThis.fetch>();
+    const stalledCodec: ExperimentalSyncHttpCodec = {
+      ...experimentalJsonSyncHttpCodec,
+      encodePullRequest: async () => new Promise(() => undefined),
+    };
+    const encodeAdapter = createAdapter(fetch, stalledCodec, {
+      requestTimeoutMs: 1,
+    }).adapter;
+    await expect(encodeAdapter.pull()).rejects.toMatchObject({
+      kind: "timeout",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("requires secure transport unless localhost is explicitly allowed", () => {
+    const { sync } = createSync();
+    const options = {
+      sync,
+      partitionId: "p",
+      clientId: "c",
+      requestedScope: "all",
+      subscriptionRevision: 1n,
+      accessToken: () => "redacted",
+      codec: experimentalJsonSyncHttpCodec,
+    };
+    expect(
+      () =>
+        new ExperimentalSyncHttpAdapter({
+          ...options,
+          baseUrl: "http://example.test",
+        }),
+    ).toThrow("must use https");
+    expect(
+      () =>
+        new ExperimentalSyncHttpAdapter({
+          ...options,
+          baseUrl: "http://127.0.0.1:8080",
+          allowInsecureLocalhost: true,
+        }),
+    ).not.toThrow();
+    expect(
+      () =>
+        new ExperimentalSyncHttpAdapter({
+          ...options,
+          baseUrl: "http://10.0.2.2:8080",
+          allowInsecureLocalhost: true,
+        }),
+    ).not.toThrow();
   });
 
   it("wires canonical CBOR bytes and raw protocol JSON without coercion", async () => {

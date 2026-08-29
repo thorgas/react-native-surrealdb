@@ -106,13 +106,18 @@ The application must inject the codec and fetch implementation. The native clien
 checkpoint with its records, cursor, scope snapshot, and outbox, so applying a complete pull is one
 embedded transaction.
 
-The adapter bounds request and response bodies, validates response content type, and times out the
-complete fetch/body/decode operation. `ExperimentalSyncScheduler` adds one active cycle at a time,
+The adapter bounds request and response bodies, validates response content type, requires HTTPS
+outside an explicit loopback-only development escape hatch, and times out token acquisition, codec
+work, fetch, body read, and decode. `ExperimentalSyncScheduler` adds one active cycle at a time,
 coalesced triggers, injected connectivity, bounded full-jitter transient retry, auth/terminal halt,
-periodic pull, and deterministic stop. Scheduler timers are advisory and non-durable; restart reads
-the native outbox and checkpoint. `ExperimentalSyncWebSocketHints` obtains a fresh application-owned
-URL/ticket for each connection, bounds and throttles messages, and can only wake a pull. It cannot
-advance a cursor or establish ordering, and periodic HTTP pull remains the fallback.
+60-second default periodic pull, and lifecycle-generation-safe stop/restart. Terminal failures remain
+halted until explicit manual/local-mutation recovery or an explicit scheduler restart. Scheduler timers are advisory and non-durable;
+restart reads the native outbox and checkpoint. `ExperimentalSyncWebSocketHints` requires WSS outside
+an explicit loopback-only development escape hatch, obtains a fresh application-owned URL/ticket for
+each connection, throttles messages, and can only wake a pull. Its size check closes an oversized
+frame after the runtime has received it; the authority/proxy must enforce a pre-allocation frame
+limit. Hints cannot advance a cursor or establish ordering, and periodic HTTP pull remains the
+correctness fallback.
 
 `crates/surrealdb-sync-protocol/src/http_codec.rs` is synchronized byte-for-byte from private commit
 `2032066`. Its definite-length CBOR grammar covers all push/pull requests and responses under a

@@ -52,6 +52,7 @@ describe("ExperimentalSyncWebSocketHints", () => {
     const onFailure = vi.fn();
     const hints = new ExperimentalSyncWebSocketHints({
       url: () => "ws://127.0.0.1/hints",
+      allowInsecureLocalhost: true,
       webSocketFactory: () => socket as unknown as WebSocket,
       maxMessageBytes: 4,
     });
@@ -98,5 +99,18 @@ describe("ExperimentalSyncWebSocketHints", () => {
     expect(sockets[1]?.close).toHaveBeenCalledWith(1000, "sync hints stopped");
     await vi.runAllTimersAsync();
     expect(factory).toHaveBeenCalledTimes(2);
+  });
+
+  it("requires secure transport unless localhost is explicitly allowed", async () => {
+    const onFailure = vi.fn();
+    const factory = vi.fn(() => new FakeSocket() as unknown as WebSocket);
+    const hints = new ExperimentalSyncWebSocketHints({
+      url: () => "ws://sync.example.test/hints?ticket=redacted",
+      webSocketFactory: factory,
+    });
+    const stop = hints.start(vi.fn(), onFailure);
+    await vi.waitFor(() => expect(onFailure).toHaveBeenCalledOnce());
+    expect(factory).not.toHaveBeenCalled();
+    stop();
   });
 });

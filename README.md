@@ -133,7 +133,9 @@ implements the private `surrealdb-sync/1` push/pull envelope, while the JSON cod
 explicitly lossy test fallback. The optional application-owned scheduler provides single-flight
 cycles, connectivity pause/resume, bounded transient retry, periodic pull, and pull-only WebSocket
 invalidation hints. Its timing state is intentionally non-durable and WebSockets provide no ordering
-or durability. It provides no deployable authority. Native Rust computes content-bound commit fingerprints from a bounded canonical
+or durability. HTTPS/WSS are required outside explicit loopback-only development escape hatches,
+and the 60-second default periodic pull is the correctness fallback. It provides no deployable
+authority. Native Rust computes content-bound commit fingerprints from a bounded canonical
 safe subset and rejects unsupported or hostile values before mutation.
 Native conformance tests also decode exact accepted, pull-batch, and reset bytes produced by the
 private SurrealDB authority adapter. They apply those messages through the native client, fully

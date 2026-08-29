@@ -14,13 +14,18 @@ export type ExperimentalSyncWebSocketHintsOptions = {
     delayMs: number,
   ) => ReturnType<typeof setTimeout>;
   clearTimer?: (timer: ReturnType<typeof setTimeout>) => void;
+  allowInsecureLocalhost?: boolean;
 };
 
 /** Best-effort WebSocket wakeups. Messages never carry protocol state or ordering. */
 export class ExperimentalSyncWebSocketHints implements ExperimentalSyncInvalidationSource {
   readonly #options: Required<
-    Omit<ExperimentalSyncWebSocketHintsOptions, "webSocketFactory">
+    Omit<
+      ExperimentalSyncWebSocketHintsOptions,
+      "webSocketFactory" | "allowInsecureLocalhost"
+    >
   > & { webSocketFactory: (url: string) => WebSocket };
+  readonly #allowInsecureLocalhost: boolean;
   #stop?: () => void;
 
   constructor(options: ExperimentalSyncWebSocketHintsOptions) {
@@ -56,6 +61,7 @@ export class ExperimentalSyncWebSocketHints implements ExperimentalSyncInvalidat
       setTimer: options.setTimer ?? setTimeout,
       clearTimer: options.clearTimer ?? clearTimeout,
     };
+    this.#allowInsecureLocalhost = options.allowInsecureLocalhost === true;
   }
 
   start(onHint: () => void, onFailure: (error: unknown) => void): () => void {
@@ -88,9 +94,7 @@ export class ExperimentalSyncWebSocketHints implements ExperimentalSyncInvalidat
       if (stopped) return;
       try {
         const url = await this.#options.url();
-        if (!/^wss?:\/\//u.test(url)) {
-          throw new TypeError("sync hint URL must use ws or wss");
-        }
+        assertSecureWebSocketUrl(url, this.#allowInsecureLocalhost);
         if (stopped) return;
         const next = this.#options.webSocketFactory(url);
         socket = next;
@@ -150,4 +154,20 @@ function messageBytes(value: unknown): number {
   if (ArrayBuffer.isView(value)) return value.byteLength;
   if (typeof Blob !== "undefined" && value instanceof Blob) return value.size;
   return Number.POSITIVE_INFINITY;
+}
+
+function assertSecureWebSocketUrl(value: string, allowLocal: boolean): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new TypeError("sync hint URL must be absolute");
+  }
+  if (url.protocol === "wss:") return;
+  const local = ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname);
+  if (url.protocol !== "ws:" || !allowLocal || !local) {
+    throw new TypeError(
+      "sync hint URL must use wss unless insecure localhost is explicitly enabled",
+    );
+  }
 }
