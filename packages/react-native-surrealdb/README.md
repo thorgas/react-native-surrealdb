@@ -274,6 +274,13 @@ or proxy must enforce its own pre-allocation frame limit. Authority deployment i
 ship or advertise this API; see the repository
 [sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
 
+Maintainers can measure the local durable path without a server using
+`pnpm --filter surrealdb-harness-rn86 run benchmark:ios:sync` or
+`benchmark:android:sync` from the repository root. This is a Debug Harness
+diagnostic against a minimal persistent SQLite outbox lower bound, not a
+production or end-to-end replication benchmark. See
+[`PERFORMANCE.md`](../../PERFORMANCE.md) for methodology and current results.
+
 Native conformance tests consume exact accepted, pull-batch, and reset CBOR emitted by the private
 SurrealDB authority adapter. The pull/reset test applies the messages, closes and drops the embedded
 database handle, reopens the same SurrealKV path, and verifies the checkpoint, confirmed record,

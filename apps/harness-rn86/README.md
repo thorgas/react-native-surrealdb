@@ -231,6 +231,21 @@ queries. It adds one bridge baseline and two graph traversals for this package,
 for 141 measured variants in total. Each measurement includes the complete
 Hermes → JSI → UniFFI → Rust → SurrealDB round trip and result decoding.
 
+The local sync durability profile requires no authority or cloud account. It
+compares persistent sync enqueue, pending-state materialization, and reopen
+recovery with a file-backed OP-SQLite lower bound in the same native app:
+
+```sh
+pnpm --filter surrealdb-harness-rn86 run benchmark:android:sync
+pnpm --filter surrealdb-harness-rn86 run benchmark:ios:sync
+```
+
+The benchmark resets logical tables before every enqueue sample, retains both
+physical stores between samples, uses WAL and `synchronous=FULL` for SQLite,
+and rejects semantically different materialized records or outboxes. It does
+not measure HTTP, an authority, authentication, conflicts, or changefeeds. See
+`../../PERFORMANCE.md` for current results and interpretation limits.
+
 Run the short profile on the configured emulator/simulator:
 
 ```sh

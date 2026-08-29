@@ -423,6 +423,7 @@ These scripts are intentionally not duplicated in older hosts:
 | `... run size:android:benchmark`                                          | Builds a fresh stock baseline and the candidate, then performs the paired comparison. Run `ubrn:android:size` first. |
 | `... run benchmark:android` / `... run benchmark:ios`                     | Runs the short `smoke` device benchmark.                                                                             |
 | `... run benchmark:android:canonical` / `... run benchmark:ios:canonical` | Runs the 2,000-record regression profile.                                                                            |
+| `... run benchmark:android:sync` / `... run benchmark:ios:sync`           | Measures local durable sync enqueue, pending reads, and reopen against a persistent SQLite lower bound.             |
 | `... run benchmark:android:upstream` / `... run benchmark:ios:upstream`   | Runs the 10,000-record upstream-shaped profile.                                                                      |
 | `... run test:benchmark-tools`                                            | Tests the Node report extraction and comparison utilities without a device.                                          |
 

@@ -20,6 +20,7 @@ explicitly experimental API but is not usable as a synchronization engine.
   restored by `8f9265ba74cea68a1b7d4866d09f9e47d9d1a9e1`.
 - Review: [draft PR #12](https://github.com/thorgas/react-native-surrealdb/pull/12).
 - Published branch: `origin/feat/sync-runtime-crates`.
+- Local durable benchmark implementation: `1a2d738`.
 - Canonical codec source: private `main` (also `feat/canonical-codec-v1`) at
   `2032066722ccb0202f2f8481f30fd5c70f4d681e`.
 - Native canonical HTTP codec commit: `c383a11`.
@@ -243,6 +244,18 @@ samples (107,324–417,976 KiB; median 261,540; p95 416,436); iOS recorded 25
 samples (195,040–783,552 KiB; median 641,136; p95 733,280). These Debug/Harness
 measurements have no regression gate and are not release-memory claims.
 
+The local durable sync benchmark passed on the same RN 0.86 iOS and Android
+hosts. It times isolated empty-state single and ten-record atomic enqueues,
+fully materialized reads of a fixed 25-commit outbox, and reopen recovery. The
+file-backed SQLite control uses WAL plus `synchronous=FULL` and is explicitly
+labeled a minimal lower bound because it omits protocol validation,
+fingerprinting, optimistic reconstruction, and conflict bookkeeping. Matching
+semantic checksums prove both sides materialized the same logical records and
+outbox operations. The first Debug runs recorded 12.38/20.35 ms sync enqueue
+medians on the iOS simulator and 4.61/8.30 ms on the Android emulator for
+single/ten-record commits respectively. These are diagnostic values, not
+release budgets.
+
 The E2E run also repaired pre-existing harness setup gaps: each host now has a tiny local test proxy
 that imports the shared suites, host app IDs and the iOS scheme are explicit, `e2e:ios` and
 `e2e:android` perform build/install/test in one command, and `.node-version` selects Node 22.22.0.
@@ -304,6 +317,10 @@ separate boundaries.
 5. Add a normal bundled Release functional runner and establish repeated pinned physical-device RSS
    baselines before defining a memory budget. Existing Harness E2Es are Debug/Metro runs;
    `release:artifacts` only proves native artifact generation.
+6. Extend `apps/harness-shared/benchmarks/` with separately attributed
+   canonical-codec, local HTTP transport, authority transaction, conflict,
+   retry/idempotency, and catch-up profiles. Do not fold those layers into the
+   local persistence ratio.
 
 ## Hard blockers
 
