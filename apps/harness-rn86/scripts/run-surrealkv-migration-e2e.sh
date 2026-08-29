@@ -10,6 +10,8 @@ PNPM="${PNPM_BIN:-$(command -v pnpm || true)}"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/surrealdb-rn-migration.XXXXXX")"
 SEED_WORKTREE="$TEMP_ROOT/seed-3.2.1"
 CURRENT_ARTIFACT_INSTALLED=1
+IOS_BUNDLE_ID="org.reactjs.native.example.SurrealDbHarnessRN86"
+ANDROID_APP_ID="com.surrealdbharness.rn86"
 
 usage() {
   echo "Usage: $0 <android|ios>" >&2
@@ -73,6 +75,21 @@ run_phase() {
   )
 }
 
+clear_previous_app_data() {
+  case "$PLATFORM" in
+    ios)
+      local simulator="${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}"
+      xcrun simctl boot "$simulator" >/dev/null 2>&1 || true
+      xcrun simctl bootstatus "$simulator" -b
+      xcrun simctl uninstall "$simulator" "$IOS_BUNDLE_ID" >/dev/null 2>&1 || true
+      ;;
+    android)
+      adb wait-for-device
+      adb shell pm clear "$ANDROID_APP_ID" >/dev/null 2>&1 || true
+      ;;
+  esac
+}
+
 restore_current_artifact() {
   if (( CURRENT_ARTIFACT_INSTALLED == 0 )); then
     echo "Restoring the current SurrealDB 3.2.4 native artifact after an interrupted run..." >&2
@@ -95,6 +112,11 @@ if [[ "$PLATFORM" != "android" && "$PLATFORM" != "ios" ]]; then
 fi
 if [[ -z "$PNPM" || ! -x "$PNPM" ]]; then
   echo "pnpm is unavailable; use the repository-pinned package manager." >&2
+  exit 1
+fi
+NODE_MAJOR="$(node -p 'Number(process.versions.node.split(".")[0])')"
+if (( NODE_MAJOR < 20 || NODE_MAJOR >= 23 )); then
+  echo "Node $(node --version) is unsupported; run this command with Node 22.22.0 from .node-version." >&2
   exit 1
 fi
 if [[ ! -d "$REPOSITORY_ROOT/node_modules" ]]; then
@@ -124,6 +146,7 @@ echo "Building the pinned SurrealDB 3.2.1 seed artifact for $PLATFORM..."
 build_native "$SEED_WORKTREE" "$PLATFORM"
 replace_artifact "$SEED_WORKTREE"
 CURRENT_ARTIFACT_INSTALLED=0
+clear_previous_app_data
 install_host
 run_phase surrealkv-seed
 

@@ -134,6 +134,10 @@ Use Node 22.22.0 from the repository `.node-version`. The Android runner may
 stop and restart its configured `Pixel_9` AVD between the seed and verification
 files; do not uninstall the app or pass `HARNESS_APP_PATH` between those phases,
 because either action can erase the app-private database being verified.
+The migration runner removes an earlier harness installation once, before installing the historical
+seed binary, so a database last opened by a newer SurrealKV cannot contaminate the baseline. It
+never clears app data between the historical seed and current-runtime reopen phases. The runner
+fails before building when the active Node major is outside the repository's supported 20–22 range.
 
 Locally, Rock reads a token from `GITHUB_TOKEN` or the authenticated GitHub CLI.
 CI passes `GITHUB_TOKEN` to the pinned Rock Android and iOS actions and grants
