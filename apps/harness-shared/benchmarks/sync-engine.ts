@@ -708,7 +708,7 @@ function comparison(
 
 async function resetSurreal(database: SurrealClient) {
   await database.query(
-    'REMOVE TABLE IF EXISTS _sync_client_state; REMOVE TABLE IF EXISTS sync_bench_record;',
+    'REMOVE TABLE IF EXISTS _sync_client_state; REMOVE TABLE IF EXISTS _sync_client_meta; REMOVE TABLE IF EXISTS _sync_client_confirmed; REMOVE TABLE IF EXISTS _sync_client_outbox; REMOVE TABLE IF EXISTS _sync_client_outcome; REMOVE TABLE IF EXISTS _sync_client_id_map; REMOVE TABLE IF EXISTS sync_bench_record;',
   );
 }
 

@@ -51,7 +51,7 @@ describe('SurrealKV sync process restart recovery', () => {
 
     await sync.close();
     await database.query(
-      'REMOVE TABLE IF EXISTS _sync_client_state; REMOVE TABLE IF EXISTS restart_probe;',
+      'REMOVE TABLE IF EXISTS _sync_client_state; REMOVE TABLE IF EXISTS _sync_client_meta; REMOVE TABLE IF EXISTS _sync_client_confirmed; REMOVE TABLE IF EXISTS _sync_client_outbox; REMOVE TABLE IF EXISTS _sync_client_outcome; REMOVE TABLE IF EXISTS _sync_client_id_map; REMOVE TABLE IF EXISTS restart_probe;',
     );
     await database.close();
   });

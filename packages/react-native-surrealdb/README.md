@@ -181,7 +181,8 @@ currently application-managed.
 This development branch exposes `openExperimentalSync()` only to exercise the native protocol
 workflow. The returned transport-free client can enqueue an atomic local commit, inspect its
 durable pending/conflict queues, and apply HTTP push/pull responses supplied by the application.
-Optimistic records and sync metadata commit together in embedded SurrealDB. The optional
+Optimistic records and normalized sync metadata/outbox/outcome rows commit together in embedded
+SurrealDB. Existing v1 blob state migrates atomically on open and fails closed on downgrade. The optional
 `ExperimentalSyncHttpAdapter` adds serialized, explicit `push()`, `pull()`, and `syncOnce()` calls.
 Applications must inject their access-token provider, wire codec, and `fetch`. The adapter reads the
 last complete checkpoint from native durable client state; applying a pull atomically persists its

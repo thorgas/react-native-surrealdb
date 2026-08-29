@@ -125,8 +125,9 @@ conflict, offline recovery, migration, and adversarial failure tests.
 
 This branch contains temporary copies of the Apache-2.0 `surrealdb-sync-protocol` and
 `surrealdb-sync-client` Rust crates plus an experimental native/TypeScript facade. An enqueue or
-pull transition atomically updates its bounded, revision-checked client state and optimistic domain
-records in the embedded SurrealDB transaction. An optional application-owned HTTP adapter performs
+pull transition atomically updates its bounded, revision-checked normalized client-state rows and
+optimistic domain records in the embedded SurrealDB transaction. Existing single-blob v1 state is
+migrated atomically and poisoned against stale downgrade replay. An optional application-owned HTTP adapter performs
 explicit push/pull calls with injected authentication, codec, and `fetch`; checkpoints live in the
 same native durable state as the applied records and cursor. A native bounded canonical-CBOR codec
 implements the private `surrealdb-sync/1` push/pull envelope, while the JSON codec remains an

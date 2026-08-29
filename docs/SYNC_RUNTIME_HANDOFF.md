@@ -68,29 +68,38 @@ cross-repository engine-version mismatch but is not evidence for every upstream 
 
 ## Implemented local prototype
 
-`crates/surrealdb-rn-core/src/sync_state.rs` adds a Rust-only adapter:
+`crates/surrealdb-rn-core/src/sync_state.rs` adds a Rust-only adapter. Its v2 format replaces the
+single aggregate state blob with normalized private rows:
 
-- `_sync_client_state` is a private schemafull local table.
-- Each record uses the structured SurrealDB ID
-  `_sync_client_state:[partition_id, client_id]`; identities are never concatenated into SurrealQL.
-- The record stores format version, envelope identity, revision, and a bounded byte payload.
-- `DurableClientState<serde_json::Value>` is serialized as JSON with a 4 MiB maximum.
+- `_sync_client_meta`, `_sync_client_confirmed`, `_sync_client_outbox`, `_sync_client_outcome`, and
+  `_sync_client_id_map` are schemafull private tables with structured composite IDs.
+- Tagged JSON rows preserve integer types as canonical decimal strings. Each row is bounded to
+  4 MiB; a client is bounded to 16,384 components and 64 MiB aggregate decoded bytes.
+- The metadata row owns revision, scope, checkpoint, and stable ordered component keys. State
+  transitions write only changed component rows plus metadata in the optimistic-domain transaction.
+- A validated v1 `_sync_client_state` blob migrates atomically to v2. The old row becomes a small
+  invalid sentinel so an older binary fails closed instead of replaying stale outbox/checkpoint data.
 - Initial writes require an absent row at revision zero. Later writes compare the durable prior
   revision and require the next revision.
-- A byte-identical retry of an already committed revision is idempotent.
-- Loads verify the format, envelope, revision, payload bound, JSON, and all client-state invariants.
+- A byte-identical retry of an already committed normalized revision is idempotent.
+- Loads verify formats, row identities, stable keys, payload/aggregate bounds, tagged JSON, and all
+  client-state invariants.
   Corruption is an error and is never treated as an empty replica.
 - Operation failures explicitly cancel the transaction. Commit errors are reported as an unknown
   outcome; the native facade then requires reopen/reconciliation before another mutation.
 - Optimistic domain-record changes and the durable state replacement commit in the same embedded
   SurrealDB transaction. Rejected transitions leave both unchanged.
 - Simple `table:key` record IDs, nested objects, arrays, tagged record links, references, deletes,
-  conflicts, and pull application are mapped to native values. The private sync-state table cannot
+  conflicts, and pull application are mapped to native values. The private sync-state tables cannot
   be targeted by protocol operations.
 - `open_sync_client` and `NativeSyncClient` expose named enqueue, push-outcome, pull, pending,
   conflict, status, close, and closed-state operations over UniFFI.
 - `ExperimentalSyncClient` is the hand-written TypeScript facade. `SurrealClient` exposes it through
   `openExperimentalSync()` only on embedded databases.
+
+Normalized persistence removes the former 4 MiB whole-replica ceiling and reduces write
+amplification, but `ClientRuntime` still clones the complete in-memory durable state while preparing
+a transition. A storage-aware transition interface remains necessary for very large replicas.
 
 Durable state still stores the existing tagged JSON representation, but native enqueue now ignores
 the caller's prototype fingerprint and recomputes it from the protocol-owned bounded
