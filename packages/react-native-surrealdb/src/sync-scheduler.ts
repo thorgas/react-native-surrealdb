@@ -19,7 +19,8 @@ export type ExperimentalSyncReason =
   | "online"
   | "invalidation"
   | "periodic"
-  | "retry";
+  | "retry"
+  | "authentication_refresh";
 
 export type ExperimentalSyncSchedulerStatus =
   | { state: "stopped" }
@@ -144,6 +145,14 @@ export class ExperimentalSyncScheduler {
     this.#terminalBlocked = false;
     this.#cancelRetry();
     this.#queue("sync", reason, true);
+  }
+
+  /** Resume a halted scheduler only after application-owned credentials changed. */
+  resumeAfterAuthentication(): void {
+    this.#authenticationBlocked = false;
+    this.#terminalBlocked = false;
+    this.#cancelRetry();
+    this.#queue("sync", "authentication_refresh", true);
   }
 
   requestPull(reason: "invalidation" | "periodic" = "invalidation"): void {
