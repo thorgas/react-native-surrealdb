@@ -133,7 +133,9 @@ implements the private `surrealdb-sync/1` push/pull envelope, while the JSON cod
 explicitly lossy test fallback. The optional application-owned scheduler provides single-flight
 cycles, connectivity pause/resume, bounded transient retry, periodic pull, and pull-only WebSocket
 invalidation hints. Its timing state is intentionally non-durable and WebSockets provide no ordering
-or durability. HTTPS/WSS are required outside explicit loopback-only development escape hatches,
+or durability. An injected application lifecycle coordinator stops scheduling outside the active
+state, aborts stale token refresh, and allows one explicit credential refresh per `401`/`403`
+challenge without owning login state. HTTPS/WSS are required outside explicit loopback-only development escape hatches,
 and the 60-second default periodic pull is the correctness fallback. It provides no deployable
 authority. Native Rust computes content-bound commit fingerprints from a bounded canonical
 safe subset and rejects unsupported or hostile values before mutation.
@@ -142,9 +144,10 @@ private SurrealDB authority adapter. They apply those messages through the nativ
 close and reopen the same SurrealKV database, and verify durable outcome, cursor/checkpoint,
 confirmed records, pending outbox, and reconstructed optimistic state. This proves the local bridge;
 it does not provide or deploy the authenticated authority endpoint. A dedicated opt-in RN 0.86 E2E
-can connect two embedded clients to the private repository's development-only local gateway and has
-passed on iOS and Android; its fixed development identity, checkpoint token, and feed frontier are
-not production mechanisms.
+can connect embedded clients to the private repository's development-only local gateway and has
+passed on iOS and Android. It now covers offline durable work, invalid-to-valid token recovery,
+background stop, foreground catch-up, missed-hint periodic pull, and the prior two-client conflict;
+its local identity, checkpoint token, and feed frontier are not production mechanisms.
 The Harness functional suites run Debug/Metro applications. `release:artifacts` builds distributable
 native binaries but is artifact-generation evidence, not a functional Release-app test.
 It does not make this package a usable sync engine and must not be released as one. The private

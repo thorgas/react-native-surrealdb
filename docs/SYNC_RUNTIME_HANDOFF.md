@@ -38,6 +38,7 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Cross-platform Hermes scheduler E2E commit: `394b269`.
 - Scheduler hardening commit and integrated draft head:
   `9dbf2befad234b6d66332092c313e5dea9810040`.
+- Application lifecycle/authentication coordinator commit: `df9b6c4`.
 
 ## Source boundary
 
@@ -280,7 +281,10 @@ boundary, while the device tests prove the same codec through Hermes. A single d
 client-to-authority HTTP E2E is now covered locally by an opt-in RN 0.86 trace on both an iPhone 17
 Pro simulator and Pixel 9 Android emulator. Two memory-backed replicas perform initial pulls,
 concurrent absent-base writes, accepted/conflict pushes, facade reopen, and final convergence through
-the canonical codec. The private gateway uses a fixed development principal/scope. Its separate
+the canonical codec. A second device scenario proves durable offline enqueue, `401` token recovery,
+background stop, foreground catch-up, and periodic recovery without a hint. The coordinator owns
+only lifecycle and scheduling; the application still owns its token and injected `AppState` mapping.
+The private gateway uses a local development principal/scope. Its separate
 bounded raw changefeed worker renews the durable frontier while clients are idle and every pull
 retains a fail-closed catch-up gate. This is not a deployed-production claim: production
 authentication, certified retention/rebootstrap operations, and checkpoint issuance remain
@@ -291,8 +295,9 @@ separate boundaries.
 1. Replace the fixed local identity and development checkpoint digest with the intended
    authenticated deployment boundary and production checkpoint policy; certify scanner retention,
    alerting, and administrator rebootstrap on that deployment.
-2. Integrate the scheduler with a real application's lifecycle, connectivity source, token refresh,
-   and deployed authenticated authority; retain periodic HTTP pull as the correctness fallback.
+2. Integrate the proven injected lifecycle/connectivity/token-refresh interfaces into the first
+   application prototype and validate them against a deployed authenticated authority; retain
+   periodic HTTP pull as the correctness fallback.
 3. Replace the copied crates with the agreed single-source/public-export mechanism before release.
 4. Extend the canonical value profile only through private protocol decisions and golden vectors.
 5. Add a normal bundled Release functional runner and establish repeated pinned physical-device RSS

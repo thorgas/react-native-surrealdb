@@ -123,8 +123,12 @@ SYNC_ENGINE_DEV_REPO=/absolute/path/to/surrealdb-sync-engine.dev \
 
 The environment override is optional for the normal sibling checkout layout. The runner reads the
 ignored mode-`600` local credentials without sourcing or printing them and removes its generated
-token module on exit. The trace uses two memory replicas and proves initial pull, concurrent
-optimistic writes, accepted/conflict outcomes, facade reopen, and final convergence.
+token module on exit. The trace proves initial pull, concurrent optimistic writes,
+accepted/conflict outcomes, facade reopen, and final convergence. Its second scenario keeps a
+durable mutation queued while offline, recovers one real `401` by swapping the injected token,
+stops the scheduler in background, catches an authority write on foreground, and recovers another
+write through the 250 ms test-only periodic pull without a WebSocket hint. Lifecycle events are
+injected: physically backgrounding the host would suspend Hermes and prevent in-process assertions.
 
 Use Node 22.22.0 from the repository `.node-version`. The Android runner may
 stop and restart its configured `Pixel_9` AVD between the seed and verification

@@ -223,9 +223,29 @@ const scheduler = new ExperimentalSyncScheduler({
   }),
 });
 
-scheduler.start();
-// Stop on application teardown; durable outbox/checkpoint state remains native.
-scheduler.stop();
+const lifecycle = new ExperimentalSyncLifecycleCoordinator({
+  scheduler,
+  lifecycle: {
+    current: () =>
+      AppState.currentState === "active" ||
+      AppState.currentState === "inactive" ||
+      AppState.currentState === "background"
+        ? AppState.currentState
+        : "unknown",
+    subscribe: (listener) => {
+      const subscription = AppState.addEventListener("change", listener);
+      return () => subscription.remove();
+    },
+  },
+  refreshAuthentication: async (_status, { signal }) => {
+    applicationToken = await refreshApplicationToken({ signal });
+    return true; // Return false when credentials did not change.
+  },
+});
+
+lifecycle.start();
+// Stop on application teardown; background transitions already stop scheduling.
+lifecycle.stop();
 ```
 
 The example URL is intentionally non-routable: this package does not supply or deploy the authority.
@@ -241,6 +261,12 @@ its golden messages match private commit `2032066722ccb0202f2f8481f30fd5c70f4d68
 outside JavaScript's safe integer range. The optional scheduler coalesces triggers, performs only one
 cycle at a time, pauses offline, and applies bounded full-jitter retry to transient failures. Its
 timers are advisory and non-durable: the native outbox and checkpoint remain the recovery source.
+The lifecycle coordinator fails closed until the application is active, stops and aborts scheduling
+in background/inactive states, and permits one application-owned refresh for each `401`/`403`
+challenge. A failed or declined refresh stays halted until `retryAuthentication()` or a later
+lifecycle restart; stale refresh completion cannot resume a backgrounded scheduler. The package
+does not own login state or import React Native `AppState`, so applications inject that small
+adapter explicitly.
 WebSocket hints only wake a pull, use a fresh application-supplied URL/ticket for every connection,
 and never define durability or ordering; a 60-second periodic pull is the default fallback.
 Production hints require WSS. The client closes an oversized frame after receipt, but the authority
