@@ -186,6 +186,8 @@ Optimistic records and sync metadata commit together in embedded SurrealDB. The 
 Applications must inject their access-token provider, wire codec, and `fetch`. The adapter reads the
 last complete checkpoint from native durable client state; applying a pull atomically persists its
 records, cursor, scope snapshot, and opaque checkpoint before the next request can observe it.
+Requests and responses are bounded to 4 MiB by default, the complete fetch/body/decode operation is
+timed out, content types are checked, and bodies without a stream or declared length fail closed.
 
 The native codec constructor is the only complete wire codec on this branch:
 
@@ -208,6 +210,18 @@ const transport = new ExperimentalSyncHttpAdapter({
   fetch,
   codec: createExperimentalCanonicalCborSyncHttpCodec(),
 });
+
+const scheduler = new ExperimentalSyncScheduler({
+  adapter: transport,
+  connectivity: applicationConnectivity,
+  invalidations: new ExperimentalSyncWebSocketHints({
+    url: applicationShortLivedHintUrl,
+  }),
+});
+
+scheduler.start();
+// Stop on application teardown; durable outbox/checkpoint state remains native.
+scheduler.stop();
 ```
 
 The example URL is intentionally non-routable: this package does not supply or deploy the authority.
@@ -220,9 +234,12 @@ and other undecided protocol kinds fail closed. `createExperimentalCanonicalCbor
 uses the copied protocol crate's bounded, deterministic `surrealdb-sync/1` request/response codec;
 its golden messages match private commit `2032066722ccb0202f2f8481f30fd5c70f4d681e`. The exported
 `experimentalJsonSyncHttpCodec` remains test/prototype-only and throws when a pending `bigint` lies
-outside JavaScript's safe integer range. Authority deployment, automatic retry/backoff, and
-WebSocket durability or ordering are absent. A WebSocket may only notify the application to call
-`pull()`. Do not ship or advertise this API; see the repository
+outside JavaScript's safe integer range. The optional scheduler coalesces triggers, performs only one
+cycle at a time, pauses offline, and applies bounded full-jitter retry to transient failures. Its
+timers are advisory and non-durable: the native outbox and checkpoint remain the recovery source.
+WebSocket hints only wake a pull, use a fresh application-supplied URL/ticket for every connection,
+and never define durability or ordering; periodic pull remains the fallback. Authority deployment
+is absent. Do not ship or advertise this API; see the repository
 [sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
 
 Native conformance tests consume exact accepted, pull-batch, and reset CBOR emitted by the private

@@ -100,6 +100,14 @@ The application must inject the codec and fetch implementation. The native clien
 checkpoint with its records, cursor, scope snapshot, and outbox, so applying a complete pull is one
 embedded transaction.
 
+The adapter bounds request and response bodies, validates response content type, and times out the
+complete fetch/body/decode operation. `ExperimentalSyncScheduler` adds one active cycle at a time,
+coalesced triggers, injected connectivity, bounded full-jitter transient retry, auth/terminal halt,
+periodic pull, and deterministic stop. Scheduler timers are advisory and non-durable; restart reads
+the native outbox and checkpoint. `ExperimentalSyncWebSocketHints` obtains a fresh application-owned
+URL/ticket for each connection, bounds and throttles messages, and can only wake a pull. It cannot
+advance a cursor or establish ordering, and periodic HTTP pull remains the fallback.
+
 `crates/surrealdb-sync-protocol/src/http_codec.rs` is synchronized byte-for-byte from private commit
 `2032066`. Its definite-length CBOR grammar covers all push/pull requests and responses under a
 4 MiB/4,096-item aggregate budget, applies smaller identifier/container/checkpoint limits, rejects
@@ -109,8 +117,7 @@ client. `crates/surrealdb-rn-core/src/sync_http_codec.rs` exposes four async Uni
 `decode_sync_pull_response`. The public `createExperimentalCanonicalCborSyncHttpCodec()` constructor
 wires these bindings without sending protocol `u64` values through JavaScript numbers. The injected
 JSON codec remains a lossy test fallback and rejects unsafe `bigint` values.
-It deliberately provides no authority, background scheduler, implicit retry/backoff, or WebSocket
-ordering. WebSockets remain notification hints that cause the application to pull.
+It deliberately provides no authority or WebSocket ordering/durability.
 
 The HTTP adapter now reads the opaque checkpoint from the same native durable state that owns the
 confirmed records, cursor, scope snapshot, and outbox. A complete pull is therefore one embedded
@@ -256,20 +263,22 @@ separate boundaries.
 1. Replace the fixed local identity and development checkpoint digest with the intended
    authenticated deployment boundary and production checkpoint policy; certify scanner retention,
    alerting, and administrator rebootstrap on that deployment.
-2. Add scheduling, retry/backoff, connectivity policy, and WebSocket-only invalidation hints around
-   the explicit HTTP-correctness path.
+2. Integrate the scheduler with a real application's lifecycle, connectivity source, token refresh,
+   and deployed authenticated authority; retain periodic HTTP pull as the correctness fallback.
 3. Replace the copied crates with the agreed single-source/public-export mechanism before release.
 4. Extend the canonical value profile only through private protocol decisions and golden vectors.
-5. Establish repeated Release-build physical-device RSS baselines before defining a memory budget.
+5. Add a normal bundled Release functional runner and establish repeated pinned physical-device RSS
+   baselines before defining a memory budget. Existing Harness E2Es are Debug/Metro runs;
+   `release:artifacts` only proves native artifact generation.
 
 ## Hard blockers
 
 - The long-term single-source/export mechanism is unresolved.
 - GitHub Actions may remain unavailable until account billing permits runner allocation.
 - The local gateway proves HTTP orchestration but not production deployment or authentication.
-- The private authority now has bounded checkpoint collection, durable scanner health, and
-  fail-closed single-partition rebootstrap operations, but production deployment validation and
-  opaque checkpoint issuance remain unresolved.
+- The private authority now has bounded checkpoint collection, durable scanner health, fail-closed
+  single-partition rebootstrap, and durable random checkpoint issuance. Production deployment,
+  row-volume/alerting thresholds, and revocation exercises remain unresolved.
 - This branch must remain a draft and must not be released or advertised as sync support.
 
 Only GitHub runner/billing availability is a user-side operational blocker. The codec, transport,

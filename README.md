@@ -130,8 +130,10 @@ records in the embedded SurrealDB transaction. An optional application-owned HTT
 explicit push/pull calls with injected authentication, codec, and `fetch`; checkpoints live in the
 same native durable state as the applied records and cursor. A native bounded canonical-CBOR codec
 implements the private `surrealdb-sync/1` push/pull envelope, while the JSON codec remains an
-explicitly lossy test fallback. It provides no deployable authority, scheduler, WebSocket ordering,
-or automatic retry. Native Rust computes content-bound commit fingerprints from a bounded canonical
+explicitly lossy test fallback. The optional application-owned scheduler provides single-flight
+cycles, connectivity pause/resume, bounded transient retry, periodic pull, and pull-only WebSocket
+invalidation hints. Its timing state is intentionally non-durable and WebSockets provide no ordering
+or durability. It provides no deployable authority. Native Rust computes content-bound commit fingerprints from a bounded canonical
 safe subset and rejects unsupported or hostile values before mutation.
 Native conformance tests also decode exact accepted, pull-batch, and reset bytes produced by the
 private SurrealDB authority adapter. They apply those messages through the native client, fully
@@ -141,6 +143,8 @@ it does not provide or deploy the authenticated authority endpoint. A dedicated 
 can connect two embedded clients to the private repository's development-only local gateway and has
 passed on iOS and Android; its fixed development identity, checkpoint token, and feed frontier are
 not production mechanisms.
+The Harness functional suites run Debug/Metro applications. `release:artifacts` builds distributable
+native binaries but is artifact-generation evidence, not a functional Release-app test.
 It does not make this package a usable sync engine and must not be released as one. The private
 formal specification and comprehensive checker suites are not included. See
 [`crates/SYNC_RUNTIME_ORIGIN.md`](./crates/SYNC_RUNTIME_ORIGIN.md) for the temporary source boundary
