@@ -27,6 +27,9 @@ function createNative() {
     isClosed: vi.fn(() => closed),
     pendingJson: vi.fn(async () => ['{"identity":"commit-1"}']),
     recordPushResponse: vi.fn(async () => initialStatus),
+    resolveConflictKeepLocal: vi.fn(async () => initialStatus),
+    resolveConflictKeepServer: vi.fn(async () => initialStatus),
+    resolveConflictMerge: vi.fn(async () => initialStatus),
     status: vi.fn(async () => initialStatus),
   } as NativeSyncClientLike;
   return native;
@@ -54,6 +57,37 @@ describe("ExperimentalSyncClient", () => {
       "checkpoint-1",
     );
     expect(native.checkpointToken).toHaveBeenCalledWith({ signal });
+  });
+
+  it("forwards explicit conflict decisions through stable facade methods", async () => {
+    const native = createNative();
+    const client = new ExperimentalSyncClient(native);
+    const signal = new AbortController().signal;
+    const replacement = {
+      identity: { clientCommitId: "merge-1", fingerprint: "untrusted" },
+      operations: [],
+    } as const;
+
+    await client.resolveConflictKeepServer("conflict-1", { signal });
+    await client.resolveConflictKeepLocal("conflict-1", "retry-1", {
+      signal,
+    });
+    await client.resolveConflictMerge("conflict-1", replacement, { signal });
+
+    expect(native.resolveConflictKeepServer).toHaveBeenCalledWith(
+      "conflict-1",
+      { signal },
+    );
+    expect(native.resolveConflictKeepLocal).toHaveBeenCalledWith(
+      "conflict-1",
+      "retry-1",
+      { signal },
+    );
+    expect(native.resolveConflictMerge).toHaveBeenCalledWith(
+      "conflict-1",
+      JSON.stringify(replacement),
+      { signal },
+    );
   });
 
   it("forwards cancellation and reflects native closure", async () => {

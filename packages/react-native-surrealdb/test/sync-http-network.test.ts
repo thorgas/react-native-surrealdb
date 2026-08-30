@@ -104,6 +104,9 @@ describe("ExperimentalSyncHttpAdapter network boundary", () => {
         }),
       ]),
       recordPushResponse: vi.fn(async () => status),
+      resolveConflictKeepLocal: vi.fn(async () => status),
+      resolveConflictKeepServer: vi.fn(async () => status),
+      resolveConflictMerge: vi.fn(async () => status),
       status: vi.fn(async () => status),
     } as NativeSyncClientLike;
     const adapter = new ExperimentalSyncHttpAdapter({

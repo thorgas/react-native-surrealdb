@@ -12,15 +12,32 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 use surrealdb_sync_protocol::{
-    BaseVersion, Checkpoint, ClientCommit, ClientCommitId, ClientId, DurableOutcome, IdMapping,
-    Operation, PartitionId, PullBatch, PullFrame, PullResponse, PushResponse, RecordId,
-    RecordState, ResetSnapshot, SchemaVersion, ScopeIdentity,
+    BaseVersion, Checkpoint, ClientCommit, ClientCommitId, ClientId, CommitIdentity,
+    DurableOutcome, IdMapping, Operation, PartitionId, PullBatch, PullFrame, PullResponse,
+    PushResponse, RecordId, RecordState, ResetSnapshot, SchemaVersion, ScopeIdentity,
 };
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ResolvedCommit<V> {
     pub local_commit: ClientCommit<V>,
     pub outcome: DurableOutcome<V>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<ConflictResolution>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(tag = "strategy", rename_all = "snake_case")]
+pub enum ConflictResolution {
+    KeepServer,
+    KeepLocal { replacement: CommitIdentity },
+    Merge { replacement: CommitIdentity },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ConflictResolutionRequest<V> {
+    KeepServer,
+    KeepLocal { replacement: ClientCommit<V> },
+    Merge { replacement: ClientCommit<V> },
 }
 
 /// Complete durable state owned by one partition/client/scope tuple.
@@ -84,10 +101,40 @@ impl<V: Eq> DurableClientState<V> {
                 return Err(ClientError::DuplicateCommitId(commit_id));
             }
         }
+        validate_conflict_resolutions(self)?;
         validate_checkpoint(self)?;
         validate_id_map(&self.id_map)?;
         validate_no_mapped_local_ids(self)
     }
+}
+
+fn validate_conflict_resolutions<V: Eq>(state: &DurableClientState<V>) -> Result<(), ClientError> {
+    for resolved in &state.outcomes {
+        let Some(resolution) = &resolved.resolution else {
+            continue;
+        };
+        if !matches!(&resolved.outcome, DurableOutcome::Conflict { .. }) {
+            return Err(ClientError::InvalidConflictResolution);
+        }
+        let replacement = match resolution {
+            ConflictResolution::KeepServer => continue,
+            ConflictResolution::KeepLocal { replacement }
+            | ConflictResolution::Merge { replacement } => replacement,
+        };
+        if replacement == &resolved.local_commit.identity
+            || (!state
+                .outbox
+                .iter()
+                .any(|commit| &commit.identity == replacement)
+                && !state
+                    .outcomes
+                    .iter()
+                    .any(|outcome| &outcome.local_commit.identity == replacement))
+        {
+            return Err(ClientError::InvalidConflictResolution);
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -125,6 +172,9 @@ pub enum ClientError {
     DuplicateOperation(RecordId),
     DuplicateCommitId(ClientCommitId),
     UnknownCommit(ClientCommitId),
+    UnknownConflict(ClientCommitId),
+    ConflictAlreadyResolved(ClientCommitId),
+    InvalidConflictResolution,
     OutcomeIdentityMismatch,
     EnvelopeMismatch,
     InvalidPullFraming,
@@ -149,6 +199,9 @@ impl fmt::Display for ClientError {
             Self::DuplicateOperation(_) => "commit repeats a record operation",
             Self::DuplicateCommitId(_) => "commit identity is already durable",
             Self::UnknownCommit(_) => "push outcome has no matching pending commit",
+            Self::UnknownConflict(_) => "conflict resolution has no matching durable conflict",
+            Self::ConflictAlreadyResolved(_) => "durable conflict is already resolved",
+            Self::InvalidConflictResolution => "conflict resolution is invalid",
             Self::OutcomeIdentityMismatch => "push outcome identity does not match",
             Self::EnvelopeMismatch => "protocol envelope does not match this client",
             Self::InvalidPullFraming => "pull response is not a complete batch",
@@ -253,7 +306,70 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         next.outcomes.push(ResolvedCommit {
             local_commit,
             outcome: response.outcome,
+            resolution: None,
         });
+        self.prepare(next)
+    }
+
+    pub fn prepare_resolve_conflict(
+        &self,
+        conflicted_commit_id: &ClientCommitId,
+        request: ConflictResolutionRequest<V>,
+    ) -> Result<PreparedTransition<V>, ClientError> {
+        let Some(index) = self.state.outcomes.iter().position(|resolved| {
+            resolved.local_commit.identity.client_commit_id == *conflicted_commit_id
+                && matches!(&resolved.outcome, DurableOutcome::Conflict { .. })
+        }) else {
+            return Err(ClientError::UnknownConflict(conflicted_commit_id.clone()));
+        };
+        if let Some(resolution) = &self.state.outcomes[index].resolution {
+            if resolution_request_matches(self.state(), resolution, &request) {
+                return self.prepare(self.state.clone());
+            }
+            return Err(ClientError::ConflictAlreadyResolved(
+                conflicted_commit_id.clone(),
+            ));
+        }
+
+        let (record_id, authoritative) = match &self.state.outcomes[index].outcome {
+            DurableOutcome::Conflict {
+                record_id,
+                authoritative,
+                ..
+            } => (record_id, authoritative),
+            DurableOutcome::Accepted { .. } | DurableOutcome::Rejected { .. } => {
+                unreachable!("the conflict lookup matched only conflict outcomes")
+            }
+        };
+
+        let mut next = self.state.clone();
+        match request {
+            ConflictResolutionRequest::KeepServer => {
+                next.outcomes[index].resolution = Some(ConflictResolution::KeepServer);
+            }
+            ConflictResolutionRequest::KeepLocal { replacement } => {
+                validate_replacement_identity(&self.state, &replacement)?;
+                if !same_intent(&self.state.outcomes[index].local_commit, &replacement)
+                    || !commit_matches_authoritative_base(&replacement, record_id, authoritative)
+                {
+                    return Err(ClientError::InvalidConflictResolution);
+                }
+                next.outcomes[index].resolution = Some(ConflictResolution::KeepLocal {
+                    replacement: replacement.identity.clone(),
+                });
+                next.outbox.push(replacement);
+            }
+            ConflictResolutionRequest::Merge { replacement } => {
+                validate_replacement_identity(&self.state, &replacement)?;
+                if !commit_matches_authoritative_base(&replacement, record_id, authoritative) {
+                    return Err(ClientError::InvalidConflictResolution);
+                }
+                next.outcomes[index].resolution = Some(ConflictResolution::Merge {
+                    replacement: replacement.identity.clone(),
+                });
+                next.outbox.push(replacement);
+            }
+        }
         self.prepare(next)
     }
 
@@ -360,6 +476,132 @@ fn validate_commit<V>(commit: &ClientCommit<V>) -> Result<(), ClientError> {
         }
     }
     Ok(())
+}
+
+fn validate_replacement_identity<V: Eq>(
+    state: &DurableClientState<V>,
+    replacement: &ClientCommit<V>,
+) -> Result<(), ClientError> {
+    validate_commit(replacement)?;
+    let commit_id = &replacement.identity.client_commit_id;
+    if identity_exists(state, commit_id) {
+        return Err(ClientError::DuplicateCommitId(commit_id.clone()));
+    }
+    Ok(())
+}
+
+fn resolution_request_matches<V: Eq>(
+    state: &DurableClientState<V>,
+    resolution: &ConflictResolution,
+    request: &ConflictResolutionRequest<V>,
+) -> bool {
+    match (resolution, request) {
+        (ConflictResolution::KeepServer, ConflictResolutionRequest::KeepServer) => true,
+        (
+            ConflictResolution::KeepLocal {
+                replacement: identity,
+            },
+            ConflictResolutionRequest::KeepLocal { replacement },
+        )
+        | (
+            ConflictResolution::Merge {
+                replacement: identity,
+            },
+            ConflictResolutionRequest::Merge { replacement },
+        ) => {
+            identity == &replacement.identity
+                && state
+                    .outbox
+                    .iter()
+                    .chain(state.outcomes.iter().map(|resolved| &resolved.local_commit))
+                    .any(|commit| commit == replacement)
+        }
+        (
+            ConflictResolution::KeepServer
+            | ConflictResolution::KeepLocal { .. }
+            | ConflictResolution::Merge { .. },
+            ConflictResolutionRequest::KeepServer
+            | ConflictResolutionRequest::KeepLocal { .. }
+            | ConflictResolutionRequest::Merge { .. },
+        ) => false,
+    }
+}
+
+fn same_intent<V: Eq>(original: &ClientCommit<V>, replacement: &ClientCommit<V>) -> bool {
+    original.operations.len() == replacement.operations.len()
+        && original
+            .operations
+            .iter()
+            .zip(&replacement.operations)
+            .all(|(original, replacement)| match (original, replacement) {
+                (
+                    Operation::Upsert {
+                        record_id: original_id,
+                        value: original_value,
+                        reference: original_reference,
+                        ..
+                    },
+                    Operation::Upsert {
+                        record_id: replacement_id,
+                        value: replacement_value,
+                        reference: replacement_reference,
+                        ..
+                    },
+                ) => {
+                    original_id == replacement_id
+                        && original_value == replacement_value
+                        && original_reference == replacement_reference
+                }
+                (
+                    Operation::Delete {
+                        record_id: original_id,
+                        ..
+                    },
+                    Operation::Delete {
+                        record_id: replacement_id,
+                        ..
+                    },
+                ) => original_id == replacement_id,
+                (Operation::Upsert { .. }, Operation::Delete { .. })
+                | (Operation::Delete { .. }, Operation::Upsert { .. }) => false,
+            })
+}
+
+fn commit_matches_authoritative_base<V>(
+    commit: &ClientCommit<V>,
+    conflict_record_id: &RecordId,
+    authoritative: &RecordState<V>,
+) -> bool {
+    commit
+        .operations
+        .iter()
+        .find(|operation| operation.record_id() == conflict_record_id)
+        .is_some_and(|operation| match (operation, authoritative) {
+            (
+                Operation::Upsert {
+                    base_version: BaseVersion::Absent,
+                    ..
+                },
+                RecordState::Absent,
+            ) => true,
+            (
+                Operation::Upsert {
+                    base_version: BaseVersion::Exact(base),
+                    ..
+                },
+                RecordState::Present { version, .. } | RecordState::Tombstone { version },
+            ) => base == version,
+            (Operation::Delete { base_version, .. }, RecordState::Present { version, .. }) => {
+                base_version == version
+            }
+            (
+                Operation::Upsert { .. },
+                RecordState::Absent | RecordState::Present { .. } | RecordState::Tombstone { .. },
+            )
+            | (Operation::Delete { .. }, RecordState::Absent | RecordState::Tombstone { .. }) => {
+                false
+            }
+        })
 }
 
 fn validate_checkpoint<V: Eq>(state: &DurableClientState<V>) -> Result<(), ClientError> {
@@ -527,7 +769,7 @@ fn identity_exists<V>(state: &DurableClientState<V>, commit_id: &ClientCommitId)
             .any(|resolved| resolved.local_commit.identity.client_commit_id == *commit_id)
 }
 
-fn optimistic_projection<V: Clone>(
+pub fn optimistic_projection<V: Clone>(
     state: &DurableClientState<V>,
 ) -> BTreeMap<RecordId, OptimisticRecord<V>> {
     let mut projection = state
