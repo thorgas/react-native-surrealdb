@@ -7,9 +7,13 @@ use std::sync::Arc;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
-use surrealdb_sync_client::{ClientError, ClientRuntime, PreparedTransition};
+use surrealdb_sync_client::{
+    ClientError, ClientRuntime, ConflictResolutionRequest, PreparedTransition,
+};
 use surrealdb_sync_protocol::{
-    ClientCommit, ClientId, DurableOutcome, PartitionId, PullResponse, PushResponse, ScopeIdentity,
+    BaseVersion, ClientCommit, ClientCommitId, ClientId, CommitIdentity, DurableOutcome,
+    Fingerprint, Operation, PartitionId, PullResponse, PushResponse, RecordId, RecordState,
+    ScopeIdentity,
 };
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -167,6 +171,64 @@ impl NativeSyncClient {
         self.persist_and_install(&mut slot, prepared).await
     }
 
+    pub async fn resolve_conflict_keep_server(
+        &self,
+        conflicted_commit_id: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let mut slot = self.runtime.lock().await;
+        let prepared = slot
+            .as_ref()
+            .ok_or(NativeSyncError::Closed)?
+            .prepare_resolve_conflict(
+                &ClientCommitId(conflicted_commit_id),
+                ConflictResolutionRequest::KeepServer,
+            )
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    pub async fn resolve_conflict_keep_local(
+        &self,
+        conflicted_commit_id: String,
+        replacement_commit_id: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let mut slot = self.runtime.lock().await;
+        let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
+        let conflict_id = ClientCommitId(conflicted_commit_id);
+        let (mut replacement, record_id, authoritative) = conflict_context(runtime, &conflict_id)?;
+        replacement.identity = CommitIdentity {
+            client_commit_id: ClientCommitId(replacement_commit_id),
+            fingerprint: Fingerprint(String::new()),
+        };
+        rebase_conflict_operation(&mut replacement, &record_id, &authoritative)?;
+        replacement.identity.fingerprint = canonical_fingerprint(runtime.state(), &replacement)?;
+        let prepared = runtime
+            .prepare_resolve_conflict(
+                &conflict_id,
+                ConflictResolutionRequest::KeepLocal { replacement },
+            )
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    pub async fn resolve_conflict_merge(
+        &self,
+        conflicted_commit_id: String,
+        replacement_commit_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let mut replacement = decode_input::<ClientCommit<JsonValue>>(&replacement_commit_json)?;
+        let mut slot = self.runtime.lock().await;
+        let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
+        replacement.identity.fingerprint = canonical_fingerprint(runtime.state(), &replacement)?;
+        let prepared = runtime
+            .prepare_resolve_conflict(
+                &ClientCommitId(conflicted_commit_id),
+                ConflictResolutionRequest::Merge { replacement },
+            )
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
     pub async fn pending_json(&self) -> Result<Vec<String>, NativeSyncError> {
         let slot = self.runtime.lock().await;
         let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
@@ -183,7 +245,10 @@ impl NativeSyncClient {
             .state()
             .outcomes
             .iter()
-            .filter(|resolved| matches!(&resolved.outcome, DurableOutcome::Conflict { .. }))
+            .filter(|resolved| {
+                resolved.resolution.is_none()
+                    && matches!(&resolved.outcome, DurableOutcome::Conflict { .. })
+            })
             .map(encode_output)
             .collect::<Result<Vec<_>, _>>()
     }
@@ -219,15 +284,11 @@ impl NativeSyncClient {
         slot: &mut Option<ClientRuntime<JsonValue>>,
         prepared: PreparedTransition<JsonValue>,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let current = slot
-            .as_ref()
-            .ok_or(NativeSyncError::Closed)?
-            .state()
-            .clone();
-        let next = prepared.state().clone();
-        validate_state_codec(&next)?;
+        let current = slot.as_ref().ok_or(NativeSyncError::Closed)?.state();
+        let next = prepared.state();
+        validate_state_codec(next)?;
         let persisted = SyncStateStore::new(&self.database)
-            .apply_transition_atomic(&current, &next)
+            .apply_transition_atomic(current, next)
             .await;
         if matches!(&persisted, Err(SyncStateError::CommitUnknown(_))) {
             slot.take();
@@ -238,6 +299,62 @@ impl NativeSyncClient {
         runtime.install(prepared).map_err(map_protocol_error)?;
         status(runtime)
     }
+}
+
+fn conflict_context(
+    runtime: &ClientRuntime<JsonValue>,
+    conflicted_commit_id: &ClientCommitId,
+) -> Result<(ClientCommit<JsonValue>, RecordId, RecordState<JsonValue>), NativeSyncError> {
+    runtime
+        .state()
+        .outcomes
+        .iter()
+        .find_map(|resolved| {
+            if resolved.local_commit.identity.client_commit_id != *conflicted_commit_id {
+                return None;
+            }
+            match &resolved.outcome {
+                DurableOutcome::Conflict {
+                    record_id,
+                    authoritative,
+                    ..
+                } => Some((
+                    resolved.local_commit.clone(),
+                    record_id.clone(),
+                    authoritative.clone(),
+                )),
+                DurableOutcome::Accepted { .. } | DurableOutcome::Rejected { .. } => None,
+            }
+        })
+        .ok_or(NativeSyncError::Protocol)
+}
+
+fn rebase_conflict_operation(
+    commit: &mut ClientCommit<JsonValue>,
+    conflict_record_id: &RecordId,
+    authoritative: &RecordState<JsonValue>,
+) -> Result<(), NativeSyncError> {
+    let operation = commit
+        .operations
+        .iter_mut()
+        .find(|operation| operation.record_id() == conflict_record_id)
+        .ok_or(NativeSyncError::Protocol)?;
+    match (operation, authoritative) {
+        (Operation::Upsert { base_version, .. }, RecordState::Absent) => {
+            *base_version = BaseVersion::Absent;
+        }
+        (
+            Operation::Upsert { base_version, .. },
+            RecordState::Present { version, .. } | RecordState::Tombstone { version },
+        ) => *base_version = BaseVersion::Exact(*version),
+        (Operation::Delete { base_version, .. }, RecordState::Present { version, .. }) => {
+            *base_version = *version;
+        }
+        (Operation::Delete { .. }, RecordState::Absent | RecordState::Tombstone { .. }) => {
+            return Err(NativeSyncError::Protocol);
+        }
+    }
+    Ok(())
 }
 
 fn decode_input<T: DeserializeOwned>(input: &str) -> Result<T, NativeSyncError> {
@@ -260,7 +377,10 @@ fn status(runtime: &ClientRuntime<JsonValue>) -> Result<NativeSyncStatus, Native
         state
             .outcomes
             .iter()
-            .filter(|resolved| matches!(&resolved.outcome, DurableOutcome::Conflict { .. }))
+            .filter(|resolved| {
+                resolved.resolution.is_none()
+                    && matches!(&resolved.outcome, DurableOutcome::Conflict { .. })
+            })
             .count(),
     )
     .map_err(|_| NativeSyncError::Internal)?;
@@ -466,6 +586,135 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(record, None);
+    }
+
+    #[tokio::test]
+    async fn explicit_conflict_resolutions_persist_and_only_unresolved_conflicts_are_reported() {
+        let database = database().await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let original = commit();
+        client
+            .enqueue(serde_json::to_string(&original).unwrap())
+            .await
+            .unwrap();
+        let pending: ClientCommit<JsonValue> =
+            serde_json::from_str(&client.pending_json().await.unwrap()[0]).unwrap();
+        let response: PushResponse<JsonValue> = PushResponse {
+            schema_version: SchemaVersion::V1,
+            partition_id: PartitionId("partition".into()),
+            client_id: ClientId("client".into()),
+            outcome: DurableOutcome::Conflict {
+                identity: pending.identity,
+                record_id: RecordId("person:ada".into()),
+                authoritative: RecordState::Absent,
+            },
+        };
+        client
+            .record_push_response(serde_json::to_string(&response).unwrap())
+            .await
+            .unwrap();
+
+        let status = client
+            .resolve_conflict_keep_local("commit-1".into(), "commit-2".into())
+            .await
+            .unwrap();
+        assert_eq!(status.pending_count, 1);
+        assert_eq!(status.outcome_count, 1);
+        assert_eq!(status.conflict_count, 0);
+        assert!(client.conflicts_json().await.unwrap().is_empty());
+
+        let retry = client
+            .resolve_conflict_keep_local("commit-1".into(), "commit-2".into())
+            .await
+            .unwrap();
+        assert_eq!(retry.pending_count, 1);
+        let retry_commit: ClientCommit<JsonValue> =
+            serde_json::from_str(&client.pending_json().await.unwrap()[0]).unwrap();
+        assert_eq!(retry_commit.identity.client_commit_id.0, "commit-2");
+        assert!(retry_commit.identity.fingerprint.0.starts_with("sha256:"));
+        assert!(matches!(
+            retry_commit.operations[0],
+            Operation::Upsert {
+                base_version: BaseVersion::Absent,
+                ..
+            }
+        ));
+
+        client.close().await;
+        let reopened = open_sync_client(database, options("all")).await.unwrap();
+        let status = reopened.status().await.unwrap();
+        assert_eq!(status.pending_count, 1);
+        assert_eq!(status.conflict_count, 0);
+    }
+
+    #[tokio::test]
+    async fn keep_server_and_merge_are_explicit_durable_native_actions() {
+        async fn conflicted_client() -> Arc<NativeSyncClient> {
+            let client = open_sync_client(database().await, options("all"))
+                .await
+                .unwrap();
+            client
+                .enqueue(serde_json::to_string(&commit()).unwrap())
+                .await
+                .unwrap();
+            let pending: ClientCommit<JsonValue> =
+                serde_json::from_str(&client.pending_json().await.unwrap()[0]).unwrap();
+            client
+                .record_push_response(
+                    serde_json::to_string(&PushResponse::<JsonValue> {
+                        schema_version: SchemaVersion::V1,
+                        partition_id: PartitionId("partition".into()),
+                        client_id: ClientId("client".into()),
+                        outcome: DurableOutcome::Conflict {
+                            identity: pending.identity,
+                            record_id: RecordId("person:ada".into()),
+                            authoritative: RecordState::Absent,
+                        },
+                    })
+                    .unwrap(),
+                )
+                .await
+                .unwrap();
+            client
+        }
+
+        let keep_server = conflicted_client().await;
+        let status = keep_server
+            .resolve_conflict_keep_server("commit-1".into())
+            .await
+            .unwrap();
+        assert_eq!(status.pending_count, 0);
+        assert_eq!(status.conflict_count, 0);
+        keep_server
+            .resolve_conflict_keep_server("commit-1".into())
+            .await
+            .expect("an identical keep-server retry is idempotent");
+
+        let merge = conflicted_client().await;
+        let mut replacement = commit();
+        replacement.identity.client_commit_id = ClientCommitId("merge-1".into());
+        if let Operation::Upsert { value, .. } = &mut replacement.operations[0] {
+            *value = json!({"name": "merged"});
+        }
+        let status = merge
+            .resolve_conflict_merge(
+                "commit-1".into(),
+                serde_json::to_string(&replacement).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status.pending_count, 1);
+        assert_eq!(status.conflict_count, 0);
+        let queued: ClientCommit<JsonValue> =
+            serde_json::from_str(&merge.pending_json().await.unwrap()[0]).unwrap();
+        assert_eq!(queued.identity.client_commit_id.0, "merge-1");
+        assert_eq!(queued.operations[0], replacement.operations[0]);
+        assert_ne!(
+            queued.identity.fingerprint,
+            replacement.identity.fingerprint
+        );
     }
 
     #[tokio::test]
