@@ -46,6 +46,8 @@ explicitly experimental API but is not usable as a synchronization engine.
 - Normalized durable sync-storage commit: `a7b9f9e`.
 - Reproducible cross-version migration runner commit: `8fb9947`.
 - Published application-shaped branch: `origin/feat/normalized-sync-storage-v1`.
+- Conflict-resolution branch: `origin/feat/conflict-resolution-v1`; native/UniFFI/TypeScript core
+  commit `e6ceeff`.
 
 ## Source boundary
 
@@ -55,6 +57,8 @@ explicitly experimental API but is not usable as a synchronization engine.
   `056374ac5430e1e09ee73ab30b4d8c20247a2f68`.
 - Canonical codec update: private `main` at
   `2032066722ccb0202f2f8481f30fd5c70f4d681e`.
+- Conflict-resolution client source: private commit `c32ca57`; the complete private formal series is
+  integrated on `main` at `22a4aebca2f546c7f8195144fb0d03fa390fc2c8`.
 - Included: `surrealdb-sync-protocol`, `surrealdb-sync-client`, and the client's public transition
   regressions.
 - Excluded: Quint specifications, authority implementation, authority-cycle/conformance/adversarial
@@ -97,13 +101,22 @@ single aggregate state blob with normalized private rows:
   conflicts, and pull application are mapped to native values. The private sync-state tables cannot
   be targeted by protocol operations.
 - `open_sync_client` and `NativeSyncClient` expose named enqueue, push-outcome, pull, pending,
-  conflict, status, close, and closed-state operations over UniFFI.
+  conflict, keep-server, keep-local, merge, status, close, and closed-state operations over UniFFI.
 - `ExperimentalSyncClient` is the hand-written TypeScript facade. `SurrealClient` exposes it through
   `openExperimentalSync()` only on embedded databases.
 
 Normalized persistence removes the former 4 MiB whole-replica ceiling and reduces write
-amplification, but `ClientRuntime` still clones the complete in-memory durable state while preparing
-a transition. A storage-aware transition interface remains necessary for very large replicas.
+amplification. Persistence and optimistic projection now borrow the current and prepared states,
+removing four facade/storage clones per transition. `ClientRuntime` still clones the complete
+in-memory durable state while preparing a transition; a delta-oriented transition interface remains
+necessary for very large replicas.
+
+Conflict resolution is explicit and durable. Keep-server records a local disposition without a new
+authority write. Keep-local queues the exact retained atomic batch under a fresh commit identity and
+rebases only the conflicting operation. Merge queues an application-provided fresh batch. Both
+write-producing choices use the existing fingerprint, deduplication, compare-and-set, push, and pull
+paths. The original conflict and local intent remain durable for audit/recovery, while public
+conflict counts include only unresolved conflicts. Merge values and policy remain application-owned.
 
 The normalized loader also inventories every component table for the client and fails closed on
 missing metadata, orphan or extra rows, duplicate identities, oversized keys, noncanonical tagged
@@ -208,7 +221,7 @@ exit. Normal unit and harness suites do not depend on the private checkout or li
 
 The focused adapter tests cover native-computed fingerprints, lossless tagged canonical values,
 hostile depth, unsupported enqueue/push/pull values without mutation, revision conflicts,
-idempotent retry, explicit rollback, committed
+idempotent retry, explicit keep-server/keep-local/merge resolution, explicit rollback, committed
 replacement, malformed and semantically corrupt payloads, size limits, structured identity keys,
 SurrealKV close/reopen with an uncommitted transaction, atomic optimistic create/delete, facade
 reopen, durable conflict retention, scope drift, malformed input, exact HTTP request shape,
@@ -314,8 +327,8 @@ replacement, pending outbox, and optimistic replay. The package separately prove
 boundary, while the device tests prove the same codec through Hermes. A single deployed
 client-to-authority HTTP E2E is now covered locally by an opt-in RN 0.86 trace on both an iPhone 17
 Pro simulator and Pixel 9 Android emulator. Two memory-backed replicas perform initial pulls,
-concurrent absent-base writes, accepted/conflict pushes, facade reopen, and final convergence through
-the canonical codec. A second device scenario proves durable offline enqueue, `401` token recovery,
+concurrent absent-base writes, accepted/conflict pushes, facade reopen, an explicit keep-local retry,
+and final convergence through the canonical codec. A second device scenario proves durable offline enqueue, `401` token recovery,
 background stop, foreground catch-up, and periodic recovery without a hint. The coordinator owns
 only lifecycle and scheduling; the application still owns its token and injected `AppState` mapping.
 The private gateway uses a local development principal/scope. Its separate
@@ -339,14 +352,23 @@ harness installation only before the historical seed so a database last opened b
 cannot contaminate repeat runs; it never clears data between the two asserted phases. Rock still
 prints non-fatal Node type-stripping diagnostics while discovering its TypeScript configuration.
 
+The conflict-resolution branch passes native workspace Clippy/tests, all 44 package tests, and the
+permanent process-restart and local-authority flows on iOS and Android. The two-replica flow now
+continues from a durable stale conflict through explicit keep-local, a fresh accepted commit, and
+final convergence. The restart flow records keep-server, closes the process boundary, reopens
+SurrealKV, and confirms the conflict remains resolved. Android initially caught a stale native
+method table; regenerating the pinned Android UniFFI artifacts fixed the missing symbols. These are
+Debug/Harness local-prototype results, not deployment evidence.
+
 ## Next implementation slices
 
 1. Replace the fixed local identity and development checkpoint digest with the intended
    authenticated deployment boundary and production checkpoint policy; certify scanner retention,
    alerting, and administrator rebootstrap on that deployment.
-2. Integrate the proven injected lifecycle/connectivity/token-refresh interfaces into the first
-   application prototype and validate them against a deployed authenticated authority; retain
-   periodic HTTP pull as the correctness fallback.
+2. Define the first application's per-record/field merge policy and user-facing conflict workflow,
+   then integrate the proven lifecycle/connectivity/token-refresh and conflict-resolution interfaces
+   without granting clients direct shared-data write authority. Validate against a deployed
+   authenticated authority and retain periodic HTTP pull as the correctness fallback.
 3. Replace the copied crates with the agreed single-source/public-export mechanism before release.
 4. Extend the canonical value profile only through private protocol decisions and golden vectors.
 5. Add a normal bundled Release functional runner and establish repeated pinned physical-device RSS

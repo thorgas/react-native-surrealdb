@@ -181,6 +181,38 @@ describe("live local authority", () => {
       expect(recordsB[0]?.value).toEqual(recordsA[0]?.value);
       expect(await syncB.conflicts()).toHaveLength(1);
 
+      const resolved = await syncB.resolveConflictKeepLocal(
+        `commit-b-${runSuffix}`,
+        `commit-b-retry-${runSuffix}`,
+      );
+      expect(resolved).toMatchObject({
+        pendingCount: 1,
+        outcomeCount: 1,
+        conflictCount: 0,
+      });
+      expect(await syncB.conflicts()).toHaveLength(0);
+      const retried = await transportB.push();
+      expect(retried).toHaveLength(1);
+      expect(retried[0]).toMatchObject({
+        pendingCount: 0,
+        outcomeCount: 2,
+        conflictCount: 0,
+      });
+
+      await Promise.all([transportA.pull(), transportB.pull()]);
+      const [resolvedA, resolvedB] = await Promise.all([
+        databaseA.query<Array<{ winner: string; servings: number }>>(
+          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`,
+        ),
+        databaseB.query<Array<{ winner: string; servings: number }>>(
+          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`,
+        ),
+      ]);
+      expect(resolvedA[0]?.value).toEqual([
+        { winner: "client-b", servings: 3.75 },
+      ]);
+      expect(resolvedB[0]?.value).toEqual(resolvedA[0]?.value);
+
       await Promise.all([syncA.close(), syncB.close()]);
     } finally {
       await Promise.all([close(databaseA), close(databaseB)]);

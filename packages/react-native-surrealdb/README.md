@@ -204,6 +204,20 @@ const sync = await database.openExperimentalSync({
   subscriptionRevision: 1n,
 });
 
+// Durable conflicts stay recoverable until the application makes an explicit choice.
+await sync.resolveConflictKeepServer("conflicted-commit");
+await sync.resolveConflictKeepLocal("conflicted-commit", "fresh-retry-commit");
+await sync.resolveConflictMerge("conflicted-commit", {
+  identity: { clientCommitId: "fresh-merge-commit", fingerprint: "computed-by-native" },
+  operations: [{
+    kind: "upsert",
+    record_id: "recipe:42",
+    base_version: "absent", // Must match the authoritative state in the conflict.
+    value: { title: "Explicitly merged recipe" },
+    reference: null,
+  }],
+});
+
 const transport = new ExperimentalSyncHttpAdapter({
   sync,
   baseUrl: "https://sync.example.invalid",
@@ -251,6 +265,12 @@ lifecycle.stop();
 
 The example URL is intentionally non-routable: this package does not supply or deploy the authority.
 
+Keep-server durably accepts the authority value. Keep-local replays the complete retained atomic
+batch under a fresh identity after rebasing its conflicting operation. Merge queues an explicit
+application-provided batch under the normal compare-and-set path. The original conflict and local
+intent remain in durable history; only unresolved conflicts appear in `conflicts()` and
+`conflictCount`. This mechanism deliberately does not choose an application merge policy.
+
 The payload API uses this package's tagged lossless value bridge for JavaScript `bigint`, bytes,
 `NONE`, record links, and finite fractional JavaScript numbers. Native Rust ignores any caller-supplied fingerprint, validates record
 values against the bounded canonical protocol safe subset, and emits the content-bound SHA-256
@@ -277,6 +297,10 @@ Production hints require WSS. The client closes an oversized frame after receipt
 or proxy must enforce its own pre-allocation frame limit. Authority deployment is absent. Do not
 ship or advertise this API; see the repository
 [sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
+
+The conflict-resolution facade is covered by native SurrealKV reopen tests, package tests, and the
+opt-in two-replica local-authority Harness flow on iOS and Android. These are local prototype tests,
+not deployed authentication or production-retention evidence.
 
 Maintainers can measure the local durable path without a server using
 `pnpm --filter surrealdb-harness-rn86 run benchmark:ios:sync` or
