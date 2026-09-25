@@ -28,6 +28,10 @@ pnpm install
 The iOS command prepares the ignored Rust XCFramework and RNTA bundle resources
 before launching the configured iPhone 17 Pro (iOS 26.1) simulator:
 
+The script names the OS version explicitly because a second iPhone 17 Pro on
+iOS 26.5 would otherwise receive the build while the harness launches the
+iOS 26.1 device. Use Node 22 (the package's supported `>=20 <23` range).
+
 ```sh
 pnpm --filter surrealdb-harness-rn86 run ios
 ```
