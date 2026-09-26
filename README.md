@@ -149,7 +149,8 @@ confirmed records, pending outbox, and reconstructed optimistic state. This prov
 it does not provide or deploy the authenticated authority endpoint. A dedicated opt-in RN 0.86 E2E
 can connect embedded clients to the private repository's development-only local gateway and has
 passed on iOS and Android. It now covers offline durable work, invalid-to-valid token recovery,
-background stop, foreground catch-up, missed-hint periodic pull, and the prior two-client conflict;
+background stop, foreground catch-up, missed-hint periodic pull, and a two-client conflict followed
+by an explicit keep-local retry and convergence;
 its local identity, checkpoint token, and feed frontier are not production mechanisms.
 The Harness functional suites run Debug/Metro applications. `release:artifacts` builds distributable
 native binaries but is artifact-generation evidence, not a functional Release-app test.

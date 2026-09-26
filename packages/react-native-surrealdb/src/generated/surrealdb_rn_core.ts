@@ -1858,6 +1858,20 @@ export interface NativeSyncClientLike {
     responseJson: string,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<NativeSyncStatus>;
+  resolveConflictKeepLocal(
+    conflictedCommitId: string,
+    replacementCommitId: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeSyncStatus>;
+  resolveConflictKeepServer(
+    conflictedCommitId: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeSyncStatus>;
+  resolveConflictMerge(
+    conflictedCommitId: string,
+    replacementCommitJson: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeSyncStatus>;
   status(asyncOpts_?: {
     signal: AbortSignal;
   }) /*throws*/ : Promise<NativeSyncStatus>;
@@ -2162,6 +2176,157 @@ export class NativeSyncClient
             uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
             FfiConverterString.lower(
               responseJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
+          FfiConverterTypeNativeSyncStatus,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async resolveConflictKeepLocal(
+    conflictedCommitId: string,
+    replacementCommitId: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeSyncStatus> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_resolve_conflict_keep_local(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              conflictedCommitId,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterString.lower(
+              replacementCommitId,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
+          FfiConverterTypeNativeSyncStatus,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async resolveConflictKeepServer(
+    conflictedCommitId: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeSyncStatus> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_resolve_conflict_keep_server(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              conflictedCommitId,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
+          FfiConverterTypeNativeSyncStatus,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async resolveConflictMerge(
+    conflictedCommitId: string,
+    replacementCommitJson: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeSyncStatus> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_resolve_conflict_merge(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              conflictedCommitId,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterString.lower(
+              replacementCommitJson,
               nativeModule().rustbuffer_alloc,
             ),
           );
@@ -3718,6 +3883,30 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_record_push_response",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_keep_local() !==
+    56530
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_keep_local",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_keep_server() !==
+    15407
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_keep_server",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_merge() !==
+    25749
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_merge",
     );
   }
   if (

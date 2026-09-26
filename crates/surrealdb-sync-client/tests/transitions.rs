@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use surrealdb_sync_client::{
-    ClientError, ClientRuntime, DurableClientState, OptimisticRecord, ResolvedCommit,
+    ClientError, ClientRuntime, ConflictResolution, ConflictResolutionRequest, DurableClientState,
+    OptimisticRecord, ResolvedCommit,
 };
 use surrealdb_sync_protocol::{
     AppliedRecord, BaseVersion, Checkpoint, ClientCommit, ClientCommitId, ClientId, CommitIdentity,
@@ -180,6 +181,7 @@ fn conflict_is_durable_and_retains_local_intent() {
         vec![ResolvedCommit {
             local_commit: local,
             outcome,
+            resolution: None,
         }]
     );
     assert_eq!(
@@ -189,6 +191,249 @@ fn conflict_is_durable_and_retains_local_intent() {
             .outcomes
             .len(),
         1
+    );
+}
+
+fn runtime_with_conflict(
+    local: ClientCommit<Value>,
+    authoritative: RecordState<Value>,
+) -> ClientRuntime<Value> {
+    let mut state = empty_state();
+    if authoritative != RecordState::Absent {
+        state
+            .confirmed
+            .insert(record_id("a"), authoritative.clone());
+    }
+    state.outcomes.push(ResolvedCommit {
+        outcome: DurableOutcome::Conflict {
+            identity: local.identity.clone(),
+            record_id: record_id("a"),
+            authoritative,
+        },
+        local_commit: local,
+        resolution: None,
+    });
+    ClientRuntime::open(state).expect("conflict state is valid")
+}
+
+#[test]
+fn keep_server_is_durable_and_preserves_the_original_conflict() {
+    let local = commit(
+        "conflict",
+        vec![Operation::Upsert {
+            record_id: record_id("a"),
+            base_version: BaseVersion::Exact(1),
+            value: "local".to_owned(),
+            reference: None,
+        }],
+    );
+    let mut runtime = runtime_with_conflict(
+        local.clone(),
+        RecordState::Present {
+            value: "server".to_owned(),
+            version: 2,
+            reference: None,
+        },
+    );
+    let prepared = runtime
+        .prepare_resolve_conflict(
+            &local.identity.client_commit_id,
+            ConflictResolutionRequest::KeepServer,
+        )
+        .expect("keep-server should prepare");
+    let persisted = install(&mut runtime, prepared);
+
+    assert!(runtime.state().outbox.is_empty());
+    assert_eq!(runtime.state().outcomes[0].local_commit, local);
+    assert_eq!(
+        runtime.state().outcomes[0].resolution,
+        Some(ConflictResolution::KeepServer)
+    );
+    assert_eq!(
+        ClientRuntime::open(persisted)
+            .expect("resolution should reopen")
+            .state()
+            .outcomes[0]
+            .resolution,
+        Some(ConflictResolution::KeepServer)
+    );
+    runtime
+        .prepare_resolve_conflict(
+            &local.identity.client_commit_id,
+            ConflictResolutionRequest::KeepServer,
+        )
+        .expect("retrying the same keep-server decision is idempotent");
+}
+
+#[test]
+fn keep_local_retries_the_complete_intent_with_a_fresh_identity() {
+    let local = commit(
+        "conflict",
+        vec![
+            Operation::Upsert {
+                record_id: record_id("a"),
+                base_version: BaseVersion::Exact(1),
+                value: "local".to_owned(),
+                reference: None,
+            },
+            upsert("b", "second", None),
+        ],
+    );
+    let mut runtime = runtime_with_conflict(
+        local.clone(),
+        RecordState::Present {
+            value: "server".to_owned(),
+            version: 2,
+            reference: None,
+        },
+    );
+    let replacement = commit(
+        "retry",
+        vec![
+            Operation::Upsert {
+                record_id: record_id("a"),
+                base_version: BaseVersion::Exact(2),
+                value: "local".to_owned(),
+                reference: None,
+            },
+            upsert("b", "second", None),
+        ],
+    );
+    let prepared = runtime
+        .prepare_resolve_conflict(
+            &local.identity.client_commit_id,
+            ConflictResolutionRequest::KeepLocal {
+                replacement: replacement.clone(),
+            },
+        )
+        .expect("keep-local should prepare");
+    let persisted = install(&mut runtime, prepared);
+
+    assert_eq!(runtime.state().outbox, vec![replacement.clone()]);
+    assert_eq!(runtime.state().outcomes[0].local_commit, local);
+    assert_eq!(
+        runtime.state().outcomes[0].resolution,
+        Some(ConflictResolution::KeepLocal {
+            replacement: replacement.identity.clone(),
+        })
+    );
+    assert_eq!(
+        ClientRuntime::open(persisted)
+            .expect("retry should survive restart")
+            .state()
+            .outbox,
+        vec![replacement]
+    );
+    runtime
+        .prepare_resolve_conflict(
+            &local.identity.client_commit_id,
+            ConflictResolutionRequest::KeepLocal {
+                replacement: runtime.state().outbox[0].clone(),
+            },
+        )
+        .expect("retrying the same keep-local decision is idempotent");
+}
+
+#[test]
+fn merge_requires_the_conflict_record_at_the_authoritative_base() {
+    let local = commit(
+        "conflict",
+        vec![Operation::Upsert {
+            record_id: record_id("a"),
+            base_version: BaseVersion::Exact(1),
+            value: "local".to_owned(),
+            reference: None,
+        }],
+    );
+    let mut runtime = runtime_with_conflict(local.clone(), RecordState::Tombstone { version: 3 });
+    let stale = commit("stale-merge", vec![upsert("a", "merged", None)]);
+    assert_eq!(
+        runtime.prepare_resolve_conflict(
+            &local.identity.client_commit_id,
+            ConflictResolutionRequest::Merge { replacement: stale },
+        ),
+        Err(ClientError::InvalidConflictResolution)
+    );
+
+    let replacement = commit(
+        "merge",
+        vec![Operation::Upsert {
+            record_id: record_id("a"),
+            base_version: BaseVersion::Exact(3),
+            value: "merged".to_owned(),
+            reference: None,
+        }],
+    );
+    let prepared = runtime
+        .prepare_resolve_conflict(
+            &local.identity.client_commit_id,
+            ConflictResolutionRequest::Merge {
+                replacement: replacement.clone(),
+            },
+        )
+        .expect("fresh tombstone merge should prepare");
+    install(&mut runtime, prepared);
+
+    assert_eq!(runtime.state().outbox, vec![replacement.clone()]);
+    assert_eq!(
+        runtime.state().outcomes[0].resolution,
+        Some(ConflictResolution::Merge {
+            replacement: replacement.identity,
+        })
+    );
+    assert!(matches!(
+        runtime.prepare_resolve_conflict(
+            &local.identity.client_commit_id,
+            ConflictResolutionRequest::KeepServer,
+        ),
+        Err(ClientError::ConflictAlreadyResolved(_))
+    ));
+}
+
+#[test]
+fn keep_local_never_relabels_changed_intent_or_invalid_delete() {
+    let local = commit(
+        "conflict",
+        vec![Operation::Upsert {
+            record_id: record_id("a"),
+            base_version: BaseVersion::Exact(1),
+            value: "local".to_owned(),
+            reference: None,
+        }],
+    );
+    let runtime = runtime_with_conflict(local.clone(), RecordState::Absent);
+    let changed = commit("changed", vec![upsert("a", "different", None)]);
+    assert_eq!(
+        runtime.prepare_resolve_conflict(
+            &local.identity.client_commit_id,
+            ConflictResolutionRequest::KeepLocal {
+                replacement: changed,
+            },
+        ),
+        Err(ClientError::InvalidConflictResolution)
+    );
+
+    let delete = commit(
+        "delete-conflict",
+        vec![Operation::Delete {
+            record_id: record_id("a"),
+            base_version: 1,
+        }],
+    );
+    let runtime = runtime_with_conflict(delete.clone(), RecordState::Tombstone { version: 2 });
+    let replacement = commit(
+        "delete-retry",
+        vec![Operation::Delete {
+            record_id: record_id("a"),
+            base_version: 2,
+        }],
+    );
+    assert_eq!(
+        runtime.prepare_resolve_conflict(
+            &delete.identity.client_commit_id,
+            ConflictResolutionRequest::KeepLocal { replacement },
+        ),
+        Err(ClientError::InvalidConflictResolution)
     );
 }
 
@@ -340,6 +585,7 @@ fn accepted_id_mapping_rewrites_every_durable_reference() {
             identity: identity("prior"),
             reason: RejectReason::InvalidOperation,
         },
+        resolution: None,
     });
     let mut runtime = ClientRuntime::open(state).expect("state is valid");
     let pending = commit("map", vec![upsert("temp", "new", Some("parent"))]);

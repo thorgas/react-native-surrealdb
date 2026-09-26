@@ -11,7 +11,7 @@ use surrealdb::engine::any::Any;
 use surrealdb::method::Transaction;
 use surrealdb::types::{Array, Bytes, RecordId as NativeRecordId, SurrealValue, Value};
 use surrealdb_sync_client::{
-    ClientError, ClientRuntime, DurableClientState, OptimisticRecord, ResolvedCommit,
+    ClientError, DurableClientState, OptimisticRecord, ResolvedCommit, optimistic_projection,
 };
 use surrealdb_sync_protocol::{
     Checkpoint, ClientCommit, ClientId, PartitionId, RecordId as ProtocolRecordId, RecordState,
@@ -316,12 +316,8 @@ impl<'a> SyncStateStore<'a> {
         }
 
         let (key, rows) = prepare_state_write(Some(current.revision), next)?;
-        let current_projection = ClientRuntime::open(current.clone())
-            .map_err(SyncStateError::InvalidState)?
-            .optimistic();
-        let next_projection = ClientRuntime::open(next.clone())
-            .map_err(SyncStateError::InvalidState)?
-            .optimistic();
+        let current_projection = optimistic_projection(current);
+        let next_projection = optimistic_projection(next);
 
         let client = self.database.client().await.map_err(SyncStateError::Core)?;
         let transaction = client.begin().await.map_err(SyncStateError::Database)?;
@@ -351,9 +347,7 @@ impl<'a> SyncStateStore<'a> {
         state: &StoredSyncState,
     ) -> Result<(), SyncStateError> {
         let rows = normalize_state(state)?;
-        let projection = ClientRuntime::open(state.clone())
-            .map_err(SyncStateError::InvalidState)?
-            .optimistic();
+        let projection = optimistic_projection(state);
         let client = self.database.client().await.map_err(SyncStateError::Core)?;
         let transaction = client.begin().await.map_err(SyncStateError::Database)?;
         let operation = async {
@@ -1490,6 +1484,7 @@ mod tests {
                 identity: resolved.identity,
                 reason: RejectReason::InvalidOperation,
             },
+            resolution: None,
         });
         state.id_map.insert(
             RecordId("recipe:temporary-unused".into()),

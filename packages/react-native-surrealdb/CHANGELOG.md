@@ -2,6 +2,19 @@
 
 All notable changes to this package are documented here.
 
+## 0.1.0-alpha.2
+
+- Add an experimental crash-safe native sync client with optimistic records,
+  durable pending commits, checkpoints, and explicit keep-server, keep-local,
+  and application-supplied merge conflict resolution.
+- Add bounded canonical CBOR HTTP push/pull codecs and a transport adapter;
+  the application still supplies its authenticated authority and access token.
+- Preserve complete pull batches, accepted outcomes, ID mappings, and unresolved
+  conflicts across SurrealKV reopen. Reject malformed or oversized sync values.
+- Add local two-client authority harness coverage for concurrent writes,
+  durable conflicts, recovery, and periodic visibility. This does not enable
+  synchronization in a consuming app automatically.
+
 ## 0.1.0-alpha.1
 
 - Optimize release binaries with abort-on-panic behavior and retain post-build

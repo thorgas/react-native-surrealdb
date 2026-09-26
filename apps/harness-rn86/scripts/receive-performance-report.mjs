@@ -1,5 +1,5 @@
 import { createServer } from 'node:http';
-import { writeFileSync } from 'node:fs';
+import { appendFileSync, writeFileSync } from 'node:fs';
 
 const REPORT_RECEIVER_PORT = 18_082;
 const MAX_REPORT_BYTES = 1_000_000;
@@ -7,6 +7,7 @@ const MAX_REPORT_BYTES = 1_000_000;
 const output = process.argv
   .find(value => value.startsWith('--output='))
   ?.slice('--output='.length);
+const append = process.argv.includes('--append');
 
 if (!output) {
   throw new Error(
@@ -41,7 +42,12 @@ const server = createServer((request, response) => {
       ) {
         throw new Error('Benchmark report has an unsupported schema');
       }
-      writeFileSync(output, `${JSON.stringify(report, null, 2)}\n`);
+      const line = `${JSON.stringify(report)}\n`;
+      if (append) {
+        appendFileSync(output, line);
+      } else {
+        writeFileSync(output, `${JSON.stringify(report, null, 2)}\n`);
+      }
       response.writeHead(204).end();
     } catch (cause) {
       console.error(cause);
