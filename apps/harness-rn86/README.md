@@ -125,14 +125,31 @@ SYNC_ENGINE_DEV_REPO=/absolute/path/to/surrealdb-sync-engine.dev \
   pnpm --filter surrealdb-harness-rn86 run e2e:local-authority:android
 ```
 
+When another agent uses the default iPhone 17 Pro, set both
+`SURREALDB_IOS_SIMULATOR='Hauswirtschaft E2E'` for the native build and
+`SURREALDB_IOS_SIMULATOR_NAME='Hauswirtschaft E2E'` for the harness runner. The two
+names must identify the same iOS 26.1 simulator; otherwise a green harness run may target a
+different booted simulator than the one just built. To target a gateway started from another
+private worktree, set `SYNC_ENGINE_DEV_REPO` to that exact worktree so the bearer matches.
+
 The environment override is optional for the normal sibling checkout layout. The runner reads the
 ignored mode-`600` local credentials without sourcing or printing them and removes its generated
 token module on exit. The trace proves initial pull, concurrent optimistic writes,
-accepted/conflict outcomes, facade reopen, and final convergence. Its second scenario keeps a
+accepted/conflict outcomes, facade reopen, and final convergence. A separate race submits both
+offline-created absent-base writes concurrently, requires exactly one accepted outcome and one
+durable conflict, and reads the winner from the other embedded client after pull. The test records
+`push_pair_ms` from concurrent push start to both responses and
+`both_push_responses_to_other_read_ms` from then to the second client's database read. These local,
+single-device timings include test scheduling and are not cloud or background-delivery SLAs.
+Its third scenario keeps a
 durable mutation queued while offline, recovers one real `401` by swapping the injected token,
 stops the scheduler in background, catches an authority write on foreground, and recovers another
-write through the 250 ms test-only periodic pull without a WebSocket hint. Lifecycle events are
+write through the 1-second test-only periodic pull without a WebSocket hint. A 250 ms interval
+caused repeated gateway/client timeouts under this local test load; the 1-second suite passed four
+consecutive runs on 2026-09-26. Lifecycle events are
 injected: physically backgrounding the host would suspend Hermes and prevent in-process assertions.
+The runner still emits a non-fatal `@rock-js` TypeScript type-stripping warning under Node 22;
+test exit status and readback assertions, not that warning, are the pass criteria.
 
 Use Node 22.22.0 from the repository `.node-version`. The Android runner may
 stop and restart its configured `Pixel_9` AVD between the seed and verification

@@ -20,7 +20,7 @@ type GeneratedLocalAuthorityConfig = {
 };
 
 declare const require: (
-  path: "./local-authority-token.generated",
+  path: "./local-authority-token.generated"
 ) => GeneratedLocalAuthorityConfig;
 
 const {
@@ -50,7 +50,7 @@ function transport(sync: ExperimentalSyncClient, clientId: string) {
 function dynamicTransport(
   sync: ExperimentalSyncClient,
   clientId: string,
-  accessToken: () => string,
+  accessToken: () => string
 ) {
   return new ExperimentalSyncHttpAdapter({
     sync,
@@ -70,6 +70,86 @@ async function close(database: SurrealClient | undefined) {
 }
 
 describe("live local authority", () => {
+  test("simultaneous pushes keep one durable winner and expose it to the other client", async () => {
+    const raceRecordId = `local_authority_race:${runSuffix}`;
+    const clientIds = [`rn-race-a-${runSuffix}`, `rn-race-b-${runSuffix}`];
+    const databases: SurrealClient[] = [];
+    const syncs: ExperimentalSyncClient[] = [];
+
+    try {
+      for (const [index, clientId] of clientIds.entries()) {
+        databases.push(
+          await connect({
+            endpoint: "memory",
+            namespace: `local-authority-race-${index}-${runSuffix}`,
+            database: "e2e",
+          })
+        );
+        const sync = await databases[index].openExperimentalSync({
+          partitionId,
+          clientId,
+          requestedScope,
+          subscriptionRevision,
+        });
+        syncs.push(sync);
+        await transport(sync, clientId).pull();
+        await sync.enqueue({
+          identity: {
+            clientCommitId: `race-${index}-${runSuffix}`,
+            fingerprint: "computed-by-native",
+          },
+          operations: [
+            {
+              kind: "upsert",
+              record_id: raceRecordId,
+              base_version: "absent",
+              value: { writer: index },
+              reference: null,
+            },
+          ],
+        });
+      }
+
+      const transports = syncs.map((sync, index) =>
+        transport(sync, clientIds[index])
+      );
+      const pushStart = Date.now();
+      const pushes = await Promise.all(
+        transports.map((client) => client.push())
+      );
+      const pushFinished = Date.now();
+      const winnerIndex = pushes.findIndex(
+        (result) => result[0]?.conflictCount === 0
+      );
+      const loserIndex = 1 - winnerIndex;
+      expect(winnerIndex).toBeGreaterThanOrEqual(0);
+      expect(pushes[winnerIndex][0]).toMatchObject({
+        outcomeCount: 1,
+        conflictCount: 0,
+      });
+      expect(pushes[loserIndex][0]).toMatchObject({
+        outcomeCount: 1,
+        conflictCount: 1,
+      });
+      expect(await syncs[loserIndex].conflicts()).toHaveLength(1);
+
+      await transports[loserIndex].pull();
+      const observed = await databases[loserIndex].query<
+        Array<{ writer: bigint }>
+      >(`SELECT VALUE { writer: writer } FROM ${raceRecordId}`);
+      const visibleAt = Date.now();
+      expect(observed[0]?.value).toEqual([{ writer: BigInt(winnerIndex) }]);
+      expect(await syncs[loserIndex].conflicts()).toHaveLength(1);
+      console.log(
+        `SYNC_LOCAL_RACE_LATENCY push_pair_ms=${pushFinished - pushStart} ` +
+          `both_push_responses_to_other_read_ms=${visibleAt - pushFinished}`
+      );
+      await Promise.all(syncs.map((sync) => sync.close()));
+    } finally {
+      await Promise.all(databases.map((database) => close(database)));
+    }
+  });
+
   test("converges two offline clients after an authoritative conflict", async () => {
     const clientA = `rn-a-${runSuffix}`;
     const clientB = `rn-b-${runSuffix}`;
@@ -169,10 +249,10 @@ describe("live local authority", () => {
 
       const [recordsA, recordsB] = await Promise.all([
         databaseA.query<Array<{ winner: string; servings: number }>>(
-          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`,
+          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`
         ),
         databaseB.query<Array<{ winner: string; servings: number }>>(
-          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`,
+          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`
         ),
       ]);
       expect(recordsA[0]?.value).toEqual([
@@ -183,7 +263,7 @@ describe("live local authority", () => {
 
       const resolved = await syncB.resolveConflictKeepLocal(
         `commit-b-${runSuffix}`,
-        `commit-b-retry-${runSuffix}`,
+        `commit-b-retry-${runSuffix}`
       );
       expect(resolved).toMatchObject({
         pendingCount: 1,
@@ -202,10 +282,10 @@ describe("live local authority", () => {
       await Promise.all([transportA.pull(), transportB.pull()]);
       const [resolvedA, resolvedB] = await Promise.all([
         databaseA.query<Array<{ winner: string; servings: number }>>(
-          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`,
+          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`
         ),
         databaseB.query<Array<{ winner: string; servings: number }>>(
-          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`,
+          `SELECT VALUE { winner: winner, servings: servings } FROM ${recordId}`
         ),
       ]);
       expect(resolvedA[0]?.value).toEqual([
@@ -233,7 +313,8 @@ describe("live local authority", () => {
     let onlineListener: ((next: boolean) => void) | undefined;
     let applicationState: ExperimentalSyncApplicationState = "background";
     let lifecycleListener:
-      ((next: ExperimentalSyncApplicationState) => void) | undefined;
+      | ((next: ExperimentalSyncApplicationState) => void)
+      | undefined;
     let token = "invalid-token-0123456789";
 
     const connectivity: ExperimentalSyncConnectivity = {
@@ -309,7 +390,7 @@ describe("live local authority", () => {
       const scheduler = new ExperimentalSyncScheduler({
         adapter: dynamicTransport(consumerSync, consumerId, () => token),
         connectivity,
-        periodicPullMs: 250,
+        periodicPullMs: 1_000,
       });
       const coordinator = new ExperimentalSyncLifecycleCoordinator({
         scheduler,
@@ -331,7 +412,7 @@ describe("live local authority", () => {
         async () =>
           (await consumerSync?.status())?.pendingCount === 0 &&
           (await consumerSync?.checkpointToken()) != null,
-        () => `consumer did not recover: ${JSON.stringify(scheduler.status)}`,
+        () => `consumer did not recover: ${JSON.stringify(scheduler.status)}`
       );
 
       emitLifecycle("background");
@@ -354,13 +435,20 @@ describe("live local authority", () => {
       });
       await producerTransport.push();
       emitLifecycle("active");
-      await eventuallyAsync(async () => {
-        const [result] = await consumer.query<string[]>(
-          `SELECT VALUE phase FROM ${foregroundRecord}`,
-        );
-        return result?.value[0] === "foreground-catch-up";
-      });
+      await eventuallyAsync(
+        async () => {
+          const [result] = await consumer.query<string[]>(
+            `SELECT VALUE phase FROM ${foregroundRecord}`
+          );
+          return result?.value[0] === "foreground-catch-up";
+        },
+        () =>
+          `foreground catch-up did not arrive: ${JSON.stringify(
+            scheduler.status
+          )}`
+      );
 
+      const beforePeriodic = await consumerSync.status();
       await producerSync.enqueue({
         identity: {
           clientCommitId: `commit-periodic-${runSuffix}`,
@@ -377,12 +465,28 @@ describe("live local authority", () => {
         ],
       });
       await producerTransport.push();
-      await eventuallyAsync(async () => {
-        const [result] = await consumer.query<string[]>(
-          `SELECT VALUE phase FROM ${periodicRecord}`,
-        );
-        return result?.value[0] === "periodic-catch-up";
-      });
+      let lastPeriodicStatus:
+        | { cursorSequence?: bigint; pendingCount: number }
+        | undefined;
+      await eventuallyAsync(
+        async () => {
+          lastPeriodicStatus = await consumerSync?.status();
+          return (
+            (lastPeriodicStatus?.cursorSequence ?? 0n) >
+            (beforePeriodic.cursorSequence ?? 0n)
+          );
+        },
+        () =>
+          `periodic cursor did not advance: scheduler=${JSON.stringify(
+            scheduler.status
+          )} before=${String(beforePeriodic.cursorSequence)} after=${String(
+            lastPeriodicStatus?.cursorSequence
+          )} pending=${lastPeriodicStatus?.pendingCount}`
+      );
+      const [periodicResult] = await consumer.query<string[]>(
+        `SELECT VALUE phase FROM ${periodicRecord}`
+      );
+      expect(periodicResult?.value[0]).toBe("periodic-catch-up");
 
       coordinator.stop();
     } finally {
@@ -395,7 +499,7 @@ describe("live local authority", () => {
 async function eventuallyAsync(
   predicate: () => Promise<boolean>,
   describeFailure: () => string = () =>
-    "timed out waiting for local authority lifecycle state",
+    "timed out waiting for local authority lifecycle state"
 ): Promise<void> {
   const deadline = Date.now() + 30_000;
   while (true) {
