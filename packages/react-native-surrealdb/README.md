@@ -176,7 +176,7 @@ Expo Go. Persistent SurrealKV support is experimental. Transaction callbacks
 must finish before the database is closed, and remote connection recovery is
 currently application-managed.
 
-### Unreleased sync prototype
+### Experimental sync prototype (alpha.2)
 
 This development branch exposes `openExperimentalSync()` only to exercise the native protocol
 workflow. The returned transport-free client can enqueue an atomic local commit, inspect its
