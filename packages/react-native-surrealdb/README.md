@@ -178,7 +178,7 @@ currently application-managed.
 
 ### Experimental sync prototype (alpha.2)
 
-This development branch exposes `openExperimentalSync()` only to exercise the native protocol
+This alpha exposes `openExperimentalSync()` only to exercise the native protocol
 workflow. The returned transport-free client can enqueue an atomic local commit, inspect its
 durable pending/conflict queues, and apply HTTP push/pull responses supplied by the application.
 Optimistic records and normalized sync metadata/outbox/outcome rows commit together in embedded
@@ -295,7 +295,7 @@ WebSocket hints only wake a pull, use a fresh application-supplied URL/ticket fo
 and never define durability or ordering; a 60-second periodic pull is the default fallback.
 Production hints require WSS. The client closes an oversized frame after receipt, but the authority
 or proxy must enforce its own pre-allocation frame limit. Authority deployment is absent. Do not
-ship or advertise this API; see the repository
+use this API for production data yet; see the repository
 [sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
 
 The conflict-resolution facade is covered by native SurrealKV reopen tests, package tests, and the

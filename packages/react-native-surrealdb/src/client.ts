@@ -365,7 +365,7 @@ export class SurrealClient {
     return new LiveSubscription(await this.live<T>(surql, variables, options));
   }
 
-  /** Open the unreleased, transport-free sync protocol prototype. */
+  /** Open the experimental, transport-free sync protocol prototype. */
   async openExperimentalSync(
     options: ExperimentalSyncOpenOptions,
     callOptions?: CallOptions,
