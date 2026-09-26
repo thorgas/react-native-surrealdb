@@ -151,6 +151,23 @@ injected: physically backgrounding the host would suspend Hermes and prevent in-
 The runner still emits a non-fatal `@rock-js` TypeScript type-stripping warning under Node 22;
 test exit status and readback assertions, not that warning, are the pass criteria.
 
+Each passing local-authority run appends payload-free timing samples to
+`performance-results/ios/local-authority/reports.jsonl` (or `android`). The receiver runs only
+for the test, listens on localhost port 18082, and fails the test if it cannot save a report.
+Summarize multiple runs from this directory with:
+
+```bash
+node scripts/summarize-local-authority-reports.mjs performance-results/ios/local-authority/reports.jsonl
+```
+
+`concurrent-write/pushStartToOtherReadMs` includes both concurrent push requests, an explicit
+second-client pull, and the embedded database read. `periodic-without-explicit-pull` measures a
+producer push followed by the scheduler's 1-second polling and a second-client database read;
+there is no WebSocket hint or explicit pull in that observation. Neither metric measures cloud
+delivery, separately housed physical devices, or a Hauswirtschaft product screen. The report
+does not store bearer tokens, record values, or record IDs. Delete only this ignored report file
+when starting a new sample cohort; the script otherwise accumulates runs intentionally.
+
 Use Node 22.22.0 from the repository `.node-version`. The Android runner may
 stop and restart its configured `Pixel_9` AVD between the seed and verification
 files; do not uninstall the app or pass `HARNESS_APP_PATH` between those phases,

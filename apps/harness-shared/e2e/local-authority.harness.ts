@@ -1,4 +1,5 @@
 import { describe, expect, test } from "react-native-harness";
+import { Platform } from "react-native";
 import {
   ExperimentalSyncHttpAdapter,
   type ExperimentalSyncApplicationLifecycle,
@@ -140,10 +141,11 @@ describe("live local authority", () => {
       const visibleAt = Date.now();
       expect(observed[0]?.value).toEqual([{ writer: BigInt(winnerIndex) }]);
       expect(await syncs[loserIndex].conflicts()).toHaveLength(1);
-      console.log(
-        `SYNC_LOCAL_RACE_LATENCY push_pair_ms=${pushFinished - pushStart} ` +
-          `both_push_responses_to_other_read_ms=${visibleAt - pushFinished}`
-      );
+      await recordTiming("concurrent-write", {
+        bothPushResponsesMs: pushFinished - pushStart,
+        explicitPullAndReadMs: visibleAt - pushFinished,
+        pushStartToOtherReadMs: visibleAt - pushStart,
+      });
       await Promise.all(syncs.map((sync) => sync.close()));
     } finally {
       await Promise.all(databases.map((database) => close(database)));
@@ -449,6 +451,7 @@ describe("live local authority", () => {
       );
 
       const beforePeriodic = await consumerSync.status();
+      const passiveStart = Date.now();
       await producerSync.enqueue({
         identity: {
           clientCommitId: `commit-periodic-${runSuffix}`,
@@ -465,6 +468,7 @@ describe("live local authority", () => {
         ],
       });
       await producerTransport.push();
+      const producerPushFinished = Date.now();
       let lastPeriodicStatus:
         | { cursorSequence?: bigint; pendingCount: number }
         | undefined;
@@ -487,6 +491,12 @@ describe("live local authority", () => {
         `SELECT VALUE phase FROM ${periodicRecord}`
       );
       expect(periodicResult?.value[0]).toBe("periodic-catch-up");
+      const passiveVisibleAt = Date.now();
+      await recordTiming("periodic-without-explicit-pull", {
+        producerPushMs: producerPushFinished - passiveStart,
+        pushResponseToOtherReadMs: passiveVisibleAt - producerPushFinished,
+        pushStartToOtherReadMs: passiveVisibleAt - passiveStart,
+      });
 
       coordinator.stop();
     } finally {
@@ -495,6 +505,31 @@ describe("live local authority", () => {
     }
   });
 });
+
+async function recordTiming(
+  profile: string,
+  durations: Record<string, number>
+): Promise<void> {
+  const host = Platform.OS === "android" ? "10.0.2.2" : "127.0.0.1";
+  const report = {
+    schemaVersion: 4,
+    measuredAt: new Date().toISOString(),
+    profile,
+    platform: Platform.OS,
+    metrics: Object.entries(durations).map(([name, durationMs]) => ({
+      name,
+      durationMs,
+    })),
+  };
+  const response = await fetch(`http://${host}:18082/benchmark-report`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(report),
+  });
+  if (!response.ok) {
+    throw new Error(`Local timing report receiver returned ${response.status}`);
+  }
+}
 
 async function eventuallyAsync(
   predicate: () => Promise<boolean>,
