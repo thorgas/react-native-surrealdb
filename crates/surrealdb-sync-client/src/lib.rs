@@ -401,9 +401,20 @@ impl<V: Clone + Eq> ClientRuntime<V> {
     ) -> Result<PreparedTransition<V>, ClientError> {
         let (checkpoint, commits) = validate_pull_batch(&self.state, &batch)?;
         if let Some(current) = &self.state.checkpoint
-            && checkpoint.cursor.sequence <= current.cursor.sequence
+            && checkpoint.cursor.sequence == current.cursor.sequence
         {
-            return self.prepare(self.state.clone());
+            if checkpoint == *current {
+                return self.prepare(self.state.clone());
+            }
+            // An empty pull can issue a fresh durable token at the same cursor.
+            // Retaining the consumed old token would replay that empty response
+            // forever, preventing later commits from reaching this replica.
+            if !commits.is_empty() {
+                return Err(ClientError::InvalidPullFraming);
+            }
+            let mut next = self.state.clone();
+            next.checkpoint = Some(checkpoint);
+            return self.prepare(next);
         }
         let mut next = self.state.clone();
         for commit in commits {

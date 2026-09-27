@@ -1029,6 +1029,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn empty_pull_rotates_durable_native_checkpoint_before_next_commit() {
+        let database = database().await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let initial = checkpoint();
+        let first = PullResponse::<JsonValue>::Batch(PullBatch {
+            frames: vec![
+                PullFrame::Start {
+                    checkpoint: initial.clone(),
+                },
+                PullFrame::Commit {
+                    checkpoint: initial.token.clone(),
+                    commit: PullCommit {
+                        sequence: 1,
+                        source: None,
+                        records: Vec::new(),
+                    },
+                },
+                PullFrame::End {
+                    checkpoint: initial,
+                },
+            ],
+        });
+        client
+            .apply_pull_response(serde_json::to_string(&first).unwrap())
+            .await
+            .unwrap();
+
+        let mut rotated = checkpoint();
+        rotated.token = OpaqueCheckpoint("checkpoint-2".into());
+        let empty = PullResponse::<JsonValue>::Batch(PullBatch {
+            frames: vec![
+                PullFrame::Start {
+                    checkpoint: rotated.clone(),
+                },
+                PullFrame::End {
+                    checkpoint: rotated.clone(),
+                },
+            ],
+        });
+        let status = client
+            .apply_pull_response(serde_json::to_string(&empty).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(status.cursor_sequence, Some(1));
+        assert_eq!(
+            client.checkpoint_token().await.unwrap().as_deref(),
+            Some("checkpoint-2")
+        );
+        client.close().await;
+
+        let reopened = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        assert_eq!(
+            reopened.checkpoint_token().await.unwrap().as_deref(),
+            Some("checkpoint-2")
+        );
+        let mut next = checkpoint();
+        next.token = OpaqueCheckpoint("checkpoint-3".into());
+        next.cursor.sequence = 2;
+        let second = PullResponse::Batch(PullBatch {
+            frames: vec![
+                PullFrame::Start {
+                    checkpoint: next.clone(),
+                },
+                PullFrame::Commit {
+                    checkpoint: next.token.clone(),
+                    commit: PullCommit {
+                        sequence: 2,
+                        source: None,
+                        records: vec![AppliedRecord {
+                            record_id: RecordId("recipe:one".into()),
+                            state: RecordState::Present {
+                                value: json!({"recipeName": "newest"}),
+                                version: 2,
+                                reference: None,
+                            },
+                        }],
+                    },
+                },
+                PullFrame::End { checkpoint: next },
+            ],
+        });
+        let status = reopened
+            .apply_pull_response(serde_json::to_string(&second).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(status.cursor_sequence, Some(2));
+        let record: Option<Value> = database
+            .client()
+            .await
+            .unwrap()
+            .select(NativeRecordId::parse_simple("recipe:one").unwrap())
+            .await
+            .unwrap();
+        assert!(matches!(record, Some(Value::Object(_))));
+    }
+
+    #[tokio::test]
     async fn adapter_pull_cbor_reopens_with_durable_batch_and_reset_state() {
         const BATCH: &str = "84707375727265616c64622d73796e632f3100038200838200837820636865636b706f696e742d617574686f726974792d70756c6c2d676f6c64656e8201018363616c6c010183017820636865636b706f696e742d617574686f726974792d70756c6c2d676f6c64656e820181826a706572736f6e3a6c696e8401a1646e616d65634c696e01f68202837820636865636b706f696e742d617574686f726974792d70756c6c2d676f6c64656e8201018363616c6c0101";
         const RESET: &str = "84707375727265616c64622d73796e632f310003840100837821636865636b706f696e742d617574686f726974792d72657365742d676f6c64656e8201018363616c6c010181826a706572736f6e3a6c696e8401a1646e616d65634c696e01f6";

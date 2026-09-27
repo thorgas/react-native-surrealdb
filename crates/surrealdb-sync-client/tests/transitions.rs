@@ -480,6 +480,77 @@ fn complete_pull_is_atomic_and_duplicate_is_idempotent() {
 }
 
 #[test]
+fn empty_pull_rotates_checkpoint_token_without_advancing_cursor() {
+    let mut runtime = ClientRuntime::open(empty_state()).expect("empty state is valid");
+    let first = checkpoint("cp-1", 1, 1);
+    let prepared = runtime
+        .prepare_pull_response(pull_batch(
+            first.clone(),
+            vec![PullCommit {
+                sequence: 1,
+                source: None,
+                records: Vec::new(),
+            }],
+        ))
+        .expect("first complete pull should prepare");
+    install(&mut runtime, prepared);
+
+    let refreshed = checkpoint("cp-2", 1, 1);
+    let empty_response = pull_batch(refreshed.clone(), Vec::new());
+    let prepared = runtime
+        .prepare_pull_response(empty_response.clone())
+        .expect("empty pull should rotate the consumed token");
+    assert_eq!(prepared.state().checkpoint, Some(refreshed.clone()));
+    let persisted = install(&mut runtime, prepared);
+    assert_eq!(runtime.state().checkpoint, Some(refreshed.clone()));
+    let revision = runtime.state().revision;
+
+    let duplicate = runtime
+        .prepare_pull_response(empty_response)
+        .expect("exact duplicate remains idempotent");
+    install(&mut runtime, duplicate);
+    assert_eq!(runtime.state().revision, revision);
+
+    let restarted = ClientRuntime::open(persisted).expect("rotated checkpoint survives restart");
+    assert_eq!(restarted.state().checkpoint, Some(refreshed));
+    let next = checkpoint("cp-3", 1, 2);
+    let prepared = runtime
+        .prepare_pull_response(pull_batch(
+            next.clone(),
+            vec![PullCommit {
+                sequence: 2,
+                source: None,
+                records: Vec::new(),
+            }],
+        ))
+        .expect("new commit should apply after token rotation");
+    install(&mut runtime, prepared);
+    assert_eq!(runtime.state().checkpoint, Some(next));
+}
+
+#[test]
+fn same_cursor_new_token_cannot_reapply_commit_frames() {
+    let mut runtime = ClientRuntime::open(empty_state()).expect("empty state is valid");
+    let first = checkpoint("cp-1", 1, 1);
+    let first_commit = PullCommit {
+        sequence: 1,
+        source: None,
+        records: Vec::new(),
+    };
+    let prepared = runtime
+        .prepare_pull_response(pull_batch(first.clone(), vec![first_commit.clone()]))
+        .expect("first pull should apply");
+    install(&mut runtime, prepared);
+
+    let replay = pull_batch(checkpoint("cp-2", 1, 1), vec![first_commit]);
+    assert!(matches!(
+        runtime.prepare_pull_response(replay),
+        Err(ClientError::InvalidPullFraming)
+    ));
+    assert_eq!(runtime.state().checkpoint, Some(first));
+}
+
+#[test]
 fn malformed_or_incomplete_pull_never_advances_checkpoint() {
     let runtime = ClientRuntime::open(empty_state()).expect("empty state is valid");
     let end = checkpoint("cp-1", 1, 1);
