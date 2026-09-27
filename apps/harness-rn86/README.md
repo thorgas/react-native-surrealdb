@@ -226,6 +226,60 @@ Failures that happen before Rock performs its cache lookup, such as an explicit
 Native host configuration belongs in each host's `app.json`, the RNTA manifest.
 Application code belongs in `harness-shared`, not in generated native projects.
 
+## Hauswirtschaft household local-sync E2E
+
+This opt-in native test uses two disposable app-record-token accounts against the app-specific local
+authority and an isolated SurrealDB 3.2.4 volume. It does not change production packages or app UI.
+Prerequisites are the sibling `../hauswirtschaft-local-sync/scripts/local-household-sync-fixture.ts`,
+an authority healthy at `http://127.0.0.1:18092/healthz`, and its isolated app-schema database at
+`ws://127.0.0.1:18881`. The runner expects Node `22.22.0` from `../../.node-version` (it relaunches
+through `fnm` when available), creates mode-`600` temporary credentials, never prints them, and
+removes fixture data on exit. Keep simulator requests on `127.0.0.1:18092`; a Metro LAN hostname may
+reach a different listener.
+
+The verified simulator was iPhone 17 Pro, iOS 26.1, UDID
+`8F752138-1669-4549-94F4-F403770FCB30`. With the RN86 app already built and installed, run from
+`rn-runtime/`:
+
+```sh
+SURREALDB_IOS_SIMULATOR=8F752138-1669-4549-94F4-F403770FCB30 \
+SURREALDB_IOS_SIMULATOR_NAME='iPhone 17 Pro' \
+HAUS_SYNC_E2E_SKIP_IOS_BUILD_INSTALL=1 \
+  apps/harness-rn86/scripts/run-haus-local-sync-e2e.sh ios
+```
+
+Omit `HAUS_SYNC_E2E_SKIP_IOS_BUILD_INSTALL=1` when the native host must be prepared, built, and
+installed. Each run performs a host-side and simulator-side malformed-CBOR auth preflight (both
+should return HTTP 400 after auth), then runs active and revoked phases with fresh Metro caches. The
+active phase creates and pulls a canonical recipe, submits two same-base updates concurrently,
+requires exactly one durable conflict, verifies the losing value remains in that conflict, explicitly
+calls `resolveConflictKeepServer`, then allows at most four pull rounds for both embedded recipe
+records to match. It does not silently discard the loser's intent. The revoked phase requires cached
+push and pull requests to be denied after household membership is removed. Redacted Jest output,
+including PASS counts, is saved to `performance-results/ios/haus-local-sync/active-test.log` and
+`revoked-test.log`. This harness has no result UI; a post-run simulator image is only the home screen
+and is intentionally not presented as sync evidence.
+
+Fixture cleanup intentionally retains protected `sync_*` protocol rows. To reset a genuinely empty
+changefeed, recycle only the isolated `haus-sync-e2e` project volume. The checked-in base compose
+file defaults to the normal 18080 app volume, so verify the project and port settings and use the
+v3.2.4 override below; never use `down -v` against the normal stack. Recreate the private temporary
+override if missing:
+
+```yaml
+# /private/tmp/haus-sync-surrealdb-324.yaml
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:v3.2.4
+```
+
+```sh
+cd /Users/timhorgas/git/surrealdb-sync-engine/hauswirtschaft-local-sync
+COMPOSE_PROJECT_NAME=haus-sync-e2e SURREALDB_PORT=18881 API_PORT=18882 \
+  docker compose -f backend/local-stack/docker-compose.yml \
+  -f /private/tmp/haus-sync-surrealdb-324.yaml down -v
+```
+
 ## Release size regression checks
 
 The Android size check compares this harness against a measured stock React
