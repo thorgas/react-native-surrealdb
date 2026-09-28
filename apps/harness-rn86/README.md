@@ -254,11 +254,22 @@ should return HTTP 400 after auth), then runs active and revoked phases with fre
 active phase creates and pulls a canonical recipe, submits two same-base updates concurrently,
 requires exactly one durable conflict, verifies the losing value remains in that conflict, explicitly
 calls `resolveConflictKeepServer`, then allows at most four pull rounds for both embedded recipe
-records to match. It does not silently discard the loser's intent. The revoked phase requires cached
+records to match. It also creates and pulls a manual `shopping_entry`, closes and reopens the member's
+sync facade, advances the entry, verifies a stale base-version conflict and keep-server resolution,
+then deletes the entry and verifies it is absent after the member pulls. The revoked phase requires cached
 push and pull requests to be denied after household membership is removed. Redacted Jest output,
 including PASS counts, is saved to `performance-results/ios/haus-local-sync/active-test.log` and
 `revoked-test.log`. This harness has no result UI; a post-run simulator image is only the home screen
 and is intentionally not presented as sync evidence.
+
+Verification status on 2026-09-28: the new shopping test passed on the installed
+iOS harness through delete and member pull. The combined runner still exited
+nonzero during its active phase because the existing recipe-convergence test
+intermittently remained at cursor 1 after keep-server resolution; its revoked
+phase therefore did not run in that attempt. Treat the shopping trace as a
+passing test within a red suite, not as a full E2E sign-off. The shopping
+facade reopen uses the same embedded in-memory database, not a process kill or
+SurrealKV disk reopen.
 
 Fixture cleanup intentionally retains protected `sync_*` protocol rows. To reset a genuinely empty
 changefeed, recycle only the isolated `haus-sync-e2e` project volume. The checked-in base compose

@@ -28,6 +28,8 @@ type Fixture = {
 declare const require: (path: "./haus-sync-e2e.generated") => Fixture;
 const fixture = require("./haus-sync-e2e.generated");
 const recipeRecordId = `recipe:${fixture.recipeId}`;
+const shoppingEntryId = `manual-${fixture.recipeId}`;
+const shoppingRecordId = `shopping_entry:${shoppingEntryId}`;
 const subscriptionRevision = BigInt(fixture.subscriptionRevision);
 
 type Recipe = {
@@ -104,9 +106,7 @@ function recipe(recipeName: string, actor: string): Recipe {
         normalizedUnit: "ml",
       },
     ],
-    instructions: [
-      { step: 1, instruction: "Boil the pasta until al dente." },
-    ],
+    instructions: [{ step: 1, instruction: "Boil the pasta until al dente." }],
     servings: 4,
     dietTags: ["vegetarian"],
     prepMinutes: 25,
@@ -117,10 +117,59 @@ function recipe(recipeName: string, actor: string): Recipe {
   };
 }
 
+type ShoppingEntry = {
+  id: string;
+  householdId: string;
+  itemKey: string;
+  label: string;
+  quantity: string;
+  unit: string;
+  state: "open";
+  origins: never[];
+  updatedAt: string;
+  updatedBy: string;
+  version: number;
+};
+
+function shoppingEntry(
+  label: string,
+  updatedBy: string,
+  version: number
+): ShoppingEntry {
+  const itemKey = label
+    .normalize("NFKD")
+    .toLocaleLowerCase("en-US")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60) || "manual-item";
+  return {
+    id: shoppingEntryId,
+    householdId: fixture.householdId,
+    itemKey,
+    label,
+    quantity: "2",
+    unit: "loaves",
+    state: "open",
+    origins: [],
+    updatedAt: "2026-09-28T10:00:00.000Z",
+    updatedBy,
+    version,
+  };
+}
+
+async function readShoppingEntry(database: SurrealClient | undefined) {
+  if (!database) return undefined;
+  const [result] = await database.query<Array<ShoppingEntry>>(
+    "SELECT VALUE { id: id, householdId: householdId, itemKey: itemKey, label: label, quantity: quantity, unit: unit, state: state, origins: origins, updatedAt: updatedAt, updatedBy: updatedBy, version: version } FROM shopping_entry"
+  );
+  const row = result?.value[0];
+  return row ? { ...row, version: Number(row.version) } : undefined;
+}
+
 function makeTransport(
   sync: ExperimentalSyncClient,
   clientId: string,
-  accessToken: string,
+  accessToken: string
 ) {
   return new ExperimentalSyncHttpAdapter({
     sync,
@@ -146,29 +195,34 @@ async function close(database: SurrealClient | undefined) {
 
 async function initialPull(
   label: string,
-  transport: ExperimentalSyncHttpAdapter,
+  transport: ExperimentalSyncHttpAdapter
 ): Promise<Awaited<ReturnType<ExperimentalSyncHttpAdapter["pull"]>>> {
   try {
     const status = await transport.pull();
     console.info(
-      `[Haus Sync E2E] pull ${label} cursorSequence=${status.cursorSequence?.toString() ?? "missing"}`,
+      `[Haus Sync E2E] pull ${label} cursorSequence=${
+        status.cursorSequence?.toString() ?? "missing"
+      }`
     );
     return status;
   } catch (error) {
-    const status = error instanceof ExperimentalSyncHttpError
-      ? `HTTP ${error.status ?? "unknown"}`
-      : "non-HTTP error";
+    const status =
+      error instanceof ExperimentalSyncHttpError
+        ? `HTTP ${error.status ?? "unknown"}`
+        : "non-HTTP error";
     throw new Error(`${label} failed at /v1/sync/pull: ${status}`);
   }
 }
 
 async function tracedPull(
   label: string,
-  transport: ExperimentalSyncHttpAdapter,
+  transport: ExperimentalSyncHttpAdapter
 ) {
   const status = await transport.pull();
   console.info(
-    `[Haus Sync E2E] pull ${label} cursorSequence=${status.cursorSequence?.toString() ?? "missing"}`,
+    `[Haus Sync E2E] pull ${label} cursorSequence=${
+      status.cursorSequence?.toString() ?? "missing"
+    }`
   );
   return status;
 }
@@ -176,19 +230,21 @@ async function tracedPull(
 function expectAuthorizationFailure(error: unknown) {
   expect(error).toBeInstanceOf(ExperimentalSyncHttpError);
   expect(error).toMatchObject({ kind: "http" });
-  expect((error as ExperimentalSyncHttpError).status).toBeGreaterThanOrEqual(400);
+  expect((error as ExperimentalSyncHttpError).status).toBeGreaterThanOrEqual(
+    400
+  );
   expect((error as ExperimentalSyncHttpError).status).toBeLessThan(500);
 }
 
 async function readRecipeProjection(
-  database: SurrealClient,
+  database: SurrealClient
 ): Promise<{ recipeName: string; householdId: string } | undefined> {
   const [result] = await database.query<
     Array<{ recipeName: string; householdId: string }>
   >(
-    "SELECT VALUE { recipeName: recipeName, householdId: householdId } FROM recipe",
+    "SELECT VALUE { recipeName: recipeName, householdId: householdId } FROM recipe"
   );
-  return result?.value.find((recipe) => recipe.recipeName);
+  return result?.value.find((recipeCandidate) => recipeCandidate.recipeName);
 }
 
 if (fixture.phase === "active") {
@@ -228,28 +284,29 @@ if (fixture.phase === "active") {
             subscriptionRevision,
           }),
         ]);
-        const ownerTransport = makeTransport(ownerSync, ownerId, fixture.ownerToken);
+        const ownerTransport = makeTransport(
+          ownerSync,
+          ownerId,
+          fixture.ownerToken
+        );
         const memberTransport = makeTransport(
           memberSync,
           memberId,
-          fixture.memberToken,
+          fixture.memberToken
         );
 
-        const authProbe = await fetch(
-          `${authorityBaseUrl()}/v1/sync/pull`,
-          {
-            method: "POST",
-            headers: {
-              Accept: "application/vnd.surrealdb-sync+cbor",
-              Authorization: `Bearer ${fixture.ownerToken}`,
-              "Content-Type": "application/vnd.surrealdb-sync+cbor",
-            },
-            body: new Uint8Array([0]),
+        const authProbe = await fetch(`${authorityBaseUrl()}/v1/sync/pull`, {
+          method: "POST",
+          headers: {
+            Accept: "application/vnd.surrealdb-sync+cbor",
+            Authorization: `Bearer ${fixture.ownerToken}`,
+            "Content-Type": "application/vnd.surrealdb-sync+cbor",
           },
-        );
+          body: new Uint8Array([0]),
+        });
         const authority = new URL(authorityBaseUrl());
         console.info(
-          `[Haus Sync E2E] owner raw pull auth probe host=${authority.hostname}:${authority.port} HTTP ${authProbe.status}`,
+          `[Haus Sync E2E] owner raw pull auth probe host=${authority.hostname}:${authority.port} HTTP ${authProbe.status}`
         );
         expect(authProbe.status).toBe(400);
 
@@ -257,8 +314,14 @@ if (fixture.phase === "active") {
           initialPull("owner initial pull", ownerTransport),
           initialPull("member initial pull", memberTransport),
         ]);
-        expect(ownerInitial).toMatchObject({ pendingCount: 0, conflictCount: 0 });
-        expect(memberInitial).toMatchObject({ pendingCount: 0, conflictCount: 0 });
+        expect(ownerInitial).toMatchObject({
+          pendingCount: 0,
+          conflictCount: 0,
+        });
+        expect(memberInitial).toMatchObject({
+          pendingCount: 0,
+          conflictCount: 0,
+        });
 
         await ownerSync.enqueue({
           identity: {
@@ -278,9 +341,12 @@ if (fixture.phase === "active") {
         const created = await ownerTransport.push();
         expect(created[0]).toMatchObject({ pendingCount: 0, conflictCount: 0 });
 
-        const memberReceipt = await tracedPull("member after create", memberTransport);
+        const memberReceipt = await tracedPull(
+          "member after create",
+          memberTransport
+        );
         expect(memberReceipt.cursorSequence).toBeGreaterThan(
-          memberInitial.cursorSequence ?? 0n,
+          memberInitial.cursorSequence ?? 0n
         );
         expect(await readRecipeProjection(memberDb)).toEqual({
           recipeName: "Broccoli Tomato Pasta",
@@ -293,7 +359,7 @@ if (fixture.phase === "active") {
         ]);
         const memberConflictValue = recipe(
           "Member version",
-          fixture.memberAccountId,
+          fixture.memberAccountId
         );
         await Promise.all([
           ownerSync.enqueue({
@@ -340,22 +406,30 @@ if (fixture.phase === "active") {
         ]);
         const statuses = [ownerPush[0], memberPush[0]];
         expect(statuses).toHaveLength(2);
-        expect(statuses.filter((status) => status?.conflictCount === 0)).toHaveLength(1);
-        expect(statuses.filter((status) => status?.conflictCount === 1)).toHaveLength(1);
-        const loserIndex = statuses.findIndex((status) => status?.conflictCount === 1);
+        expect(
+          statuses.filter((status) => status?.conflictCount === 0)
+        ).toHaveLength(1);
+        expect(
+          statuses.filter((status) => status?.conflictCount === 1)
+        ).toHaveLength(1);
+        const loserIndex = statuses.findIndex(
+          (status) => status?.conflictCount === 1
+        );
         const loserSync = loserIndex === 0 ? ownerSync : memberSync;
-        const loserCommitId = loserIndex === 0
-          ? `owner-update-${fixture.runSuffix}`
-          : `member-update-${fixture.runSuffix}`;
+        const loserCommitId =
+          loserIndex === 0
+            ? `owner-update-${fixture.runSuffix}`
+            : `member-update-${fixture.runSuffix}`;
         expect(await loserSync.conflicts()).toHaveLength(1);
         const loserConflicts = await loserSync.conflicts();
         expect(loserConflicts).toHaveLength(1);
         const serializedConflict = JSON.stringify(
           loserConflicts[0],
-          (_key, value) => typeof value === "bigint" ? value.toString() : value,
+          (_key, value) =>
+            typeof value === "bigint" ? value.toString() : value
         );
         expect(serializedConflict).toContain(
-          loserIndex === 0 ? "Owner version" : "Member version",
+          loserIndex === 0 ? "Owner version" : "Member version"
         );
 
         // The losing value remains durable in the conflict until the app
@@ -363,31 +437,247 @@ if (fixture.phase === "active") {
         // bounded pulls until both materialized app records converge.
         await loserSync.resolveConflictKeepServer(loserCommitId);
         expect(await loserSync.conflicts()).toHaveLength(0);
-        let ownerRecipe: Awaited<ReturnType<typeof readRecipeProjection>> | undefined;
-        let memberRecipe: Awaited<ReturnType<typeof readRecipeProjection>> | undefined;
+        let ownerRecipe:
+          | Awaited<ReturnType<typeof readRecipeProjection>>
+          | undefined;
+        let memberRecipe:
+          | Awaited<ReturnType<typeof readRecipeProjection>>
+          | undefined;
         for (let attempt = 0; attempt < 4; attempt += 1) {
           const [ownerPull, memberPull] = await Promise.all([
-            tracedPull(`owner after keep-server ${attempt + 1}`, ownerTransport),
-            tracedPull(`member after keep-server ${attempt + 1}`, memberTransport),
+            tracedPull(
+              `owner after keep-server ${attempt + 1}`,
+              ownerTransport
+            ),
+            tracedPull(
+              `member after keep-server ${attempt + 1}`,
+              memberTransport
+            ),
           ]);
           [ownerRecipe, memberRecipe] = await Promise.all([
             readRecipeProjection(ownerDb),
             readRecipeProjection(memberDb),
           ]);
           console.info(
-            `[Haus Sync E2E] resolution projection ${attempt + 1}: owner=${ownerRecipe?.recipeName ?? "missing"}, member=${memberRecipe?.recipeName ?? "missing"}; cursorSequence=${ownerPull.cursorSequence?.toString() ?? "missing"}/${memberPull.cursorSequence?.toString() ?? "missing"}`,
+            `[Haus Sync E2E] resolution projection ${attempt + 1}: owner=${
+              ownerRecipe?.recipeName ?? "missing"
+            }, member=${
+              memberRecipe?.recipeName ?? "missing"
+            }; cursorSequence=${
+              ownerPull.cursorSequence?.toString() ?? "missing"
+            }/${memberPull.cursorSequence?.toString() ?? "missing"}`
           );
-          if (ownerRecipe && JSON.stringify(ownerRecipe) === JSON.stringify(memberRecipe)) {
+          if (
+            ownerRecipe &&
+            JSON.stringify(ownerRecipe) === JSON.stringify(memberRecipe)
+          ) {
             break;
           }
         }
-        const winnerName = loserIndex === 0 ? "Member version" : "Owner version";
+        const winnerName =
+          loserIndex === 0 ? "Member version" : "Owner version";
         expect(ownerRecipe?.recipeName).toBe(winnerName);
         expect(memberRecipe).toEqual(ownerRecipe);
         expect(
           (await ownerSync.conflicts()).length +
-            (await memberSync.conflicts()).length,
+            (await memberSync.conflicts()).length
         ).toBe(0);
+      } finally {
+        await Promise.allSettled([ownerSync?.close(), memberSync?.close()]);
+        await Promise.all([close(ownerDb), close(memberDb)]);
+      }
+    });
+
+    test("syncs a manual shopping entry through reopen, stale conflict, and delete", async () => {
+      const ownerId = `haus-shopping-owner-${fixture.runSuffix}`;
+      const memberId = `haus-shopping-member-${fixture.runSuffix}`;
+      const options = {
+        partitionId: fixture.partitionId,
+        requestedScope: fixture.requestedScope,
+        subscriptionRevision,
+      };
+      let ownerDb: SurrealClient | undefined;
+      let memberDb: SurrealClient | undefined;
+      let ownerSync: ExperimentalSyncClient | undefined;
+      let memberSync: ExperimentalSyncClient | undefined;
+
+      try {
+        [ownerDb, memberDb] = await Promise.all([
+          connect({
+            endpoint: "memory",
+            namespace: `haus-shopping-${fixture.runSuffix}-owner`,
+            database: "e2e",
+          }),
+          connect({
+            endpoint: "memory",
+            namespace: `haus-shopping-${fixture.runSuffix}-member`,
+            database: "e2e",
+          }),
+        ]);
+        [ownerSync, memberSync] = await Promise.all([
+          ownerDb.openExperimentalSync({ ...options, clientId: ownerId }),
+          memberDb.openExperimentalSync({ ...options, clientId: memberId }),
+        ]);
+        const ownerTransport = makeTransport(
+          ownerSync,
+          ownerId,
+          fixture.ownerToken
+        );
+        let memberTransport = makeTransport(
+          memberSync,
+          memberId,
+          fixture.memberToken
+        );
+        await Promise.all([ownerTransport.pull(), memberTransport.pull()]);
+
+        await ownerSync.enqueue({
+          identity: {
+            clientCommitId: `shopping-create-${fixture.runSuffix}`,
+            fingerprint: "computed-by-native",
+          },
+          operations: [
+            {
+              kind: "upsert",
+              record_id: shoppingRecordId,
+              base_version: "absent",
+              value: shoppingEntry(
+                "Sourdough bread",
+                fixture.ownerAccountId,
+                1
+              ),
+              reference: null,
+            },
+          ],
+        });
+        const created = await ownerTransport.push();
+        expect(created[0]).toMatchObject({ pendingCount: 0, conflictCount: 0 });
+
+        const createdPull = await memberTransport.pull();
+        expect(createdPull.cursorSequence).toBeGreaterThan(0n);
+        expect(await readShoppingEntry(memberDb)).toMatchObject({
+          householdId: fixture.householdId,
+          itemKey: "sourdough-bread",
+          label: "Sourdough bread",
+          version: 1,
+        });
+
+        // Reopen the member sync facade against the same embedded database to
+        // prove the checkpoint and materialized shopping row survive reopen.
+        await memberSync.close();
+        memberSync = await memberDb.openExperimentalSync({
+          ...options,
+          clientId: memberId,
+        });
+        memberTransport = makeTransport(
+          memberSync,
+          memberId,
+          fixture.memberToken
+        );
+        expect(await memberSync.checkpointToken()).toEqual(expect.any(String));
+        expect(await readShoppingEntry(memberDb)).toMatchObject({
+          itemKey: "sourdough-bread",
+          label: "Sourdough bread",
+          version: 1,
+        });
+        console.info("[Haus Sync E2E] shopping facade reopen and projection passed");
+
+        await ownerSync.enqueue({
+          identity: {
+            clientCommitId: `shopping-update-${fixture.runSuffix}`,
+            fingerprint: "computed-by-native",
+          },
+          operations: [
+            {
+              kind: "upsert",
+              record_id: shoppingRecordId,
+              base_version: { exact: 1 },
+              value: shoppingEntry(
+                "Country sourdough",
+                fixture.ownerAccountId,
+                2
+              ),
+              reference: null,
+            },
+          ],
+        });
+        const updated = await ownerTransport.push();
+        console.info("[Haus Sync E2E] shopping owner update push returned");
+        expect(updated[0]).toMatchObject({ pendingCount: 0, conflictCount: 0 });
+        expect(await readShoppingEntry(ownerDb)).toMatchObject({
+          itemKey: "country-sourdough",
+          label: "Country sourdough",
+          version: 2,
+        });
+
+        await memberSync.enqueue({
+          identity: {
+            clientCommitId: `shopping-stale-${fixture.runSuffix}`,
+            fingerprint: "computed-by-native",
+          },
+          operations: [
+            {
+              kind: "upsert",
+              record_id: shoppingRecordId,
+              base_version: { exact: 1 },
+              value: shoppingEntry(
+                "Stale shopping value",
+                fixture.memberAccountId,
+                2
+              ),
+              reference: null,
+            },
+          ],
+        });
+        const stale = await memberTransport.push();
+        console.info("[Haus Sync E2E] shopping stale member push returned");
+        expect(stale[0]).toMatchObject({ pendingCount: 0, conflictCount: 1 });
+        const conflicts = await memberSync.conflicts();
+        expect(conflicts).toHaveLength(1);
+        expect(
+          JSON.stringify(conflicts[0], (_key, value) =>
+            typeof value === "bigint" ? value.toString() : value
+          )
+        ).toContain("Stale shopping value");
+
+        await memberSync.resolveConflictKeepServer(
+          `shopping-stale-${fixture.runSuffix}`
+        );
+        console.info("[Haus Sync E2E] shopping keep-server returned");
+        expect(await memberSync.conflicts()).toHaveLength(0);
+        try {
+          await memberTransport.pull();
+        } catch (error) {
+          console.info("[Haus Sync E2E] shopping pull after resolution error", String(error));
+          throw error;
+        }
+        expect(await readShoppingEntry(memberDb)).toMatchObject({
+          label: "Country sourdough",
+          version: 2,
+        });
+        await ownerTransport.pull();
+
+        await ownerSync.enqueue({
+          identity: {
+            clientCommitId: `shopping-delete-${fixture.runSuffix}`,
+            fingerprint: "computed-by-native",
+          },
+          operations: [
+            {
+              kind: "delete",
+              record_id: shoppingRecordId,
+              base_version: 2,
+            },
+          ],
+        });
+        const deleted = await ownerTransport.push();
+        console.info("[Haus Sync E2E] shopping delete push returned");
+        expect(deleted[0]).toMatchObject({ pendingCount: 0, conflictCount: 0 });
+        const deletePull = await memberTransport.pull();
+        expect(deletePull.cursorSequence ?? -1n).toBeGreaterThan(
+          createdPull.cursorSequence ?? 0n
+        );
+        expect(await readShoppingEntry(memberDb)).toBeUndefined();
+        expect(await memberSync.conflicts()).toHaveLength(0);
       } finally {
         await Promise.allSettled([ownerSync?.close(), memberSync?.close()]);
         await Promise.all([close(ownerDb), close(memberDb)]);
@@ -431,13 +721,15 @@ if (fixture.phase === "active") {
           ],
         });
 
-        const pushError = await transport
-          .push()
-          .then(() => undefined, (error: unknown) => error);
+        const pushError = await transport.push().then(
+          () => undefined,
+          (error: unknown) => error
+        );
         expectAuthorizationFailure(pushError);
-        const pullError = await transport
-          .pull()
-          .then(() => undefined, (error: unknown) => error);
+        const pullError = await transport.pull().then(
+          () => undefined,
+          (error: unknown) => error
+        );
         expectAuthorizationFailure(pullError);
         expect((await sync.status()).pendingCount).toBe(1);
       } finally {
