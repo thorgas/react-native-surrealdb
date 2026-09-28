@@ -171,6 +171,7 @@ function makeTransport(
   clientId: string,
   accessToken: string
 ) {
+  const codec = createExperimentalCanonicalCborSyncHttpCodec();
   return new ExperimentalSyncHttpAdapter({
     sync,
     baseUrl: authorityBaseUrl(),
@@ -180,7 +181,40 @@ function makeTransport(
     requestedScope: fixture.requestedScope,
     subscriptionRevision,
     accessToken: () => accessToken,
-    codec: createExperimentalCanonicalCborSyncHttpCodec(),
+    codec: {
+      ...codec,
+      async encodePullRequest(request, options) {
+        const status = await sync.status(options);
+        console.info(
+          `[Haus Sync E2E] ${clientId} request cursorSequence=${
+            status.cursorSequence?.toString() ?? "missing"
+          }`
+        );
+        return codec.encodePullRequest(request, options);
+      },
+      async decodePullResponse(bytes, options) {
+        const responseJson = await codec.decodePullResponse(bytes, options);
+        const response = JSON.parse(responseJson) as {
+          response?: string;
+          checkpoint?: { cursor?: { sequence?: number } };
+          frames?: Array<{
+            frame?: string;
+            checkpoint?: { cursor?: { sequence?: number } };
+          }>;
+        };
+        const checkpoint =
+          response.response === "reset"
+            ? response.checkpoint
+            : response.frames?.find((frame) => frame.frame === "end")
+                ?.checkpoint;
+        console.info(
+          `[Haus Sync E2E] ${clientId} response=${
+            response.response ?? "missing"
+          } cursorSequence=${checkpoint?.cursor?.sequence ?? "missing"}`
+        );
+        return responseJson;
+      },
+    },
   });
 }
 
