@@ -65,6 +65,40 @@ export class ExperimentalSyncClient {
     );
   }
 
+  /** Accept the current authority value and durably close a conflict. */
+  resolveConflictKeepServer(
+    conflictedCommitId: string,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus> {
+    return this.#native.resolveConflictKeepServer(conflictedCommitId, options);
+  }
+
+  /** Retry the complete retained local batch with a fresh commit identity. */
+  resolveConflictKeepLocal(
+    conflictedCommitId: string,
+    replacementCommitId: string,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus> {
+    return this.#native.resolveConflictKeepLocal(
+      conflictedCommitId,
+      replacementCommitId,
+      options,
+    );
+  }
+
+  /** Queue an application-provided merged batch with a fresh commit identity. */
+  resolveConflictMerge(
+    conflictedCommitId: string,
+    replacementCommit: SyncJsonValue,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus> {
+    return this.#native.resolveConflictMerge(
+      conflictedCommitId,
+      encodeProtocolJson(replacementCommit),
+      options,
+    );
+  }
+
   async pending<T extends SyncJsonValue = SyncJsonValue>(
     options?: CallOptions,
   ): Promise<T[]> {

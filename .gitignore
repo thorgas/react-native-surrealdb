@@ -67,6 +67,7 @@ packages/react-native-surrealdb/android/src/main/jniLibs/
 !.env.example
 *.local
 apps/harness-shared/e2e/local-authority-token.generated.js
+apps/harness-shared/e2e/haus-sync-e2e.generated.js
 
 # Temporary files
 .cache/

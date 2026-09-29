@@ -8,7 +8,8 @@ workflows.
 
 | Package version | GitHub release              | npm tag  | Purpose                                                         |
 | --------------- | --------------------------- | -------- | --------------------------------------------------------------- |
-| `0.1.0-alpha.1` | Prerelease                  | `next`   | Install in production apps and validate before a stable release |
+| `0.1.0-alpha.2` | Prerelease                  | `next`   | Test the experimental sync client in consuming apps |
+| `0.1.0-alpha.1` | Prerelease                  | `next`   | Embedded SurrealDB and native bindings before sync |
 | `0.1.0`         | Draft until npm publication | `latest` | Public stable release                                           |
 
 An npm prerelease is still publicly downloadable. You do not need to publish an
@@ -64,8 +65,8 @@ pnpm typecheck:react-native-matrix
 The tag must exactly equal the package version without a `v` prefix:
 
 ```sh
-git tag -s 0.1.0-alpha.1 -m "react-native-surrealdb 0.1.0-alpha.1"
-git push origin 0.1.0-alpha.1
+git tag -s 0.1.0-alpha.2 -m "react-native-surrealdb 0.1.0-alpha.2"
+git push origin 0.1.0-alpha.2
 ```
 
 Tags containing a prerelease suffix create a public GitHub prerelease. Stable
@@ -103,7 +104,7 @@ Download the tarball from the GitHub prerelease and keep it in a location that
 is not committed to the consuming app. Install the exact file:
 
 ```sh
-pnpm add /absolute/path/to/react-native-surrealdb-0.1.0-alpha.1.tgz
+pnpm add /absolute/path/to/react-native-surrealdb-0.1.0-alpha.2.tgz
 cd ios && pod install
 ```
 
@@ -146,7 +147,7 @@ releases remain marked as prereleases.
 Verify the registry after publication:
 
 ```sh
-npm view react-native-surrealdb@0.1.0-alpha.1 \
+npm view react-native-surrealdb@0.1.0-alpha.2 \
   name version dist-tags dist.tarball dist.fileCount dist.unpackedSize
 npm dist-tag ls react-native-surrealdb
 ```

@@ -28,6 +28,10 @@ pnpm install
 The iOS command prepares the ignored Rust XCFramework and RNTA bundle resources
 before launching the configured iPhone 17 Pro (iOS 26.1) simulator:
 
+The script names the OS version explicitly because a second iPhone 17 Pro on
+iOS 26.5 would otherwise receive the build while the harness launches the
+iOS 26.1 device. Use Node 22 (the package's supported `>=20 <23` range).
+
 ```sh
 pnpm --filter surrealdb-harness-rn86 run ios
 ```
@@ -121,14 +125,48 @@ SYNC_ENGINE_DEV_REPO=/absolute/path/to/surrealdb-sync-engine.dev \
   pnpm --filter surrealdb-harness-rn86 run e2e:local-authority:android
 ```
 
+When another agent uses the default iPhone 17 Pro, set both
+`SURREALDB_IOS_SIMULATOR='Hauswirtschaft E2E'` for the native build and
+`SURREALDB_IOS_SIMULATOR_NAME='Hauswirtschaft E2E'` for the harness runner. The two
+names must identify the same iOS 26.1 simulator; otherwise a green harness run may target a
+different booted simulator than the one just built. To target a gateway started from another
+private worktree, set `SYNC_ENGINE_DEV_REPO` to that exact worktree so the bearer matches.
+
 The environment override is optional for the normal sibling checkout layout. The runner reads the
 ignored mode-`600` local credentials without sourcing or printing them and removes its generated
 token module on exit. The trace proves initial pull, concurrent optimistic writes,
-accepted/conflict outcomes, facade reopen, and final convergence. Its second scenario keeps a
+accepted/conflict outcomes, facade reopen, and final convergence. A separate race submits both
+offline-created absent-base writes concurrently, requires exactly one accepted outcome and one
+durable conflict, and reads the winner from the other embedded client after pull. The test records
+`push_pair_ms` from concurrent push start to both responses and
+`both_push_responses_to_other_read_ms` from then to the second client's database read. These local,
+single-device timings include test scheduling and are not cloud or background-delivery SLAs.
+Its third scenario keeps a
 durable mutation queued while offline, recovers one real `401` by swapping the injected token,
 stops the scheduler in background, catches an authority write on foreground, and recovers another
-write through the 250 ms test-only periodic pull without a WebSocket hint. Lifecycle events are
+write through the 1-second test-only periodic pull without a WebSocket hint. A 250 ms interval
+caused repeated gateway/client timeouts under this local test load; the 1-second suite passed four
+consecutive runs on 2026-09-26. Lifecycle events are
 injected: physically backgrounding the host would suspend Hermes and prevent in-process assertions.
+The runner still emits a non-fatal `@rock-js` TypeScript type-stripping warning under Node 22;
+test exit status and readback assertions, not that warning, are the pass criteria.
+
+Each passing local-authority run appends payload-free timing samples to
+`performance-results/ios/local-authority/reports.jsonl` (or `android`). The receiver runs only
+for the test, listens on localhost port 18082, and fails the test if it cannot save a report.
+Summarize multiple runs from this directory with:
+
+```bash
+node scripts/summarize-local-authority-reports.mjs performance-results/ios/local-authority/reports.jsonl
+```
+
+`concurrent-write/pushStartToOtherReadMs` includes both concurrent push requests, an explicit
+second-client pull, and the embedded database read. `periodic-without-explicit-pull` measures a
+producer push followed by the scheduler's 1-second polling and a second-client database read;
+there is no WebSocket hint or explicit pull in that observation. Neither metric measures cloud
+delivery, separately housed physical devices, or a Hauswirtschaft product screen. The report
+does not store bearer tokens, record values, or record IDs. Delete only this ignored report file
+when starting a new sample cohort; the script otherwise accumulates runs intentionally.
 
 Use Node 22.22.0 from the repository `.node-version`. The Android runner may
 stop and restart its configured `Pixel_9` AVD between the seed and verification
@@ -187,6 +225,71 @@ Failures that happen before Rock performs its cache lookup, such as an explicit
 
 Native host configuration belongs in each host's `app.json`, the RNTA manifest.
 Application code belongs in `harness-shared`, not in generated native projects.
+
+## Hauswirtschaft household local-sync E2E
+
+This opt-in native test uses two disposable app-record-token accounts against the app-specific local
+authority and an isolated SurrealDB 3.2.4 volume. It does not change production packages or app UI.
+Prerequisites are the sibling `../hauswirtschaft-local-sync/scripts/local-household-sync-fixture.ts`,
+an authority healthy at `http://127.0.0.1:18092/healthz`, and its isolated app-schema database at
+`ws://127.0.0.1:18881`. The runner expects Node `22.22.0` from `../../.node-version` (it relaunches
+through `fnm` when available), creates mode-`600` temporary credentials, never prints them, and
+removes fixture data on exit. Keep simulator requests on `127.0.0.1:18092`; a Metro LAN hostname may
+reach a different listener.
+
+The verified simulator was iPhone 17 Pro, iOS 26.1, UDID
+`8F752138-1669-4549-94F4-F403770FCB30`. With the RN86 app already built and installed, run from
+`rn-runtime/`:
+
+```sh
+SURREALDB_IOS_SIMULATOR=8F752138-1669-4549-94F4-F403770FCB30 \
+SURREALDB_IOS_SIMULATOR_NAME='iPhone 17 Pro' \
+HAUS_SYNC_E2E_SKIP_IOS_BUILD_INSTALL=1 \
+  apps/harness-rn86/scripts/run-haus-local-sync-e2e.sh ios
+```
+
+Omit `HAUS_SYNC_E2E_SKIP_IOS_BUILD_INSTALL=1` when the native host must be prepared, built, and
+installed. Each run performs a host-side and simulator-side malformed-CBOR auth preflight (both
+should return HTTP 400 after auth), then runs active and revoked phases with fresh Metro caches. The
+active phase creates and pulls a canonical recipe, submits two same-base updates concurrently,
+requires exactly one durable conflict, verifies the losing value remains in that conflict, explicitly
+calls `resolveConflictKeepServer`, then allows at most four pull rounds for both embedded recipe
+records to match. It also creates and pulls a manual `shopping_entry`, closes and reopens the member's
+sync facade, advances the entry, verifies a stale base-version conflict and keep-server resolution,
+then deletes the entry and verifies it is absent after the member pulls. The revoked phase requires cached
+push and pull requests to be denied after household membership is removed. Redacted Jest output,
+including PASS counts, is saved to `performance-results/ios/haus-local-sync/active-test.log` and
+`revoked-test.log`. This harness has no result UI; a post-run simulator image is only the home screen
+and is intentionally not presented as sync evidence.
+
+Verification status on 2026-09-28: the new shopping test passed on the installed
+iOS harness through delete and member pull. The combined runner still exited
+nonzero during its active phase because the existing recipe-convergence test
+intermittently remained at cursor 1 after keep-server resolution; its revoked
+phase therefore did not run in that attempt. Treat the shopping trace as a
+passing test within a red suite, not as a full E2E sign-off. The shopping
+facade reopen uses the same embedded in-memory database, not a process kill or
+SurrealKV disk reopen.
+
+Fixture cleanup intentionally retains protected `sync_*` protocol rows. To reset a genuinely empty
+changefeed, recycle only the isolated `haus-sync-e2e` project volume. The checked-in base compose
+file defaults to the normal 18080 app volume, so verify the project and port settings and use the
+v3.2.4 override below; never use `down -v` against the normal stack. Recreate the private temporary
+override if missing:
+
+```yaml
+# /private/tmp/haus-sync-surrealdb-324.yaml
+services:
+  surrealdb:
+    image: surrealdb/surrealdb:v3.2.4
+```
+
+```sh
+cd /Users/timhorgas/git/surrealdb-sync-engine/hauswirtschaft-local-sync
+COMPOSE_PROJECT_NAME=haus-sync-e2e SURREALDB_PORT=18881 API_PORT=18882 \
+  docker compose -f backend/local-stack/docker-compose.yml \
+  -f /private/tmp/haus-sync-surrealdb-324.yaml down -v
+```
 
 ## Release size regression checks
 
