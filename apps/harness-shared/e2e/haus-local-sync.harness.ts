@@ -32,6 +32,21 @@ const shoppingEntryId = `manual-${fixture.recipeId}`;
 const shoppingRecordId = `shopping_entry:${shoppingEntryId}`;
 const subscriptionRevision = BigInt(fixture.subscriptionRevision);
 
+function scopedClientId(accountId: string, suffix: string): string {
+  const accountKey = accountId.startsWith("account:")
+    ? accountId.slice("account:".length)
+    : "";
+  if (
+    !/^[A-Za-z0-9_-]{8,60}$/.test(accountKey) ||
+    !/^[A-Za-z0-9_-]{8,60}$/.test(suffix)
+  ) {
+    throw new Error(
+      "Haus fixture requires bounded account and installation IDs"
+    );
+  }
+  return `${accountKey}.${suffix}`;
+}
+
 type Recipe = {
   id: string;
   recipeName: string;
@@ -136,12 +151,13 @@ function shoppingEntry(
   updatedBy: string,
   version: number
 ): ShoppingEntry {
-  const itemKey = label
-    .normalize("NFKD")
-    .toLocaleLowerCase("en-US")
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 60) || "manual-item";
+  const itemKey =
+    label
+      .normalize("NFKD")
+      .toLocaleLowerCase("en-US")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "manual-item";
   return {
     id: shoppingEntryId,
     householdId: fixture.householdId,
@@ -284,8 +300,14 @@ async function readRecipeProjection(
 if (fixture.phase === "active") {
   describe("Hauswirtschaft local authority, active fixture", () => {
     test("creates and pulls a recipe, then reports a simultaneous base-version conflict", async () => {
-      const ownerId = `haus-owner-${fixture.runSuffix}`;
-      const memberId = `haus-member-${fixture.runSuffix}`;
+      const ownerId = scopedClientId(
+        fixture.ownerAccountId,
+        `haus-owner-${fixture.runSuffix}`
+      );
+      const memberId = scopedClientId(
+        fixture.memberAccountId,
+        `haus-member-${fixture.runSuffix}`
+      );
       let ownerDb: SurrealClient | undefined;
       let memberDb: SurrealClient | undefined;
       let ownerSync: ExperimentalSyncClient | undefined;
@@ -523,8 +545,14 @@ if (fixture.phase === "active") {
     });
 
     test("syncs a manual shopping entry through reopen, stale conflict, and delete", async () => {
-      const ownerId = `haus-shopping-owner-${fixture.runSuffix}`;
-      const memberId = `haus-shopping-member-${fixture.runSuffix}`;
+      const ownerId = scopedClientId(
+        fixture.ownerAccountId,
+        `shopping-owner-${fixture.runSuffix}`
+      );
+      const memberId = scopedClientId(
+        fixture.memberAccountId,
+        `shopping-member-${fixture.runSuffix}`
+      );
       const options = {
         partitionId: fixture.partitionId,
         requestedScope: fixture.requestedScope,
@@ -613,7 +641,9 @@ if (fixture.phase === "active") {
           label: "Sourdough bread",
           version: 1,
         });
-        console.info("[Haus Sync E2E] shopping facade reopen and projection passed");
+        console.info(
+          "[Haus Sync E2E] shopping facade reopen and projection passed"
+        );
 
         await ownerSync.enqueue({
           identity: {
@@ -681,7 +711,10 @@ if (fixture.phase === "active") {
         try {
           await memberTransport.pull();
         } catch (error) {
-          console.info("[Haus Sync E2E] shopping pull after resolution error", String(error));
+          console.info(
+            "[Haus Sync E2E] shopping pull after resolution error",
+            String(error)
+          );
           throw error;
         }
         expect(await readShoppingEntry(memberDb)).toMatchObject({
@@ -721,7 +754,10 @@ if (fixture.phase === "active") {
 } else {
   describe("Hauswirtschaft local authority, revoked fixture", () => {
     test("rejects member push and pull after household membership revocation", async () => {
-      const memberId = `haus-member-${fixture.runSuffix}`;
+      const memberId = scopedClientId(
+        fixture.memberAccountId,
+        `haus-member-${fixture.runSuffix}`
+      );
       const replayNamespace = `haus-sync-${fixture.runSuffix}-${memberId}-replay`;
       let database: SurrealClient | undefined;
       let sync: ExperimentalSyncClient | undefined;

@@ -1,6 +1,18 @@
 # Sync runtime adapter handoff
 
-Updated: 2026-08-30
+## Haus local authority client identity (2026-09-29)
+
+The Haus two-client harness now names each experimental client as
+`<authenticated account record key>.<fixture installation ID>`, matching the private
+Haus authority's direct push/pull guard. This is fixture wiring only, not a generic
+sync-client rule or a product shopping-screen integration. Targeted ESLint and the
+RN86 TypeScript check passed with the unrelated, untracked and currently malformed
+`apps/harness-shared/benchmarks/sync-household-workload.ts` excluded from that check.
+The complete device harness still needs replay against the updated authority; disk
+was 11 GiB free at 99% utilization after private checker builds, so no native build
+was started. Do not silently rename any durable client state from an older fixture.
+
+Updated: 2026-09-29
 
 ## Branch goal
 
