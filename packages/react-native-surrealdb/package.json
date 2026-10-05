@@ -105,6 +105,11 @@
     "jsSrcsDir": "src",
     "android": {
       "javaPackageName": "com.surrealdb.rn"
+    },
+    "ios": {
+      "modulesProvider": {
+        "Surrealdb": "Surrealdb"
+      }
     }
   },
   "react-native-builder-bob": {

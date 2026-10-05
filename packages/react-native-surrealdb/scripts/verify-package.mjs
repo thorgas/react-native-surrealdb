@@ -26,6 +26,8 @@ const packageJson = JSON.parse(
 if (packageJson.private === true) failures.push("package must not be private");
 if (packageJson.name !== "react-native-surrealdb")
   failures.push("unexpected package name");
+if (packageJson.codegenConfig?.ios?.modulesProvider?.Surrealdb !== "Surrealdb")
+  failures.push("iOS codegen must register the Surrealdb TurboModule provider");
 const isPrerelease = packageJson.version.includes("-");
 if (packageJson.license !== "MIT") failures.push("package license must be MIT");
 if (
