@@ -184,6 +184,11 @@ durable pending/conflict queues, and apply HTTP push/pull responses supplied by 
 Optimistic records and normalized sync metadata/outbox/outcome rows commit together in embedded
 SurrealDB. Existing v1 blob state migrates atomically on open and fails closed on downgrade. The optional
 `ExperimentalSyncHttpAdapter` adds serialized, explicit `push()`, `pull()`, and `syncOnce()` calls.
+The protocol's `record_id` is the projected SurrealDB row identity. When an application also puts
+a logical string `id` inside an upsert value, SurrealDB's ordinary row `id` becomes a
+`SurrealRecordId` (for example, `item:stable-1`), not that string. Do not deserialize queried
+projection rows directly into the original payload type. Keep logical-ID conversion and domain
+validation in the application adapter; the generic sync runtime does not know an app's ID policy.
 Applications must inject their access-token provider, wire codec, and `fetch`. The adapter reads the
 last complete checkpoint from native durable client state; applying a pull atomically persists its
 records, cursor, scope snapshot, and opaque checkpoint before the next request can observe it.

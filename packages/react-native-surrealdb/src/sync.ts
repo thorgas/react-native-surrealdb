@@ -29,7 +29,11 @@ export type ExperimentalSyncStatus = NativeSyncStatus;
  *
  * Payloads use the package's tagged lossless JSON bridge. Native Rust validates
  * record values against the narrower canonical protocol profile and computes
- * commit fingerprints. This API is a prototype and is not release-ready.
+ * commit fingerprints. The protocol record_id is the SurrealDB row identity:
+ * ordinary queries of its optimistic projection return a SurrealRecordId in
+ * the row's id field, even if an upsert value supplied a separate string id.
+ * Applications map their own logical IDs at the boundary. This API is a
+ * prototype and is not release-ready.
  */
 export class ExperimentalSyncClient {
   readonly #native: NativeSyncClientLike;

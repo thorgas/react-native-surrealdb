@@ -589,6 +589,50 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn projection_uses_native_record_id_even_when_payload_has_a_logical_id() {
+        let database = database().await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let commit = ClientCommit {
+            identity: CommitIdentity {
+                client_commit_id: ClientCommitId("logical-id-1".into()),
+                fingerprint: Fingerprint("computed-by-native".into()),
+            },
+            operations: vec![Operation::Upsert {
+                record_id: RecordId("item:stable-1".into()),
+                base_version: BaseVersion::Absent,
+                value: json!({
+                    "id": "stable-1",
+                    "owner": "tenant-1",
+                    "label": "Example"
+                }),
+                reference: None,
+            }],
+        };
+        client
+            .enqueue(serde_json::to_string(&commit).unwrap())
+            .await
+            .unwrap();
+        let database_client = database.client().await.unwrap();
+        let record: Option<Value> = database_client
+            .select(NativeRecordId::parse_simple("item:stable-1").unwrap())
+            .await
+            .unwrap();
+        let Some(Value::Object(row)) = record else {
+            panic!("optimistic row must be queryable");
+        };
+        assert!(matches!(
+            row.get("id"),
+            Some(Value::RecordId(id))
+                if id == &NativeRecordId::parse_simple("item:stable-1").unwrap()
+        ));
+        assert!(
+            matches!(row.get("owner"), Some(Value::String(owner)) if owner.as_str() == "tenant-1")
+        );
+    }
+
+    #[tokio::test]
     async fn explicit_conflict_resolutions_persist_and_only_unresolved_conflicts_are_reported() {
         let database = database().await;
         let client = open_sync_client(database.clone(), options("all"))
