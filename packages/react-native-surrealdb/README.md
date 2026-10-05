@@ -178,6 +178,26 @@ currently application-managed.
 
 ### Experimental sync prototype (alpha.2)
 
+There is no destructive local-versus-sync database mode. `connect()` opens the
+same embedded database either way. For a **sync-managed local-first** feature,
+open `openExperimentalSync()` once per durable client identity and enqueue its
+writes even while offline; local optimistic data and the outbox persist. At the
+application composition root, add the injected HTTP adapter and scheduler only
+when authenticated sync is enabled. Stopping the scheduler pauses transport,
+not local reads or durable intent; restarting it resumes from the saved outbox
+and checkpoint. Keep the database/sync handle scoped to the same account,
+partition, and client ID, and close them on account switch or sign-out without
+deleting unresolved data.
+
+This is **not** an automatic upgrade path from local-only direct SurrealQL
+writes. Those writes do not create protocol commits or enter the server log, so
+later attaching a sync adapter will not upload them. An application must
+bootstrap or migrate that existing data explicitly before enabling sync, and
+must define how authorization, derived rows, and conflicts work. Likewise,
+pausing transport does not turn sync-managed writes into direct database
+writes. The package intentionally has no global `syncEnabled` switch that
+could hide these semantics.
+
 This alpha exposes `openExperimentalSync()` only to exercise the native protocol
 workflow. The returned transport-free client can enqueue an atomic local commit, inspect its
 durable pending/conflict queues, and apply HTTP push/pull responses supplied by the application.
