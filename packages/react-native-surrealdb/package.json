@@ -1,6 +1,6 @@
 {
   "name": "react-native-surrealdb",
-  "version": "0.1.0-alpha.2",
+  "version": "0.1.0-alpha.3",
   "description": "Embedded and remote SurrealDB for React Native",
   "keywords": [
     "react-native",

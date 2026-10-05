@@ -2,6 +2,13 @@
 
 All notable changes to this package are documented here.
 
+## 0.1.0-alpha.3
+
+- Register the iOS `Surrealdb` TurboModule provider explicitly so a clean Expo
+  prebuild can load the native module. Verified in a local shopping sync device
+  build; this is still an experimental prerelease, not a production-ready sync
+  integration.
+
 ## 0.1.0-alpha.2
 
 - Add an experimental crash-safe native sync client with optimistic records,

@@ -8,6 +8,7 @@ workflows.
 
 | Package version | GitHub release              | npm tag  | Purpose                                                         |
 | --------------- | --------------------------- | -------- | --------------------------------------------------------------- |
+| `0.1.0-alpha.3` | Prerelease                  | `next`   | Fix clean iOS TurboModule registration for local sync testing |
 | `0.1.0-alpha.2` | Prerelease                  | `next`   | Test the experimental sync client in consuming apps |
 | `0.1.0-alpha.1` | Prerelease                  | `next`   | Embedded SurrealDB and native bindings before sync |
 | `0.1.0`         | Draft until npm publication | `latest` | Public stable release                                           |
