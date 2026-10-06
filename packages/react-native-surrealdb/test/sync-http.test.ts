@@ -41,6 +41,9 @@ function createSync() {
     isClosed: vi.fn(() => false),
     pendingJson: vi.fn(async () => [JSON.stringify(commit)]),
     recordPushResponse: vi.fn(async () => status),
+    resolveConflictKeepLocal: vi.fn(async () => status),
+    resolveConflictKeepServer: vi.fn(async () => status),
+    resolveConflictMerge: vi.fn(async () => status),
     status: vi.fn(async () => status),
   };
   return {

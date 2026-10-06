@@ -365,7 +365,12 @@ export class SurrealClient {
     return new LiveSubscription(await this.live<T>(surql, variables, options));
   }
 
-  /** Open the unreleased, transport-free sync protocol prototype. */
+  /**
+   * Open durable local sync state without starting network transport.
+   * Direct SurrealQL writes made before or alongside this handle are not
+   * retroactively captured as protocol commits; applications must enqueue
+   * sync-managed writes from the outset or explicitly bootstrap them.
+   */
   async openExperimentalSync(
     options: ExperimentalSyncOpenOptions,
     callOptions?: CallOptions,

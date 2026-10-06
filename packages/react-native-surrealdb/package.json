@@ -1,6 +1,6 @@
 {
   "name": "react-native-surrealdb",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.3",
   "description": "Embedded and remote SurrealDB for React Native",
   "keywords": [
     "react-native",
@@ -105,6 +105,11 @@
     "jsSrcsDir": "src",
     "android": {
       "javaPackageName": "com.surrealdb.rn"
+    },
+    "ios": {
+      "modulesProvider": {
+        "Surrealdb": "Surrealdb"
+      }
     }
   },
   "react-native-builder-bob": {

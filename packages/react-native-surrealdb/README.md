@@ -176,14 +176,39 @@ Expo Go. Persistent SurrealKV support is experimental. Transaction callbacks
 must finish before the database is closed, and remote connection recovery is
 currently application-managed.
 
-### Unreleased sync prototype
+### Experimental sync prototype (alpha.2)
 
-This development branch exposes `openExperimentalSync()` only to exercise the native protocol
+There is no destructive local-versus-sync database mode. `connect()` opens the
+same embedded database either way. For a **sync-managed local-first** feature,
+open `openExperimentalSync()` once per durable client identity and enqueue its
+writes even while offline; local optimistic data and the outbox persist. At the
+application composition root, add the injected HTTP adapter and scheduler only
+when authenticated sync is enabled. Stopping the scheduler pauses transport,
+not local reads or durable intent; restarting it resumes from the saved outbox
+and checkpoint. Keep the database/sync handle scoped to the same account,
+partition, and client ID, and close them on account switch or sign-out without
+deleting unresolved data.
+
+This is **not** an automatic upgrade path from local-only direct SurrealQL
+writes. Those writes do not create protocol commits or enter the server log, so
+later attaching a sync adapter will not upload them. An application must
+bootstrap or migrate that existing data explicitly before enabling sync, and
+must define how authorization, derived rows, and conflicts work. Likewise,
+pausing transport does not turn sync-managed writes into direct database
+writes. The package intentionally has no global `syncEnabled` switch that
+could hide these semantics.
+
+This alpha exposes `openExperimentalSync()` only to exercise the native protocol
 workflow. The returned transport-free client can enqueue an atomic local commit, inspect its
 durable pending/conflict queues, and apply HTTP push/pull responses supplied by the application.
 Optimistic records and normalized sync metadata/outbox/outcome rows commit together in embedded
 SurrealDB. Existing v1 blob state migrates atomically on open and fails closed on downgrade. The optional
 `ExperimentalSyncHttpAdapter` adds serialized, explicit `push()`, `pull()`, and `syncOnce()` calls.
+The protocol's `record_id` is the projected SurrealDB row identity. When an application also puts
+a logical string `id` inside an upsert value, SurrealDB's ordinary row `id` becomes a
+`SurrealRecordId` (for example, `item:stable-1`), not that string. Do not deserialize queried
+projection rows directly into the original payload type. Keep logical-ID conversion and domain
+validation in the application adapter; the generic sync runtime does not know an app's ID policy.
 Applications must inject their access-token provider, wire codec, and `fetch`. The adapter reads the
 last complete checkpoint from native durable client state; applying a pull atomically persists its
 records, cursor, scope snapshot, and opaque checkpoint before the next request can observe it.
@@ -202,6 +227,20 @@ const sync = await database.openExperimentalSync({
   clientId: "device-1",
   requestedScope: "all",
   subscriptionRevision: 1n,
+});
+
+// Durable conflicts stay recoverable until the application makes an explicit choice.
+await sync.resolveConflictKeepServer("conflicted-commit");
+await sync.resolveConflictKeepLocal("conflicted-commit", "fresh-retry-commit");
+await sync.resolveConflictMerge("conflicted-commit", {
+  identity: { clientCommitId: "fresh-merge-commit", fingerprint: "computed-by-native" },
+  operations: [{
+    kind: "upsert",
+    record_id: "recipe:42",
+    base_version: "absent", // Must match the authoritative state in the conflict.
+    value: { title: "Explicitly merged recipe" },
+    reference: null,
+  }],
 });
 
 const transport = new ExperimentalSyncHttpAdapter({
@@ -251,6 +290,12 @@ lifecycle.stop();
 
 The example URL is intentionally non-routable: this package does not supply or deploy the authority.
 
+Keep-server durably accepts the authority value. Keep-local replays the complete retained atomic
+batch under a fresh identity after rebasing its conflicting operation. Merge queues an explicit
+application-provided batch under the normal compare-and-set path. The original conflict and local
+intent remain in durable history; only unresolved conflicts appear in `conflicts()` and
+`conflictCount`. This mechanism deliberately does not choose an application merge policy.
+
 The payload API uses this package's tagged lossless value bridge for JavaScript `bigint`, bytes,
 `NONE`, record links, and finite fractional JavaScript numbers. Native Rust ignores any caller-supplied fingerprint, validates record
 values against the bounded canonical protocol safe subset, and emits the content-bound SHA-256
@@ -275,8 +320,12 @@ WebSocket hints only wake a pull, use a fresh application-supplied URL/ticket fo
 and never define durability or ordering; a 60-second periodic pull is the default fallback.
 Production hints require WSS. The client closes an oversized frame after receipt, but the authority
 or proxy must enforce its own pre-allocation frame limit. Authority deployment is absent. Do not
-ship or advertise this API; see the repository
+use this API for production data yet; see the repository
 [sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
+
+The conflict-resolution facade is covered by native SurrealKV reopen tests, package tests, and the
+opt-in two-replica local-authority Harness flow on iOS and Android. These are local prototype tests,
+not deployed authentication or production-retention evidence.
 
 Maintainers can measure the local durable path without a server using
 `pnpm --filter surrealdb-harness-rn86 run benchmark:ios:sync` or

@@ -8,9 +8,16 @@ DEV_REPO="${SYNC_ENGINE_DEV_REPO:-$DEFAULT_DEV_REPO}"
 SECRETS_FILE="$DEV_REPO/.local-dev/env"
 TOKEN_MODULE="$RUNTIME_ROOT/apps/harness-shared/e2e/local-authority-token.generated.js"
 PLATFORM="${1:-}"
+RESULTS_DIR="$HARNESS_DIR/performance-results/$PLATFORM/local-authority"
+REPORT_PATH="$RESULTS_DIR/reports.jsonl"
+REPORT_RECEIVER_PID=""
 
 cleanup() {
   rm -f -- "$TOKEN_MODULE"
+  if [[ -n "$REPORT_RECEIVER_PID" ]]; then
+    kill "$REPORT_RECEIVER_PID" >/dev/null 2>&1 || true
+    wait "$REPORT_RECEIVER_PID" 2>/dev/null || true
+  fi
 }
 
 if [[ "$PLATFORM" != "android" && "$PLATFORM" != "ios" ]]; then
@@ -50,8 +57,25 @@ printf '"use strict";\nmodule.exports = { runSuffix: "%s", syncDevToken: "%s" };
   "$RUN_SUFFIX" "$SYNC_DEV_TOKEN" >"$TOKEN_MODULE"
 chmod 600 "$TOKEN_MODULE"
 
+mkdir -p "$RESULTS_DIR"
+node "$HARNESS_DIR/scripts/receive-performance-report.mjs" \
+  --output="$REPORT_PATH" --append >"$RESULTS_DIR/report-receiver.log" 2>&1 &
+REPORT_RECEIVER_PID=$!
+for _ in {1..50}; do
+  if curl --fail --silent "http://127.0.0.1:18082/health" >/dev/null; then
+    break
+  fi
+  sleep 0.1
+done
+if ! kill -0 "$REPORT_RECEIVER_PID" >/dev/null 2>&1 ||
+  ! curl --fail --silent "http://127.0.0.1:18082/health" >/dev/null; then
+  echo "Local authority latency report receiver failed to start." >&2
+  exit 1
+fi
+
 cd "$HARNESS_DIR"
 ./node_modules/.bin/react-native-harness \
   --config jest.local-authority.config.mjs \
   --harnessRunner "$PLATFORM" \
   --runTestsByPath e2e/local-authority.harness.ts
+echo "Local authority timing samples: $REPORT_PATH"
