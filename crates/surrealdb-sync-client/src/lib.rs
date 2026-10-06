@@ -29,8 +29,23 @@ pub struct ResolvedCommit<V> {
 #[serde(tag = "strategy", rename_all = "snake_case")]
 pub enum ConflictResolution {
     KeepServer,
-    KeepLocal { replacement: CommitIdentity },
-    Merge { replacement: CommitIdentity },
+    /// Opt-in, versioned policy decision. The original conflict remains durable.
+    PreferServerPolicyV1,
+    KeepLocal {
+        replacement: CommitIdentity,
+    },
+    Merge {
+        replacement: CommitIdentity,
+    },
+}
+
+/// Controls only how a newly received stale push is handled locally.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub enum AutomaticConflictPolicy {
+    #[default]
+    Manual,
+    /// Close one stale upsert against a present row; never a delete or batch.
+    PreferServerV1,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -118,6 +133,12 @@ fn validate_conflict_resolutions<V: Eq>(state: &DurableClientState<V>) -> Result
         }
         let replacement = match resolution {
             ConflictResolution::KeepServer => continue,
+            ConflictResolution::PreferServerPolicyV1 => {
+                if !prefer_server_eligible(&resolved.local_commit, &resolved.outcome) {
+                    return Err(ClientError::InvalidConflictResolution);
+                }
+                continue;
+            }
             ConflictResolution::KeepLocal { replacement }
             | ConflictResolution::Merge { replacement } => replacement,
         };
@@ -264,6 +285,16 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         &self,
         response: PushResponse<V>,
     ) -> Result<PreparedTransition<V>, ClientError> {
+        self.prepare_push_response_with_policy(response, AutomaticConflictPolicy::Manual)
+    }
+
+    /// Persist an explicitly selected policy with the conflict. Retried
+    /// responses reuse the prior durable outcome and decision.
+    pub fn prepare_push_response_with_policy(
+        &self,
+        response: PushResponse<V>,
+        policy: AutomaticConflictPolicy,
+    ) -> Result<PreparedTransition<V>, ClientError> {
         if response.schema_version != SchemaVersion::V1
             || response.partition_id != self.state.partition_id
             || response.client_id != self.state.client_id
@@ -303,10 +334,17 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         for mapping in accepted_mappings(&response.outcome) {
             remap_commit(&mut local_commit, mapping);
         }
+        let resolution = if policy == AutomaticConflictPolicy::PreferServerV1
+            && prefer_server_eligible(&local_commit, &response.outcome)
+        {
+            Some(ConflictResolution::PreferServerPolicyV1)
+        } else {
+            None
+        };
         next.outcomes.push(ResolvedCommit {
             local_commit,
             outcome: response.outcome,
-            resolution: None,
+            resolution,
         });
         self.prepare(next)
     }
@@ -507,7 +545,10 @@ fn resolution_request_matches<V: Eq>(
     request: &ConflictResolutionRequest<V>,
 ) -> bool {
     match (resolution, request) {
-        (ConflictResolution::KeepServer, ConflictResolutionRequest::KeepServer) => true,
+        (
+            ConflictResolution::KeepServer | ConflictResolution::PreferServerPolicyV1,
+            ConflictResolutionRequest::KeepServer,
+        ) => true,
         (
             ConflictResolution::KeepLocal {
                 replacement: identity,
@@ -529,6 +570,7 @@ fn resolution_request_matches<V: Eq>(
         }
         (
             ConflictResolution::KeepServer
+            | ConflictResolution::PreferServerPolicyV1
             | ConflictResolution::KeepLocal { .. }
             | ConflictResolution::Merge { .. },
             ConflictResolutionRequest::KeepServer
@@ -536,6 +578,25 @@ fn resolution_request_matches<V: Eq>(
             | ConflictResolutionRequest::Merge { .. },
         ) => false,
     }
+}
+
+fn prefer_server_eligible<V>(commit: &ClientCommit<V>, outcome: &DurableOutcome<V>) -> bool {
+    let DurableOutcome::Conflict {
+        record_id,
+        authoritative: RecordState::Present { version, .. },
+        ..
+    } = outcome
+    else {
+        return false;
+    };
+    matches!(
+        commit.operations.as_slice(),
+        [Operation::Upsert {
+            record_id: operation_id,
+            base_version: BaseVersion::Exact(base),
+            ..
+        }] if operation_id == record_id && *base > 0 && *version > *base
+    )
 }
 
 fn same_intent<V: Eq>(original: &ClientCommit<V>, replacement: &ClientCommit<V>) -> bool {

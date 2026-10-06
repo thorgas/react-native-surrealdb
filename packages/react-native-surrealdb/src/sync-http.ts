@@ -1,6 +1,7 @@
 import type { CallOptions } from "./client";
 import {
   ExperimentalSyncClient,
+  type ExperimentalConflictPolicy,
   type ExperimentalSyncStatus,
   type SyncJsonValue,
 } from "./sync";
@@ -83,6 +84,8 @@ export type ExperimentalSyncHttpNativeBridge = {
 
 export type ExperimentalSyncHttpOptions = {
   sync: ExperimentalSyncClient;
+  /** Defaults to manual; only an explicit opt-in changes local conflict disposition. */
+  conflictPolicy?: ExperimentalConflictPolicy;
   baseUrl: string;
   partitionId: string;
   clientId: string;
@@ -185,6 +188,7 @@ export function experimentalCanonicalCborSyncHttpCodec(
  */
 export class ExperimentalSyncHttpAdapter {
   readonly #sync: ExperimentalSyncClient;
+  readonly #conflictPolicy: ExperimentalConflictPolicy;
   readonly #baseUrl: string;
   readonly #partitionId: string;
   readonly #clientId: string;
@@ -204,6 +208,7 @@ export class ExperimentalSyncHttpAdapter {
     }
     this.#limits = limits(options.limits);
     this.#sync = options.sync;
+    this.#conflictPolicy = options.conflictPolicy ?? "manual";
     this.#baseUrl = baseUrl;
     this.#partitionId = options.partitionId;
     this.#clientId = options.clientId;
@@ -243,9 +248,22 @@ export class ExperimentalSyncHttpAdapter {
         },
         options,
       );
-      statuses.push(
-        await this.#sync.recordPushResponseProtocolJson(responseJson, options),
-      );
+      if (this.#conflictPolicy === "manual") {
+        statuses.push(
+          await this.#sync.recordPushResponseProtocolJson(
+            responseJson,
+            options,
+          ),
+        );
+      } else {
+        statuses.push(
+          await this.#sync.recordPushResponseWithPolicyProtocolJson(
+            responseJson,
+            this.#conflictPolicy,
+            options,
+          ),
+        );
+      }
     }
 
     return statuses;

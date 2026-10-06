@@ -4,6 +4,7 @@ import type {
   NativeSyncClientLike,
   NativeSyncStatus,
 } from "../src/generated/surrealdb_rn_core";
+import { NativeConflictPolicy } from "../src/generated/surrealdb_rn_core";
 import {
   ExperimentalSyncHttpAdapter,
   ExperimentalSyncHttpError,
@@ -41,6 +42,7 @@ function createSync() {
     isClosed: vi.fn(() => false),
     pendingJson: vi.fn(async () => [JSON.stringify(commit)]),
     recordPushResponse: vi.fn(async () => status),
+    recordPushResponseWithPolicy: vi.fn(async () => status),
     resolveConflictKeepLocal: vi.fn(async () => status),
     resolveConflictKeepServer: vi.fn(async () => status),
     resolveConflictMerge: vi.fn(async () => status),
@@ -104,6 +106,31 @@ function createAdapter(
 }
 
 describe("ExperimentalSyncHttpAdapter", () => {
+  it("keeps manual as the default and opts in only through explicit configuration", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(response({ outcome: { status: "conflict" } }));
+    const { native, sync } = createSync();
+    const adapter = new ExperimentalSyncHttpAdapter({
+      sync,
+      conflictPolicy: "preferServerV1",
+      baseUrl: "https://sync.example.test",
+      partitionId: "partition-1",
+      clientId: "client-1",
+      requestedScope: "all",
+      subscriptionRevision: 7n,
+      accessToken: () => "redacted-test-token",
+      codec: experimentalJsonSyncHttpCodec,
+      fetch,
+    });
+    await adapter.push();
+    expect(native.recordPushResponse).not.toHaveBeenCalled();
+    expect(native.recordPushResponseWithPolicy).toHaveBeenCalledWith(
+      expect.any(String),
+      NativeConflictPolicy.PreferServerV1,
+      undefined,
+    );
+  });
   it("pushes pending commits then pulls from the durable checkpoint", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

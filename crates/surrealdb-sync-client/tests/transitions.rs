@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use surrealdb_sync_client::{
-    ClientError, ClientRuntime, ConflictResolution, ConflictResolutionRequest, DurableClientState,
-    OptimisticRecord, ResolvedCommit,
+    AutomaticConflictPolicy, ClientError, ClientRuntime, ConflictResolution,
+    ConflictResolutionRequest, DurableClientState, OptimisticRecord, ResolvedCommit,
 };
 use surrealdb_sync_protocol::{
     AppliedRecord, BaseVersion, Checkpoint, ClientCommit, ClientCommitId, ClientId, CommitIdentity,
@@ -69,6 +69,57 @@ fn push_response(outcome: DurableOutcome<Value>) -> PushResponse<Value> {
         partition_id: PartitionId("partition".to_owned()),
         client_id: ClientId("client".to_owned()),
         outcome,
+    }
+}
+
+#[test]
+fn prefer_server_policy_leaves_delete_batch_and_tombstone_unresolved() {
+    let stale_upsert = Operation::Upsert {
+        record_id: record_id("a"),
+        base_version: BaseVersion::Exact(1),
+        value: "local".to_owned(),
+        reference: None,
+    };
+    let cases = [
+        (
+            vec![Operation::Delete {
+                record_id: record_id("a"),
+                base_version: 1,
+            }],
+            RecordState::Present {
+                value: "server".to_owned(),
+                version: 2,
+                reference: None,
+            },
+        ),
+        (
+            vec![stale_upsert.clone(), upsert("b", "other", None)],
+            RecordState::Present {
+                value: "server".to_owned(),
+                version: 2,
+                reference: None,
+            },
+        ),
+        (vec![stale_upsert], RecordState::Tombstone { version: 2 }),
+    ];
+    for (index, (operations, authoritative)) in cases.into_iter().enumerate() {
+        let local = commit(&format!("conflict-{index}"), operations);
+        let mut state = empty_state();
+        state.outbox.push(local.clone());
+        let mut runtime = ClientRuntime::open(state).unwrap();
+        let prepared = runtime
+            .prepare_push_response_with_policy(
+                push_response(DurableOutcome::Conflict {
+                    identity: local.identity.clone(),
+                    record_id: record_id("a"),
+                    authoritative,
+                }),
+                AutomaticConflictPolicy::PreferServerV1,
+            )
+            .unwrap();
+        install(&mut runtime, prepared);
+        assert_eq!(runtime.state().outcomes[0].resolution, None);
+        assert_eq!(runtime.state().outcomes[0].local_commit, local);
     }
 }
 

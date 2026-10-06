@@ -104,6 +104,7 @@ describe("ExperimentalSyncHttpAdapter network boundary", () => {
         }),
       ]),
       recordPushResponse: vi.fn(async () => status),
+      recordPushResponseWithPolicy: vi.fn(async () => status),
       resolveConflictKeepLocal: vi.fn(async () => status),
       resolveConflictKeepServer: vi.fn(async () => status),
       resolveConflictMerge: vi.fn(async () => status),
