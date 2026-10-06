@@ -271,6 +271,13 @@ passing test within a red suite, not as a full E2E sign-off. The shopping
 facade reopen uses the same embedded in-memory database, not a process kill or
 SurrealKV disk reopen.
 
+2026-10-06 replay: the shopping trace again passed through delete and member
+pull on the dedicated iOS 26.1 Hauswirtschaft E2E simulator. Its test payload
+now matches the app authority's rename contract: `displayName` tracks `label`
+while `itemKey` remains stable. The combined runner still exited nonzero:
+the recipe loser sometimes stays at cursor 1 after keep-server resolution,
+so the revoked native phase and a cross-device convergence claim remain open.
+
 Fixture cleanup intentionally retains protected `sync_*` protocol rows. To reset a genuinely empty
 changefeed, recycle only the isolated `haus-sync-e2e` project volume. The checked-in base compose
 file defaults to the normal 18080 app volume, so verify the project and port settings and use the

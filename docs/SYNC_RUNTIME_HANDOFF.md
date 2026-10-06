@@ -1,5 +1,15 @@
 # Sync runtime adapter handoff
 
+## 2026-10-06 local household E2E replay
+
+- The native iOS shopping create/reopen/rename/conflict/delete trace passed
+  against the loopback household authority after aligning its fixture with
+  application rename semantics. No generic sync crate changed.
+- The combined active suite remains red because a losing recipe client can
+  remain at cursor 1 after `keepServer`; the revoked phase does not run when
+  the active phase fails. Investigate the cursor/pull path before claiming
+  two-device convergence or a full shopping drop-in.
+
 ## Haus local authority client identity (2026-09-29)
 
 The Haus two-client harness now names each experimental client as

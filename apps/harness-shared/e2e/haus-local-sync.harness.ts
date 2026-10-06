@@ -137,6 +137,7 @@ type ShoppingEntry = {
   householdId: string;
   itemKey: string;
   label: string;
+  displayName: string;
   quantity: string;
   unit: string;
   state: "open";
@@ -163,6 +164,7 @@ function shoppingEntry(
     householdId: fixture.householdId,
     itemKey,
     label,
+    displayName: label,
     quantity: "2",
     unit: "loaves",
     state: "open",
@@ -176,7 +178,7 @@ function shoppingEntry(
 async function readShoppingEntry(database: SurrealClient | undefined) {
   if (!database) return undefined;
   const [result] = await database.query<Array<ShoppingEntry>>(
-    "SELECT VALUE { id: id, householdId: householdId, itemKey: itemKey, label: label, quantity: quantity, unit: unit, state: state, origins: origins, updatedAt: updatedAt, updatedBy: updatedBy, version: version } FROM shopping_entry"
+    "SELECT VALUE { id: id, householdId: householdId, itemKey: itemKey, label: label, displayName: displayName, quantity: quantity, unit: unit, state: state, origins: origins, updatedAt: updatedAt, updatedBy: updatedBy, version: version } FROM shopping_entry"
   );
   const row = result?.value[0];
   return row ? { ...row, version: Number(row.version) } : undefined;
@@ -655,11 +657,14 @@ if (fixture.phase === "active") {
               kind: "upsert",
               record_id: shoppingRecordId,
               base_version: { exact: 1 },
-              value: shoppingEntry(
-                "Country sourdough",
-                fixture.ownerAccountId,
-                2
-              ),
+              value: {
+                ...shoppingEntry(
+                  "Country sourdough",
+                  fixture.ownerAccountId,
+                  2
+                ),
+                itemKey: "sourdough-bread",
+              },
               reference: null,
             },
           ],
@@ -668,8 +673,9 @@ if (fixture.phase === "active") {
         console.info("[Haus Sync E2E] shopping owner update push returned");
         expect(updated[0]).toMatchObject({ pendingCount: 0, conflictCount: 0 });
         expect(await readShoppingEntry(ownerDb)).toMatchObject({
-          itemKey: "country-sourdough",
+          itemKey: "sourdough-bread",
           label: "Country sourdough",
+          displayName: "Country sourdough",
           version: 2,
         });
 
@@ -683,11 +689,14 @@ if (fixture.phase === "active") {
               kind: "upsert",
               record_id: shoppingRecordId,
               base_version: { exact: 1 },
-              value: shoppingEntry(
-                "Stale shopping value",
-                fixture.memberAccountId,
-                2
-              ),
+              value: {
+                ...shoppingEntry(
+                  "Stale shopping value",
+                  fixture.memberAccountId,
+                  2
+                ),
+                itemKey: "sourdough-bread",
+              },
               reference: null,
             },
           ],
