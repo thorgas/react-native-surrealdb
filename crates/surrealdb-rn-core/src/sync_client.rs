@@ -8,7 +8,8 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use surrealdb_sync_client::{
-    ClientError, ClientRuntime, ConflictResolutionRequest, PreparedTransition,
+    AutomaticConflictPolicy, ClientError, ClientRuntime, ConflictResolutionRequest,
+    PreparedTransition,
 };
 use surrealdb_sync_protocol::{
     BaseVersion, ClientCommit, ClientCommitId, ClientId, CommitIdentity, DurableOutcome,
@@ -42,6 +43,21 @@ pub struct NativeSyncStatus {
     pub conflict_count: u32,
     pub cursor_epoch: Option<u64>,
     pub cursor_sequence: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, uniffi::Enum)]
+pub enum NativeConflictPolicy {
+    Manual,
+    PreferServerV1,
+}
+
+impl From<NativeConflictPolicy> for AutomaticConflictPolicy {
+    fn from(policy: NativeConflictPolicy) -> Self {
+        match policy {
+            NativeConflictPolicy::Manual => Self::Manual,
+            NativeConflictPolicy::PreferServerV1 => Self::PreferServerV1,
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error, uniffi::Error)]
@@ -145,13 +161,24 @@ impl NativeSyncClient {
         &self,
         response_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.record_push_response_with_policy(response_json, NativeConflictPolicy::Manual)
+            .await
+    }
+
+    /// The caller selects a local policy; the server outcome remains untrusted
+    /// and is validated before any durable state is replaced.
+    pub async fn record_push_response_with_policy(
+        &self,
+        response_json: String,
+        policy: NativeConflictPolicy,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
         let response = decode_input::<PushResponse<JsonValue>>(&response_json)?;
         validate_push_response_values(&response.outcome)?;
         let mut slot = self.runtime.lock().await;
         let prepared = slot
             .as_ref()
             .ok_or(NativeSyncError::Closed)?
-            .prepare_push_response(response)
+            .prepare_push_response_with_policy(response, policy.into())
             .map_err(map_protocol_error)?;
         self.persist_and_install(&mut slot, prepared).await
     }
@@ -586,6 +613,58 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(record, None);
+    }
+
+    #[tokio::test]
+    async fn opt_in_prefer_server_is_durable_and_idempotent() {
+        let database = database().await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let mut local = commit();
+        local.identity.client_commit_id = ClientCommitId("stale-upsert".into());
+        let Operation::Upsert { base_version, .. } = &mut local.operations[0] else {
+            unreachable!();
+        };
+        *base_version = BaseVersion::Exact(1);
+        client
+            .enqueue(serde_json::to_string(&local).unwrap())
+            .await
+            .unwrap();
+        let pending: ClientCommit<JsonValue> =
+            serde_json::from_str(&client.pending_json().await.unwrap()[0]).unwrap();
+        let conflict = PushResponse {
+            schema_version: SchemaVersion::V1,
+            partition_id: PartitionId("partition".into()),
+            client_id: ClientId("client".into()),
+            outcome: DurableOutcome::Conflict {
+                identity: pending.identity,
+                record_id: RecordId("person:ada".into()),
+                authoritative: RecordState::Present {
+                    value: json!({"name": "Server"}),
+                    version: 2,
+                    reference: None,
+                },
+            },
+        };
+        let response = serde_json::to_string(&conflict).unwrap();
+        let status = client
+            .record_push_response_with_policy(
+                response.clone(),
+                NativeConflictPolicy::PreferServerV1,
+            )
+            .await
+            .unwrap();
+        assert_eq!(status.conflict_count, 0);
+        assert_eq!(status.outcome_count, 1);
+        client.close().await;
+        let reopened = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        assert_eq!(reopened.status().await.unwrap().conflict_count, 0);
+        let duplicate = reopened.record_push_response(response).await.unwrap();
+        assert_eq!(duplicate.outcome_count, 1);
+        assert_eq!(duplicate.conflict_count, 0);
     }
 
     #[tokio::test]

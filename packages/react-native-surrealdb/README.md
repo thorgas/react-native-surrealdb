@@ -296,6 +296,19 @@ application-provided batch under the normal compare-and-set path. The original c
 intent remain in durable history; only unresolved conflicts appear in `conflicts()` and
 `conflictCount`. This mechanism deliberately does not choose an application merge policy.
 
+An experimental, opt-in `preferServerV1` disposition is available for applications that want
+one narrow automatic choice. Pass `conflictPolicy: "preferServerV1"` to
+`ExperimentalSyncHttpAdapter`, or call `sync.recordPushResponseWithPolicy(response,
+"preferServerV1")` when supplying responses yourself. The default methods remain manual.
+Native Rust records the policy decision atomically with a durable conflict only for a single
+stale upsert against a present canonical record. Deletes, tombstones, absent records, and
+multi-operation commits stay unresolved. The original local commit remains in durable history;
+no stale write is accepted by the authority. This is not general last-write-wins or a safe
+default for purchases and other cross-record application effects. Select policy at the app
+composition root; changing it cannot rewrite an already-durable outcome. Pull after a policy
+disposition to materialize the canonical winner: closing the conflict itself does not replace
+confirmed rows.
+
 The payload API uses this package's tagged lossless value bridge for JavaScript `bigint`, bytes,
 `NONE`, record links, and finite fractional JavaScript numbers. Native Rust ignores any caller-supplied fingerprint, validates record
 values against the bounded canonical protocol safe subset, and emits the content-bound SHA-256

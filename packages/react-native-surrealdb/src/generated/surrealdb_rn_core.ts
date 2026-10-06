@@ -937,6 +937,40 @@ const FfiConverterTypeNativeSyncStatus = (() => {
   return new FFIConverter();
 })();
 
+export enum NativeConflictPolicy {
+  Manual,
+  PreferServerV1,
+}
+
+const FfiConverterTypeNativeConflictPolicy = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeConflictPolicy;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return NativeConflictPolicy.Manual;
+        case 2:
+          return NativeConflictPolicy.PreferServerV1;
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value) {
+        case NativeConflictPolicy.Manual:
+          return ordinalConverter.write(1, into);
+        case NativeConflictPolicy.PreferServerV1:
+          return ordinalConverter.write(2, into);
+      }
+    }
+    allocationSize(value: TypeName): number {
+      return ordinalConverter.allocationSize(0);
+    }
+  }
+  return new FFIConverter();
+})();
+
 export enum NativeOutputEncoding {
   Tree,
   Streaming,
@@ -1858,6 +1892,15 @@ export interface NativeSyncClientLike {
     responseJson: string,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<NativeSyncStatus>;
+  /**
+   * The caller selects a local policy; the server outcome remains untrusted
+   * and is validated before any durable state is replaced.
+   */
+  recordPushResponseWithPolicy(
+    responseJson: string,
+    policy: NativeConflictPolicy,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeSyncStatus>;
   resolveConflictKeepLocal(
     conflictedCommitId: string,
     replacementCommitId: string,
@@ -2176,6 +2219,62 @@ export class NativeSyncClient
             uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
             FfiConverterString.lower(
               responseJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
+          FfiConverterTypeNativeSyncStatus,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  /**
+   * The caller selects a local policy; the server outcome remains untrusted
+   * and is validated before any durable state is replaced.
+   */
+  async recordPushResponseWithPolicy(
+    responseJson: string,
+    policy: NativeConflictPolicy,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeSyncStatus> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_record_push_response_with_policy(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              responseJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterTypeNativeConflictPolicy.lower(
+              policy,
               nativeModule().rustbuffer_alloc,
             ),
           );
@@ -3886,6 +3985,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_record_push_response_with_policy() !==
+    42030
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_record_push_response_with_policy",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_keep_local() !==
     56530
   ) {
@@ -4088,6 +4195,7 @@ export default Object.freeze({
     FfiConverterTypeLiveQuery,
     FfiConverterTypeNativeBatchQuery,
     FfiConverterTypeNativeBatchQueryResult,
+    FfiConverterTypeNativeConflictPolicy,
     FfiConverterTypeNativeOutputEncoding,
     FfiConverterTypeNativeProfiledQueryResult,
     FfiConverterTypeNativeQueryTiming,

@@ -260,6 +260,11 @@ interface NativeModuleInterface {
     uniffiSelf: bigint,
     responseJson: Uint8Array,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_record_push_response_with_policy(
+    uniffiSelf: bigint,
+    responseJson: Uint8Array,
+    policy: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_resolve_conflict_keep_local(
     uniffiSelf: bigint,
     conflictedCommitId: Uint8Array,
@@ -386,6 +391,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_is_closed(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_pending_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_record_push_response(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_record_push_response_with_policy(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_keep_local(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_keep_server(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_merge(): number;

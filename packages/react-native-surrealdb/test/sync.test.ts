@@ -4,6 +4,7 @@ import type {
   NativeSyncClientLike,
   NativeSyncStatus,
 } from "../src/generated/surrealdb_rn_core";
+import { NativeConflictPolicy } from "../src/generated/surrealdb_rn_core";
 import { ExperimentalSyncClient } from "../src/sync";
 import { NONE, SurrealRecordId } from "../src/wire";
 
@@ -27,6 +28,7 @@ function createNative() {
     isClosed: vi.fn(() => closed),
     pendingJson: vi.fn(async () => ['{"identity":"commit-1"}']),
     recordPushResponse: vi.fn(async () => initialStatus),
+    recordPushResponseWithPolicy: vi.fn(async () => initialStatus),
     resolveConflictKeepLocal: vi.fn(async () => initialStatus),
     resolveConflictKeepServer: vi.fn(async () => initialStatus),
     resolveConflictMerge: vi.fn(async () => initialStatus),
@@ -88,6 +90,44 @@ describe("ExperimentalSyncClient", () => {
       JSON.stringify(replacement),
       { signal },
     );
+  });
+
+  it("requires an explicit policy call and keeps the ordinary response manual", async () => {
+    const native = createNative();
+    const client = new ExperimentalSyncClient(native);
+    const response = { schemaVersion: "v1" } as const;
+    const signal = new AbortController().signal;
+
+    await client.recordPushResponse(response, { signal });
+    expect(native.recordPushResponse).toHaveBeenCalledWith(
+      JSON.stringify(response),
+      { signal },
+    );
+    expect(native.recordPushResponseWithPolicy).not.toHaveBeenCalled();
+
+    await client.recordPushResponseWithPolicy(response, "preferServerV1", {
+      signal,
+    });
+    expect(native.recordPushResponseWithPolicy).toHaveBeenCalledWith(
+      JSON.stringify(response),
+      NativeConflictPolicy.PreferServerV1,
+      { signal },
+    );
+    await client.recordPushResponseWithPolicyProtocolJson(
+      JSON.stringify(response),
+      "manual",
+    );
+    expect(native.recordPushResponseWithPolicy).toHaveBeenLastCalledWith(
+      JSON.stringify(response),
+      NativeConflictPolicy.Manual,
+      undefined,
+    );
+    expect(() =>
+      client.recordPushResponseWithPolicy(
+        response,
+        "lastWriteWins" as "manual",
+      ),
+    ).toThrow(/Unknown experimental sync conflict policy/);
   });
 
   it("forwards cancellation and reflects native closure", async () => {
