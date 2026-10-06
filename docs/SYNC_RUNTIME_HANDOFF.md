@@ -5,10 +5,11 @@
 - The native iOS shopping create/reopen/rename/conflict/delete trace passed
   against the loopback household authority after aligning its fixture with
   application rename semantics. No generic sync crate changed.
-- The combined active suite remains red because a losing recipe client can
-  remain at cursor 1 after `keepServer`; the revoked phase does not run when
-  the active phase fails. Investigate the cursor/pull path before claiming
-  two-device convergence or a full shopping drop-in.
+- The first combined run exposed an authority pull-cache liveness bug. The
+  private fix at `15065ec` advanced issued pulls when the partition head moves;
+  after rebuilding that authority, the full iOS harness passed 2 active tests
+  and 1 revoked-membership test. This is not yet a two-physical-device or
+  complete shopping product proof.
 
 ## Haus local authority client identity (2026-09-29)
 

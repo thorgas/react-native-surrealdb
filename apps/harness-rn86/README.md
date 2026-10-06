@@ -274,9 +274,11 @@ SurrealKV disk reopen.
 2026-10-06 replay: the shopping trace again passed through delete and member
 pull on the dedicated iOS 26.1 Hauswirtschaft E2E simulator. Its test payload
 now matches the app authority's rename contract: `displayName` tracks `label`
-while `itemKey` remains stable. The combined runner still exited nonzero:
-the recipe loser sometimes stays at cursor 1 after keep-server resolution,
-so the revoked native phase and a cross-device convergence claim remain open.
+while `itemKey` remains stable. The initial combined run exposed an authority
+cache bug: the recipe loser stayed at cursor 1 after keep-server resolution.
+With private authority commit `15065ec` rebuilt on loopback, the full native
+runner passed its two active tests and its revoked-membership test. This is
+two embedded clients on one simulator, not a cross-device or product-UI proof.
 
 Fixture cleanup intentionally retains protected `sync_*` protocol rows. To reset a genuinely empty
 changefeed, recycle only the isolated `haus-sync-e2e` project volume. The checked-in base compose
