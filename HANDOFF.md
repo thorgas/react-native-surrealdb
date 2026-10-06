@@ -17,6 +17,12 @@ built host `target/debug/libsurrealdb_rn_core.dylib`, and `ubrn generate jsi bin
 `ubrn generate jsi turbo-module`. A fresh checkout needs the documented pnpm/Cargo setup.
 The host has Node 26 while this package declares Node 20–22; commands warn but have run.
 
-The checked-in generated binding source changed, but release iOS/Android native artifacts are
-ignored and have not yet been rebuilt. A device claiming the opt-in path needs fresh native
-artifacts and a development build; the existing released alpha package remains manual-only.
+The checked-in generated binding source changed. On 2026-10-06,
+`pnpm --filter react-native-surrealdb run ubrn:ios`, `release:strip:ios`, and `build`
+passed; the ignored `SurrealDbRnFramework.xcframework` now contains this policy branch.
+The local test tarball packed to 144,076,650 bytes, then was removed after the
+Hauswirtschaft native build was stopped for low disk. The two task-created Rust
+iOS `target/` subdirectories were also removed; regenerate them if the source
+changes. Android artifacts were not rebuilt. A device claiming the opt-in path
+still needs a fresh app development build and runtime check. The existing
+released alpha package remains manual-only. No package was published.
