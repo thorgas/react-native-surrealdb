@@ -1,5 +1,7 @@
 export * from "./client";
 export * from "./sync";
+export * from "./sync-application";
+export * from "./sync-observation";
 export * from "./sync-http";
 export * from "./sync-lifecycle";
 export * from "./sync-scheduler";

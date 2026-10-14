@@ -198,6 +198,60 @@ pausing transport does not turn sync-managed writes into direct database
 writes. The package intentionally has no global `syncEnabled` switch that
 could hide these semantics.
 
+### Typed application commands and diagnostics
+
+`ExperimentalSyncApplicationAdapter<Command>` maps domain commands to the existing
+protocol with an injected `encodeCommand`, durable `sync` port, and optional
+scheduler wakeup. It does not create another mutation queue. `commit(command)`
+returns `{ clientCommitId, milestone: "local_durable", status }` only after native
+enqueue succeeds. This receipt does **not** mean the authority accepted the edit
+or another device received it. Keep validation, identity generation and domain
+side effects in the application mapping.
+
+```ts
+const observed = new ExperimentalSyncObservedClient(sync, {
+  logger: (metadata) => diagnostics.write(metadata),
+});
+const commands = new ExperimentalSyncApplicationAdapter<RemoveItem>({
+  sync: observed,
+  encodeCommand: (command) => ({
+    identity: {
+      clientCommitId: command.commitId,
+      fingerprint: "computed-by-native",
+    },
+    operations: [{
+      kind: "delete",
+      record_id: command.recordId,
+      base_version: command.version,
+    }],
+  }),
+  requestSync: () => scheduler.requestSync("local_mutation"),
+});
+const receipt = await commands.commit(command);
+```
+
+Route persisted push responses through the **same** observed port's
+`recordPushResponseProtocolJson()` to receive `authority_accepted`,
+`authority_conflict`, or `authority_rejected` events via `subscribeEvents()`.
+These events carry commit identity and metadata, never row contents. They are
+session-only observations, not a durable receipt registry: reopening does not
+replay old events, and bypassing the decorator does not emit them. Native
+persistence remains the source of truth. Unsubscribe when disposing the scope.
+
+The injected logger receives only milestone, revision and queue/outcome/conflict
+counts; it receives no commit IDs, records, tokens, checkpoints or error messages.
+It runs asynchronously, isolates thrown/rejected failures, and allows at most one
+in-flight invocation. A hung logger drops later diagnostics without delaying
+writes. Event listeners are synchronous advisory callbacks; keep them short.
+`diagnosticSnapshot()` returns a defensive metadata copy from one native status
+read, plus logger `inFlight`, `droppedCount` and `errorCount` counters for this
+observation scope. Counters are advisory and reset when the decorator is recreated. It does not
+promise a consistent batch of application rows plus revision; that requires a
+separate durable native boundary and is intentionally not claimed here.
+
+These adapters call existing alpha.3 facade methods only and introduce no native
+ABI, database migration, provider, transport, or authentication changes.
+
 This alpha exposes `openExperimentalSync()` only to exercise the native protocol
 workflow. The returned transport-free client can enqueue an atomic local commit, inspect its
 durable pending/conflict queues, and apply HTTP push/pull responses supplied by the application.
