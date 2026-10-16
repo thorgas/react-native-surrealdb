@@ -26,3 +26,11 @@ iOS `target/` subdirectories were also removed; regenerate them if the source
 changes. Android artifacts were not rebuilt. A device claiming the opt-in path
 still needs a fresh app development build and runtime check. The existing
 released alpha package remains manual-only. No package was published.
+
+## 2026-10-16 local roadmap observability
+
+Task9 on feat/sync-observability-dst-20261016 extends candidate3a1105a. See
+[ROADMAP_9_7_8.md](docs/ROADMAP_9_7_8.md) and
+[SYNC_TELEMETRY.md](docs/SYNC_TELEMETRY.md) for verification, APIs and native ABI
+rebuild boundary. Public merge/package publication and production changes remain
+separate. Native status/support reads do not provide atomic application-row snapshots.

@@ -47,6 +47,18 @@ function createSync() {
     resolveConflictKeepServer: vi.fn(async () => status),
     resolveConflictMerge: vi.fn(async () => status),
     status: vi.fn(async () => status),
+    diagnostics: vi.fn(() => ({
+      schemaVersion: 1,
+      spanPublishDrops: 0n,
+      runtimeLockAcquisitions: 0n,
+      runtimeLockWaitNs: 0n,
+      runtimeLockHoldNs: 0n,
+      storageAttempts: 0n,
+      storageNs: 0n,
+      storageErrors: 0n,
+      stateEncodingAttempts: 0n,
+      stateEncodingNs: 0n,
+    })),
   };
   return {
     native,
@@ -496,4 +508,63 @@ describe("ExperimentalSyncHttpAdapter", () => {
       undefined,
     );
   });
+});
+
+it("joins measured transport metadata to server-generated request ordinals without payloads", async () => {
+  const { ExperimentalSyncTelemetry } = await import("../src/sync-telemetry");
+  const telemetry = new ExperimentalSyncTelemetry();
+  const events: unknown[] = [];
+  telemetry.subscribe((event) => {
+    events.push(event);
+  });
+  const { sync } = createSync();
+  const adapter = new ExperimentalSyncHttpAdapter({
+    sync,
+    telemetry,
+    baseUrl: "https://sync.example.test",
+    partitionId: "SECRET-partition",
+    clientId: "SECRET-user",
+    requestedScope: "all",
+    subscriptionRevision: 1n,
+    accessToken: () => "SECRET-token",
+    codec: experimentalJsonSyncHttpCodec,
+    fetch: vi.fn<typeof globalThis.fetch>().mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            outcome: {
+              identity: { clientCommitId: "SECRET-commit" },
+              status: "accepted",
+            },
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+              "x-sync-request-id": "sync-12",
+            },
+          },
+        ),
+    ),
+  });
+  await adapter.push();
+  await telemetry.flush();
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      phase: "transport",
+      boundary: "end",
+      serverRequest: 12,
+      responseBytes: expect.any(Number),
+      bytes: expect.any(Number),
+      parent: expect.any(Number),
+    }),
+  );
+  expect(events).toContainEqual(
+    expect.objectContaining({
+      reason: "authority_accepted",
+      commit: expect.any(Number),
+    }),
+  );
+  expect(JSON.stringify(events)).not.toContain("SECRET");
+  expect(telemetry.snapshot().lastPushSuccessAtMs).toEqual(expect.any(Number));
+  await telemetry.close();
 });

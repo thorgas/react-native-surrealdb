@@ -1,3 +1,5 @@
+import { decodeSurrealValue } from "./wire";
+import type { ExperimentalSyncTelemetry } from "./sync-telemetry";
 import type { CallOptions } from "./client";
 import {
   ExperimentalSyncClient,
@@ -84,6 +86,7 @@ export type ExperimentalSyncHttpNativeBridge = {
 
 export type ExperimentalSyncHttpOptions = {
   sync: ExperimentalSyncClient;
+  telemetry?: ExperimentalSyncTelemetry;
   /** Defaults to manual; only an explicit opt-in changes local conflict disposition. */
   conflictPolicy?: ExperimentalConflictPolicy;
   baseUrl: string;
@@ -198,6 +201,8 @@ export class ExperimentalSyncHttpAdapter {
   readonly #codec: ExperimentalSyncHttpCodec;
   readonly #fetch: typeof globalThis.fetch;
   readonly #limits: ExperimentalSyncHttpLimits;
+  readonly #telemetry?: ExperimentalSyncTelemetry;
+  #cycle?: number;
   #tail: Promise<void> = Promise.resolve();
 
   constructor(options: ExperimentalSyncHttpOptions) {
@@ -208,6 +213,7 @@ export class ExperimentalSyncHttpAdapter {
     }
     this.#limits = limits(options.limits);
     this.#sync = options.sync;
+    this.#telemetry = options.telemetry;
     this.#conflictPolicy = options.conflictPolicy ?? "manual";
     this.#baseUrl = baseUrl;
     this.#partitionId = options.partitionId;
@@ -220,18 +226,42 @@ export class ExperimentalSyncHttpAdapter {
   }
 
   push(options?: CallOptions): Promise<ExperimentalSyncStatus[]> {
-    return this.#serialize(() => this.#push(options));
+    return this.#serialize(() =>
+      this.#measureCycle("push", () => this.#push(options)),
+    );
   }
 
   pull(options?: CallOptions): Promise<ExperimentalSyncStatus> {
-    return this.#serialize(() => this.#pull(options));
+    return this.#serialize(() =>
+      this.#measureCycle("pull", () => this.#pull(options)),
+    );
   }
 
   syncOnce(options?: CallOptions): Promise<ExperimentalSyncOnceResult> {
-    return this.#serialize(async () => ({
-      push: await this.#push(options),
-      pull: await this.#pull(options),
-    }));
+    return this.#serialize(() =>
+      this.#measureCycle("push", async () => ({
+        push: await this.#push(options),
+        pull: await this.#pull(options),
+      })),
+    );
+  }
+
+  async #measureCycle<T>(
+    phase: "push" | "pull",
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const span = this.#telemetry?.begin(phase);
+    this.#cycle = span?.id;
+    try {
+      const result = await operation();
+      span?.end();
+      return result;
+    } catch (error) {
+      span?.end("error");
+      throw error;
+    } finally {
+      this.#cycle = undefined;
+    }
   }
 
   async #push(options?: CallOptions): Promise<ExperimentalSyncStatus[]> {
@@ -248,21 +278,58 @@ export class ExperimentalSyncHttpAdapter {
         },
         options,
       );
-      if (this.#conflictPolicy === "manual") {
+      const persisted = this.#telemetry?.begin(
+        "native_persistence",
+        this.#cycle,
+      );
+      try {
         statuses.push(
-          await this.#sync.recordPushResponseProtocolJson(
-            responseJson,
-            options,
-          ),
+          await (this.#conflictPolicy === "manual"
+            ? this.#sync.recordPushResponseProtocolJson(responseJson, options)
+            : this.#sync.recordPushResponseWithPolicyProtocolJson(
+                responseJson,
+                this.#conflictPolicy,
+                options,
+              )),
         );
-      } else {
-        statuses.push(
-          await this.#sync.recordPushResponseWithPolicyProtocolJson(
-            responseJson,
-            this.#conflictPolicy,
-            options,
-          ),
-        );
+        let reason:
+          | "authority_accepted"
+          | "authority_conflict"
+          | "authority_rejected"
+          | "ok" = "ok";
+        try {
+          const kind = (
+            JSON.parse(responseJson) as { outcome?: { status?: string } }
+          ).outcome?.status;
+          reason =
+            kind === "accepted"
+              ? "authority_accepted"
+              : kind === "conflict"
+                ? "authority_conflict"
+                : kind === "rejected"
+                  ? "authority_rejected"
+                  : "ok";
+        } catch {
+          /* Never expose protocol bodies in diagnostics. */
+        }
+        persisted?.end(reason);
+        if (this.#telemetry && reason !== "ok") {
+          try {
+            const outcome = (
+              decodeSurrealValue(responseJson) as {
+                outcome?: { identity?: { clientCommitId?: string } };
+              }
+            ).outcome;
+            const id = outcome?.identity?.clientCommitId;
+            if (typeof id === "string" && id.length <= 128)
+              this.#telemetry.milestone(id, reason);
+          } catch {
+            /* Metadata is optional. */
+          }
+        }
+      } catch (error) {
+        persisted?.end("error");
+        throw error;
       }
     }
 
@@ -270,19 +337,35 @@ export class ExperimentalSyncHttpAdapter {
   }
 
   async #pull(options?: CallOptions): Promise<ExperimentalSyncStatus> {
-    const checkpoint = await this.#sync.checkpointToken(options);
-    const responseJson = await this.#postPull(
-      "/v1/sync/pull",
-      {
-        partitionId: this.#partitionId,
-        clientId: this.#clientId,
-        checkpoint,
-        requestedScope: this.#requestedScope,
-        subscriptionRevision: this.#subscriptionRevision,
-      },
-      options,
-    );
-    return this.#sync.applyPullResponseProtocolJson(responseJson, options);
+    const span = this.#telemetry?.begin("pull", this.#cycle);
+    try {
+      const checkpoint = await this.#sync.checkpointToken(options);
+      const responseJson = await this.#postPull(
+        "/v1/sync/pull",
+        {
+          partitionId: this.#partitionId,
+          clientId: this.#clientId,
+          checkpoint,
+          requestedScope: this.#requestedScope,
+          subscriptionRevision: this.#subscriptionRevision,
+        },
+        options,
+      );
+      const result = await (this.#telemetry
+        ? this.#telemetry.measure(
+            "projection_checkpoint",
+            () =>
+              this.#sync.applyPullResponseProtocolJson(responseJson, options),
+            this.#cycle,
+            "locally_visible",
+          )
+        : this.#sync.applyPullResponseProtocolJson(responseJson, options));
+      span?.end();
+      return result;
+    } catch (error) {
+      span?.end("error");
+      throw error;
+    }
   }
 
   async #postPush(
@@ -293,7 +376,11 @@ export class ExperimentalSyncHttpAdapter {
     return this.#withDeadline(options, async (boundedOptions) =>
       this.#post(
         path,
-        await this.#codec.encodePushRequest(request, boundedOptions),
+        await (this.#telemetry
+          ? this.#telemetry.measure("encode", () =>
+              this.#codec.encodePushRequest(request, boundedOptions),
+            )
+          : this.#codec.encodePushRequest(request, boundedOptions)),
         (response) => this.#codec.decodePushResponse(response, boundedOptions),
         boundedOptions,
       ),
@@ -308,7 +395,11 @@ export class ExperimentalSyncHttpAdapter {
     return this.#withDeadline(options, async (boundedOptions) =>
       this.#post(
         path,
-        await this.#codec.encodePullRequest(request, boundedOptions),
+        await (this.#telemetry
+          ? this.#telemetry.measure("encode", () =>
+              this.#codec.encodePullRequest(request, boundedOptions),
+            )
+          : this.#codec.encodePullRequest(request, boundedOptions)),
         (response) => this.#codec.decodePullResponse(response, boundedOptions),
         boundedOptions,
       ),
@@ -341,6 +432,7 @@ export class ExperimentalSyncHttpAdapter {
       );
     }
 
+    const transport = this.#telemetry?.begin("transport", this.#cycle);
     let receivedResponse = false;
     try {
       const response = await this.#fetch(`${this.#baseUrl}${path}`, {
@@ -375,8 +467,20 @@ export class ExperimentalSyncHttpAdapter {
         response,
         this.#limits.maxResponseBytes,
       );
-      return await decode(bytes);
+      const requestId = response.headers
+        .get("x-sync-request-id")
+        ?.match(/^sync-([0-9]{1,15})$/u)?.[1];
+      transport?.end(
+        "ok",
+        bodyBytes(body),
+        bytes.byteLength,
+        requestId === undefined ? undefined : Number(requestId),
+      );
+      return await (this.#telemetry
+        ? this.#telemetry.measure("decode", () => decode(bytes), transport?.id)
+        : decode(bytes));
     } catch (error) {
+      transport?.end("error", bodyBytes(body));
       if (options?.signal.aborted)
         throw new ExperimentalSyncHttpError(
           "sync HTTP request was aborted",
@@ -436,7 +540,12 @@ export class ExperimentalSyncHttpAdapter {
   }
 
   #serialize<T>(operation: () => Promise<T>): Promise<T> {
-    const result = this.#tail.then(operation, operation);
+    const wait = this.#telemetry?.begin("queue_wait");
+    const run = () => {
+      wait?.end();
+      return operation();
+    };
+    const result = this.#tail.then(run, run);
     this.#tail = result.then(
       () => undefined,
       () => undefined,

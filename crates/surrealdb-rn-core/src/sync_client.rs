@@ -3,7 +3,10 @@
 //! The facade performs no networking. Callers provide serialized protocol
 //! messages and remain responsible for transport, authentication, and retry.
 
+use crate::sync_diagnostics::{NativeSyncDiagnostics, SyncDiagnostics};
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
+use std::time::Instant;
 
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
@@ -88,6 +91,7 @@ pub enum NativeSyncError {
 pub struct NativeSyncClient {
     database: Arc<SurrealDatabase>,
     runtime: AsyncMutex<Option<ClientRuntime<JsonValue>>>,
+    diagnostics: SyncDiagnostics,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -139,6 +143,7 @@ pub async fn open_sync_client(
     Ok(Arc::new(NativeSyncClient {
         database,
         runtime: AsyncMutex::new(Some(runtime)),
+        diagnostics: SyncDiagnostics::default(),
     }))
 }
 
@@ -146,7 +151,7 @@ pub async fn open_sync_client(
 impl NativeSyncClient {
     pub async fn enqueue(&self, commit_json: String) -> Result<NativeSyncStatus, NativeSyncError> {
         let mut commit = decode_input::<ClientCommit<JsonValue>>(&commit_json)?;
-        let mut slot = self.runtime.lock().await;
+        let mut slot = self.lock_runtime().await;
         let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
         commit.identity.fingerprint = canonical_fingerprint(runtime.state(), &commit)?;
         let prepared = slot
@@ -174,7 +179,7 @@ impl NativeSyncClient {
     ) -> Result<NativeSyncStatus, NativeSyncError> {
         let response = decode_input::<PushResponse<JsonValue>>(&response_json)?;
         validate_push_response_values(&response.outcome)?;
-        let mut slot = self.runtime.lock().await;
+        let mut slot = self.lock_runtime().await;
         let prepared = slot
             .as_ref()
             .ok_or(NativeSyncError::Closed)?
@@ -189,7 +194,7 @@ impl NativeSyncClient {
     ) -> Result<NativeSyncStatus, NativeSyncError> {
         let response = decode_input::<PullResponse<JsonValue>>(&response_json)?;
         validate_pull_response_values(&response)?;
-        let mut slot = self.runtime.lock().await;
+        let mut slot = self.lock_runtime().await;
         let prepared = slot
             .as_ref()
             .ok_or(NativeSyncError::Closed)?
@@ -202,7 +207,7 @@ impl NativeSyncClient {
         &self,
         conflicted_commit_id: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let mut slot = self.runtime.lock().await;
+        let mut slot = self.lock_runtime().await;
         let prepared = slot
             .as_ref()
             .ok_or(NativeSyncError::Closed)?
@@ -219,7 +224,7 @@ impl NativeSyncClient {
         conflicted_commit_id: String,
         replacement_commit_id: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let mut slot = self.runtime.lock().await;
+        let mut slot = self.lock_runtime().await;
         let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
         let conflict_id = ClientCommitId(conflicted_commit_id);
         let (mut replacement, record_id, authoritative) = conflict_context(runtime, &conflict_id)?;
@@ -244,7 +249,7 @@ impl NativeSyncClient {
         replacement_commit_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
         let mut replacement = decode_input::<ClientCommit<JsonValue>>(&replacement_commit_json)?;
-        let mut slot = self.runtime.lock().await;
+        let mut slot = self.lock_runtime().await;
         let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
         replacement.identity.fingerprint = canonical_fingerprint(runtime.state(), &replacement)?;
         let prepared = runtime
@@ -257,7 +262,7 @@ impl NativeSyncClient {
     }
 
     pub async fn pending_json(&self) -> Result<Vec<String>, NativeSyncError> {
-        let slot = self.runtime.lock().await;
+        let slot = self.lock_runtime().await;
         let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
         runtime
             .pending_commits()
@@ -266,7 +271,7 @@ impl NativeSyncClient {
     }
 
     pub async fn conflicts_json(&self) -> Result<Vec<String>, NativeSyncError> {
-        let slot = self.runtime.lock().await;
+        let slot = self.lock_runtime().await;
         let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
         runtime
             .state()
@@ -282,7 +287,7 @@ impl NativeSyncClient {
 
     /// Returns the token from the last completely and atomically applied pull.
     pub async fn checkpoint_token(&self) -> Result<Option<String>, NativeSyncError> {
-        let slot = self.runtime.lock().await;
+        let slot = self.lock_runtime().await;
         let runtime = slot.as_ref().ok_or(NativeSyncError::Closed)?;
         Ok(runtime
             .state()
@@ -292,12 +297,19 @@ impl NativeSyncClient {
     }
 
     pub async fn status(&self) -> Result<NativeSyncStatus, NativeSyncError> {
-        let slot = self.runtime.lock().await;
+        let slot = self.lock_runtime().await;
         status(slot.as_ref().ok_or(NativeSyncError::Closed)?)
     }
 
     pub async fn close(&self) {
-        self.runtime.lock().await.take();
+        self.lock_runtime().await.take();
+    }
+
+    /// Metadata-only cumulative measurements, not an atomic snapshot of application rows.
+    /// Storage duration includes validation/encoding and the embedded transaction;
+    /// it is not server authority processing time. Counters include failed attempts.
+    pub fn diagnostics(&self) -> NativeSyncDiagnostics {
+        self.diagnostics.snapshot()
     }
 
     pub fn is_closed(&self) -> bool {
@@ -305,7 +317,48 @@ impl NativeSyncClient {
     }
 }
 
+struct RuntimeGuard<'a> {
+    guard: tokio::sync::MutexGuard<'a, Option<ClientRuntime<JsonValue>>>,
+    diagnostics: &'a SyncDiagnostics,
+    started: Instant,
+    ordinal: u64,
+    wait_ns: u64,
+}
+impl Deref for RuntimeGuard<'_> {
+    type Target = Option<ClientRuntime<JsonValue>>;
+    fn deref(&self) -> &Self::Target {
+        &self.guard
+    }
+}
+impl DerefMut for RuntimeGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.guard
+    }
+}
+impl Drop for RuntimeGuard<'_> {
+    fn drop(&mut self) {
+        self.diagnostics
+            .complete_operation(self.ordinal, self.wait_ns, self.started);
+        self.diagnostics.runtime_hold.record(self.started);
+    }
+}
+
 impl NativeSyncClient {
+    async fn lock_runtime(&self) -> RuntimeGuard<'_> {
+        let started = Instant::now();
+        let guard = self.runtime.lock().await;
+        let wait_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
+        self.diagnostics.runtime_wait.record(started);
+        let ordinal = self.diagnostics.begin_operation();
+        RuntimeGuard {
+            guard,
+            diagnostics: &self.diagnostics,
+            started: Instant::now(),
+            ordinal,
+            wait_ns,
+        }
+    }
+
     async fn persist_and_install(
         &self,
         slot: &mut Option<ClientRuntime<JsonValue>>,
@@ -314,9 +367,22 @@ impl NativeSyncClient {
         let current = slot.as_ref().ok_or(NativeSyncError::Closed)?.state();
         let next = prepared.state();
         validate_state_codec(next)?;
+        let storage_started = Instant::now();
         let persisted = SyncStateStore::new(&self.database)
+            .with_diagnostics(&self.diagnostics)
             .apply_transition_atomic(current, next)
             .await;
+        self.diagnostics.storage.record(storage_started);
+        if persisted.is_err() {
+            self.diagnostics
+                .storage_errors
+                .fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |v| Some(v.saturating_add(1)),
+                )
+                .ok();
+        }
         if matches!(&persisted, Err(SyncStateError::CommitUnknown(_))) {
             slot.take();
             return Err(NativeSyncError::RecoveryRequired);
@@ -536,6 +602,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn native_diagnostics_are_metadata_only_and_do_not_wait_for_runtime_lock() {
+        let database = database().await;
+        let client = open_sync_client(
+            database,
+            NativeSyncOpenOptions {
+                partition_id: "private-partition".into(),
+                client_id: "private-user".into(),
+                requested_scope: "private-scope".into(),
+                subscription_revision: 1,
+            },
+        )
+        .await
+        .unwrap();
+        let guard = client.lock_runtime().await;
+        let snapshot = client.diagnostics();
+        assert_eq!(snapshot.schema_version, 1);
+        assert_eq!(snapshot.runtime_lock_acquisitions, 1);
+        assert_eq!(snapshot.storage_attempts, 0);
+        let debug = format!("{snapshot:?}");
+        assert!(!debug.contains("private"));
+        drop(guard);
+        let before = client.status().await.unwrap();
+        for _ in 0..10_000 {
+            let _ = client.diagnostics();
+        }
+        assert_eq!(before, client.status().await.unwrap());
+        assert!(client.diagnostics().runtime_lock_hold_ns > 0);
+        client.close().await;
+        assert_eq!(client.diagnostics().schema_version, 1);
+    }
+
+    #[tokio::test]
     async fn native_facade_persists_enqueue_reopen_and_conflict_outcome() {
         let database = database().await;
         let client = open_sync_client(database.clone(), options("all"))
@@ -561,6 +659,16 @@ mod tests {
             .unwrap();
         assert_eq!(status.revision, 1);
         assert_eq!(status.pending_count, 1);
+        let diagnostics = client.diagnostics();
+        assert_eq!(diagnostics.storage_attempts, 1);
+        assert_eq!(diagnostics.storage_errors, 0);
+        assert_eq!(diagnostics.state_encoding_attempts, 1);
+        assert!(diagnostics.storage_ns > 0);
+        assert!(diagnostics.state_encoding_ns > 0);
+        let span = diagnostics.latest_completed_operation.unwrap();
+        assert!(span.operation_ordinal > 0);
+        assert!(span.storage_ns > 0);
+        assert!(span.state_encoding_ns > 0);
         let pending = client.pending_json().await.unwrap();
         assert_eq!(pending.len(), 1);
         let pending_commit: ClientCommit<JsonValue> = serde_json::from_str(&pending[0]).unwrap();

@@ -822,6 +822,153 @@ const FfiConverterTypeNativeProfiledQueryResult = (() => {
   return new FFIConverter();
 })();
 
+export type NativeSyncOperationSpan = {
+  operationOrdinal: bigint;
+  runtimeLockWaitNs: bigint;
+  runtimeLockHoldNs: bigint;
+  storageNs: bigint;
+  stateEncodingNs: bigint;
+};
+
+/**
+ * Generated factory for {@link NativeSyncOperationSpan} record objects.
+ */
+export const NativeSyncOperationSpan = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      NativeSyncOperationSpan,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () =>
+      Object.freeze(defaults()) as Partial<NativeSyncOperationSpan>,
+  });
+})();
+
+const FfiConverterTypeNativeSyncOperationSpan = (() => {
+  type TypeName = NativeSyncOperationSpan;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        operationOrdinal: FfiConverterUInt64.read(from),
+        runtimeLockWaitNs: FfiConverterUInt64.read(from),
+        runtimeLockHoldNs: FfiConverterUInt64.read(from),
+        storageNs: FfiConverterUInt64.read(from),
+        stateEncodingNs: FfiConverterUInt64.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterUInt64.write(value.operationOrdinal, into);
+      FfiConverterUInt64.write(value.runtimeLockWaitNs, into);
+      FfiConverterUInt64.write(value.runtimeLockHoldNs, into);
+      FfiConverterUInt64.write(value.storageNs, into);
+      FfiConverterUInt64.write(value.stateEncodingNs, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterUInt64.allocationSize(value.operationOrdinal) +
+        FfiConverterUInt64.allocationSize(value.runtimeLockWaitNs) +
+        FfiConverterUInt64.allocationSize(value.runtimeLockHoldNs) +
+        FfiConverterUInt64.allocationSize(value.storageNs) +
+        FfiConverterUInt64.allocationSize(value.stateEncodingNs)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type NativeSyncDiagnostics = {
+  schemaVersion: number;
+  latestCompletedOperation?: NativeSyncOperationSpan;
+  spanPublishDrops: bigint;
+  runtimeLockAcquisitions: bigint;
+  runtimeLockWaitNs: bigint;
+  runtimeLockHoldNs: bigint;
+  storageAttempts: bigint;
+  storageNs: bigint;
+  storageErrors: bigint;
+  stateEncodingAttempts: bigint;
+  stateEncodingNs: bigint;
+};
+
+/**
+ * Generated factory for {@link NativeSyncDiagnostics} record objects.
+ */
+export const NativeSyncDiagnostics = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      NativeSyncDiagnostics,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<NativeSyncDiagnostics>,
+  });
+})();
+
+const FfiConverterTypeNativeSyncDiagnostics = (() => {
+  type TypeName = NativeSyncDiagnostics;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        schemaVersion: FfiConverterUInt32.read(from),
+        latestCompletedOperation:
+          FfiConverterOptionalTypeNativeSyncOperationSpan.read(from),
+        spanPublishDrops: FfiConverterUInt64.read(from),
+        runtimeLockAcquisitions: FfiConverterUInt64.read(from),
+        runtimeLockWaitNs: FfiConverterUInt64.read(from),
+        runtimeLockHoldNs: FfiConverterUInt64.read(from),
+        storageAttempts: FfiConverterUInt64.read(from),
+        storageNs: FfiConverterUInt64.read(from),
+        storageErrors: FfiConverterUInt64.read(from),
+        stateEncodingAttempts: FfiConverterUInt64.read(from),
+        stateEncodingNs: FfiConverterUInt64.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterUInt32.write(value.schemaVersion, into);
+      FfiConverterOptionalTypeNativeSyncOperationSpan.write(
+        value.latestCompletedOperation,
+        into,
+      );
+      FfiConverterUInt64.write(value.spanPublishDrops, into);
+      FfiConverterUInt64.write(value.runtimeLockAcquisitions, into);
+      FfiConverterUInt64.write(value.runtimeLockWaitNs, into);
+      FfiConverterUInt64.write(value.runtimeLockHoldNs, into);
+      FfiConverterUInt64.write(value.storageAttempts, into);
+      FfiConverterUInt64.write(value.storageNs, into);
+      FfiConverterUInt64.write(value.storageErrors, into);
+      FfiConverterUInt64.write(value.stateEncodingAttempts, into);
+      FfiConverterUInt64.write(value.stateEncodingNs, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterUInt32.allocationSize(value.schemaVersion) +
+        FfiConverterOptionalTypeNativeSyncOperationSpan.allocationSize(
+          value.latestCompletedOperation,
+        ) +
+        FfiConverterUInt64.allocationSize(value.spanPublishDrops) +
+        FfiConverterUInt64.allocationSize(value.runtimeLockAcquisitions) +
+        FfiConverterUInt64.allocationSize(value.runtimeLockWaitNs) +
+        FfiConverterUInt64.allocationSize(value.runtimeLockHoldNs) +
+        FfiConverterUInt64.allocationSize(value.storageAttempts) +
+        FfiConverterUInt64.allocationSize(value.storageNs) +
+        FfiConverterUInt64.allocationSize(value.storageErrors) +
+        FfiConverterUInt64.allocationSize(value.stateEncodingAttempts) +
+        FfiConverterUInt64.allocationSize(value.stateEncodingNs)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
 export type NativeSyncOpenOptions = {
   partitionId: string;
   clientId: string;
@@ -1880,6 +2027,12 @@ export interface NativeSyncClientLike {
   conflictsJson(asyncOpts_?: {
     signal: AbortSignal;
   }) /*throws*/ : Promise<Array<string>>;
+  /**
+   * Metadata-only cumulative measurements, not an atomic snapshot of application rows.
+   * Storage duration includes validation/encoding and the embedded transaction;
+   * it is not server authority processing time. Counters include failed attempts.
+   */
+  diagnostics(): NativeSyncDiagnostics;
   enqueue(
     commitJson: string,
     asyncOpts_?: { signal: AbortSignal },
@@ -2101,6 +2254,31 @@ export class NativeSyncClient
       }
       throw __error;
     }
+  }
+
+  /**
+   * Metadata-only cumulative measurements, not an atomic snapshot of application rows.
+   * Storage duration includes validation/encoding and the embedded transaction;
+   * it is not server authority processing time. Counters include failed attempts.
+   */
+  diagnostics(): NativeSyncDiagnostics {
+    return ((__rb: Uint8Array) => {
+      try {
+        return FfiConverterTypeNativeSyncDiagnostics.lift(__rb);
+      } finally {
+        nativeModule().rustbuffer_free(__rb);
+      }
+    })(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_diagnostics(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
   }
 
   async enqueue(
@@ -3797,6 +3975,10 @@ const FfiConverterSequenceTypeQueryStatementResult = new FfiConverterArray(
   FfiConverterTypeQueryStatementResult,
 );
 
+// FfiConverter for NativeSyncOperationSpan | undefined
+const FfiConverterOptionalTypeNativeSyncOperationSpan =
+  new FfiConverterOptional(FfiConverterTypeNativeSyncOperationSpan);
+
 // FfiConverter for bigint | undefined
 const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
@@ -3950,6 +4132,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_conflicts_json",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_diagnostics() !==
+    19726
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_diagnostics",
     );
   }
   if (
@@ -4200,8 +4390,10 @@ export default Object.freeze({
     FfiConverterTypeNativeProfiledQueryResult,
     FfiConverterTypeNativeQueryTiming,
     FfiConverterTypeNativeSyncClient,
+    FfiConverterTypeNativeSyncDiagnostics,
     FfiConverterTypeNativeSyncError,
     FfiConverterTypeNativeSyncOpenOptions,
+    FfiConverterTypeNativeSyncOperationSpan,
     FfiConverterTypeNativeSyncStatus,
     FfiConverterTypeQueryStatementResult,
     FfiConverterTypeSurrealDatabase,

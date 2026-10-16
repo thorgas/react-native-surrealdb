@@ -1,3 +1,4 @@
+import type { ExperimentalSyncTelemetry } from "./sync-telemetry";
 import {
   ExperimentalSyncHttpError,
   type ExperimentalSyncHttpAdapter,
@@ -32,6 +33,7 @@ export type ExperimentalSyncSchedulerStatus =
   | { state: "failed"; error: ExperimentalSyncHttpError };
 
 export type ExperimentalSyncSchedulerOptions = {
+  telemetry?: ExperimentalSyncTelemetry;
   adapter: Pick<ExperimentalSyncHttpAdapter, "pull" | "syncOnce">;
   connectivity?: ExperimentalSyncConnectivity;
   invalidations?: ExperimentalSyncInvalidationSource;
@@ -54,6 +56,7 @@ type Cycle = "pull" | "sync";
  * Losing this object loses only timing; restart immediately re-reads the outbox/checkpoint.
  */
 export class ExperimentalSyncScheduler {
+  readonly #telemetry?: ExperimentalSyncTelemetry;
   readonly #adapter: ExperimentalSyncSchedulerOptions["adapter"];
   readonly #connectivity?: ExperimentalSyncConnectivity;
   readonly #invalidations?: ExperimentalSyncInvalidationSource;
@@ -85,6 +88,7 @@ export class ExperimentalSyncScheduler {
 
   constructor(options: ExperimentalSyncSchedulerOptions) {
     this.#adapter = options.adapter;
+    this.#telemetry = options.telemetry;
     this.#connectivity = options.connectivity;
     this.#invalidations = options.invalidations;
     this.#baseRetryMs = positive(options.baseRetryMs ?? 1_000, "baseRetryMs");
@@ -334,7 +338,18 @@ export class ExperimentalSyncScheduler {
 
   #publish(status: ExperimentalSyncSchedulerStatus): void {
     this.#status = status;
-    for (const listener of this.#listeners) listener(status);
+    this.#telemetry?.state(
+      status.state === "authentication_required"
+        ? "authentication_required"
+        : status.state,
+    );
+    for (const listener of this.#listeners) {
+      try {
+        listener(status);
+      } catch {
+        /* Advisory status must not stop recovery. */
+      }
+    }
   }
 }
 

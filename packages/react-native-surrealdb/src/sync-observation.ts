@@ -1,3 +1,4 @@
+import { ExperimentalSyncTelemetry } from "./sync-telemetry";
 import type { CallOptions } from "./client";
 import type { ExperimentalSyncStatus, SyncJsonValue } from "./sync";
 import { decodeSurrealValue } from "./wire";
@@ -13,10 +14,12 @@ export interface ExperimentalSyncObservationPort {
     options?: CallOptions,
   ): Promise<ExperimentalSyncStatus>;
   status(options?: CallOptions): Promise<ExperimentalSyncStatus>;
+  nativeDiagnostics?(): unknown;
 }
 
 /** Advisory observations over one application-owned durable sync client. */
 export class ExperimentalSyncObservedClient {
+  readonly telemetry?: ExperimentalSyncTelemetry;
   readonly #client: ExperimentalSyncObservationPort;
   readonly #observers = new Set<(event: ExperimentalSyncEvent) => void>();
   readonly #logger?: ExperimentalSyncClientOptions["logger"];
@@ -29,6 +32,7 @@ export class ExperimentalSyncObservedClient {
     options: ExperimentalSyncClientOptions = {},
   ) {
     this.#client = client;
+    this.telemetry = options.telemetry;
     this.#logger = options.logger;
   }
 
@@ -37,7 +41,14 @@ export class ExperimentalSyncObservedClient {
     options?: CallOptions,
   ): Promise<ExperimentalSyncStatus> {
     return this.#persist(
-      this.#client.enqueue(commit, options),
+      this.telemetry
+        ? this.telemetry.measure(
+            "native_persistence",
+            () => this.#client.enqueue(commit, options),
+            undefined,
+            "local_durable",
+          )
+        : this.#client.enqueue(commit, options),
       "local_durable",
       commitId(commit),
     );
@@ -48,7 +59,11 @@ export class ExperimentalSyncObservedClient {
     options?: CallOptions,
   ): Promise<ExperimentalSyncStatus> {
     return this.#persistOutcome(
-      this.#client.recordPushResponseProtocolJson(response, options),
+      this.telemetry
+        ? this.telemetry.measure("native_persistence", () =>
+            this.#client.recordPushResponseProtocolJson(response, options),
+          )
+        : this.#client.recordPushResponseProtocolJson(response, options),
       response,
     );
   }
@@ -65,6 +80,80 @@ export class ExperimentalSyncObservedClient {
         droppedCount: this.#droppedLogs,
         errorCount: this.#loggerErrors,
       }),
+    });
+  }
+
+  /** Metadata only: one status read, no rows or checkpoint tokens. */
+  async supportSnapshot(options?: CallOptions) {
+    const status = await this.#client.status(options);
+    let native:
+      | Readonly<Record<string, string | Readonly<Record<string, string>>>>
+      | undefined;
+    try {
+      const diagnostics = object(this.#client.nativeDiagnostics?.());
+      if (diagnostics) {
+        const safe: Record<string, string | Readonly<Record<string, string>>> =
+          {};
+        for (const key of [
+          "schemaVersion",
+          "spanPublishDrops",
+          "runtimeLockAcquisitions",
+          "runtimeLockWaitNs",
+          "runtimeLockHoldNs",
+          "storageAttempts",
+          "storageNs",
+          "storageErrors",
+          "stateEncodingAttempts",
+          "stateEncodingNs",
+        ]) {
+          const value = diagnostics[key];
+          if (
+            typeof value === "bigint" ||
+            (typeof value === "number" && Number.isFinite(value))
+          )
+            safe[key] = String(value);
+        }
+        const latest = object(diagnostics.latestCompletedOperation);
+        if (latest) {
+          const span: Record<string, string> = {};
+          for (const key of [
+            "operationOrdinal",
+            "runtimeLockWaitNs",
+            "runtimeLockHoldNs",
+            "storageNs",
+            "stateEncodingNs",
+          ]) {
+            const value = latest[key];
+            if (
+              typeof value === "bigint" ||
+              (typeof value === "number" && Number.isFinite(value))
+            )
+              span[key] = String(value);
+          }
+          safe.latestCompletedOperation = Object.freeze(span);
+        }
+        native = Object.freeze(safe);
+      }
+    } catch {
+      /* Diagnostics availability never changes durable state. */
+    }
+    return Object.freeze({
+      native,
+      schemaVersion: 1 as const,
+      consistency: "native_status_only" as const,
+      revision: String(status.revision),
+      pendingCount: status.pendingCount,
+      outcomeCount: status.outcomeCount,
+      conflictCount: status.conflictCount,
+      cursorEpoch:
+        status.cursorEpoch === undefined
+          ? undefined
+          : String(status.cursorEpoch),
+      cursorSequence:
+        status.cursorSequence === undefined
+          ? undefined
+          : String(status.cursorSequence),
+      telemetry: this.telemetry?.snapshot(),
     });
   }
 
@@ -107,6 +196,7 @@ export class ExperimentalSyncObservedClient {
   ): Promise<ExperimentalSyncStatus> {
     const status = await persisted;
     if (!milestone || !clientCommitId) return status;
+    this.telemetry?.milestone(clientCommitId, milestone);
     const event = Object.freeze({
       milestone,
       clientCommitId,
@@ -168,6 +258,7 @@ export type ExperimentalSyncDiagnosticEvent = Readonly<
     >
 >;
 export type ExperimentalSyncClientOptions = {
+  telemetry?: ExperimentalSyncTelemetry;
   logger?: (event: ExperimentalSyncDiagnosticEvent) => void | Promise<void>;
 };
 

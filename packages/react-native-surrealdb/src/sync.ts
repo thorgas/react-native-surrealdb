@@ -1,6 +1,7 @@
 import type {
   NativeSyncClientLike,
   NativeSyncStatus,
+  NativeSyncDiagnostics,
 } from "./generated/surrealdb_rn_core";
 import { NativeConflictPolicy } from "./generated/surrealdb_rn_core";
 import type { CallOptions } from "./client";
@@ -181,6 +182,11 @@ export class ExperimentalSyncClient {
 
   status(options?: CallOptions): Promise<ExperimentalSyncStatus> {
     return this.#native.status(options);
+  }
+
+  /** Metadata-only Rust measurements; never a snapshot of application rows. */
+  nativeDiagnostics(): NativeSyncDiagnostics {
+    return this.#native.diagnostics();
   }
 
   close(options?: CallOptions): Promise<void> {

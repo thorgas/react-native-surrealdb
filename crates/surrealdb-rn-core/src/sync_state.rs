@@ -226,11 +226,23 @@ struct NormalizedRows {
 
 pub struct SyncStateStore<'a> {
     database: &'a SurrealDatabase,
+    diagnostics: Option<&'a crate::sync_diagnostics::SyncDiagnostics>,
 }
 
 impl<'a> SyncStateStore<'a> {
     pub fn new(database: &'a SurrealDatabase) -> Self {
-        Self { database }
+        Self {
+            database,
+            diagnostics: None,
+        }
+    }
+
+    pub(crate) fn with_diagnostics(
+        mut self,
+        diagnostics: &'a crate::sync_diagnostics::SyncDiagnostics,
+    ) -> Self {
+        self.diagnostics = Some(diagnostics);
+        self
     }
 
     /// Install the private local table used by the adapter.
@@ -315,7 +327,12 @@ impl<'a> SyncStateStore<'a> {
             };
         }
 
-        let (key, rows) = prepare_state_write(Some(current.revision), next)?;
+        let encoding_started = std::time::Instant::now();
+        let encoded = prepare_state_write(Some(current.revision), next);
+        if let Some(diagnostics) = self.diagnostics {
+            diagnostics.state_encoding.record(encoding_started);
+        }
+        let (key, rows) = encoded?;
         let current_projection = optimistic_projection(current);
         let next_projection = optimistic_projection(next);
 

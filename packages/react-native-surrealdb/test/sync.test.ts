@@ -33,11 +33,30 @@ function createNative() {
     resolveConflictKeepServer: vi.fn(async () => initialStatus),
     resolveConflictMerge: vi.fn(async () => initialStatus),
     status: vi.fn(async () => initialStatus),
+    diagnostics: vi.fn(() => ({
+      schemaVersion: 1,
+      spanPublishDrops: 0n,
+      runtimeLockAcquisitions: 1n,
+      runtimeLockWaitNs: 2n,
+      runtimeLockHoldNs: 3n,
+      storageAttempts: 1n,
+      storageNs: 4n,
+      storageErrors: 0n,
+      stateEncodingAttempts: 1n,
+      stateEncodingNs: 1n,
+    })),
   } as NativeSyncClientLike;
   return native;
 }
 
 describe("ExperimentalSyncClient", () => {
+  it("exposes native measurements without React or async runtime work", () => {
+    const native = createNative();
+    const client = new ExperimentalSyncClient(native);
+    expect(client.nativeDiagnostics().storageNs).toBe(4n);
+    expect(native.diagnostics).toHaveBeenCalledOnce();
+    expect(native.status).not.toHaveBeenCalled();
+  });
   it("serializes protocol inputs and decodes durable queues", async () => {
     const native = createNative();
     const client = new ExperimentalSyncClient(native);
