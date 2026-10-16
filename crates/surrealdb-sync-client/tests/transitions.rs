@@ -788,3 +788,50 @@ fn client_error_display_does_not_expose_record_identifiers() {
     assert_eq!(displayed, "record ID mapping collides with canonical state");
     assert!(!displayed.contains("private-record-id"));
 }
+
+#[test]
+fn delayed_reset_cannot_roll_back_epoch_sequence_or_authorization() {
+    let mut state = empty_state();
+    let mut current = checkpoint("current", 3, 8);
+    current.scope.authorization_revision = 5;
+    state.checkpoint = Some(current);
+    state.confirmed.insert(
+        record_id("a"),
+        RecordState::Present {
+            value: "current".into(),
+            version: 2,
+            reference: None,
+        },
+    );
+    let client = ClientRuntime::open(state.clone()).unwrap();
+    for (epoch, sequence, authorization, expected) in [
+        (2, 8, 5, ClientError::CursorWouldMoveBackward),
+        (3, 7, 5, ClientError::CursorWouldMoveBackward),
+        (3, 8, 4, ClientError::ScopeMismatch),
+    ] {
+        let mut old = checkpoint("delayed", epoch, sequence);
+        old.scope.authorization_revision = authorization;
+        let result = client.prepare_pull_response(PullResponse::Reset(ResetSnapshot {
+            reason: ResetReason::EpochChanged,
+            checkpoint: old,
+            records: vec![],
+        }));
+        assert_eq!(result.unwrap_err(), expected);
+        assert_eq!(client.state(), &state);
+    }
+    // A newer authority epoch may restart its sequence; a newer authorization
+    // revision may legitimately replace the visible records at the same cursor.
+    for (epoch, sequence, authorization) in [(4, 0, 5), (3, 8, 6)] {
+        let mut fresh = checkpoint("fresh", epoch, sequence);
+        fresh.scope.authorization_revision = authorization;
+        assert!(
+            client
+                .prepare_pull_response(PullResponse::Reset(ResetSnapshot {
+                    reason: ResetReason::AuthorizationChanged,
+                    checkpoint: fresh,
+                    records: vec![],
+                }))
+                .is_ok()
+        );
+    }
+}

@@ -477,6 +477,20 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         snapshot: ResetSnapshot<V>,
     ) -> Result<PreparedTransition<V>, ClientError> {
         validate_scope(&self.state, &snapshot.checkpoint)?;
+        // Reset responses can be delayed/reordered just like incremental pulls.
+        // Never replace a newer installed frontier or authorization snapshot.
+        if let Some(current) = &self.state.checkpoint {
+            let incoming = &snapshot.checkpoint;
+            if incoming.cursor.epoch < current.cursor.epoch
+                || (incoming.cursor.epoch == current.cursor.epoch
+                    && incoming.cursor.sequence < current.cursor.sequence)
+            {
+                return Err(ClientError::CursorWouldMoveBackward);
+            }
+            if incoming.scope.authorization_revision < current.scope.authorization_revision {
+                return Err(ClientError::ScopeMismatch);
+            }
+        }
         let mut confirmed = BTreeMap::new();
         let mut record_ids = BTreeSet::new();
         for record in snapshot.records {

@@ -40,3 +40,13 @@ existing TypeScript scheduler; drive storage and transport seams rather than
 implementing a second client. Keep healthy-core liveness separate from fault
 exploration and retain permanently disconnected peers. Record both repository
 SHAs for any mixed runtime/scheduler acceptance.
+
+Task7 found stale reset rollback through real generated transitions (seed2).
+The existing Rust client copy now mirrors the canonical narrow rejection of older
+epoch/sequence/authorization resets; its transition regression passes. This is a
+local source fix: mobile binaries and production have not been updated.
+
+Task7 canonical simulator/fix commit: b61abc48ccadd7828c6d90693f10500f3eec9251.
+Full private checker passed: Python26, Quint57, TLC235190 states, Rust135/18
+explicit live adapter ignores; separate JS runtime suite6, bridge6, native49/1
+explicit authenticated-server ignore. Exact RN transition copy17 tests passed.

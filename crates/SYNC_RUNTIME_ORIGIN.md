@@ -16,3 +16,8 @@ These two crates are Apache-2.0 licensed; the rest of this repository remains MI
 This is a temporary source arrangement for adapter prototyping. Until a single-source export or
 dependency mechanism replaces it, changes must be authored in the private canonical repository and
 then deliberately synchronized here. Do not make an independent protocol decision in this copy.
+
+2026-10-16: the existing client `prepare_reset` and its regression mirror the
+private roadmap task7 fix: reject reordered older epoch/sequence/authorization
+reset before state replacement. No new private modules are copied. The coordinating
+private task commit is recorded in docs/ROADMAP_9_7_8.md after verification.
