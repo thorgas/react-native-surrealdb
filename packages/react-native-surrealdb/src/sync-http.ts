@@ -237,6 +237,16 @@ export class ExperimentalSyncHttpAdapter {
     );
   }
 
+  /** Acquire complete authorized read coverage without discarding pending intent. */
+  bootstrapReadCoverage(
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus> {
+    this.#sync.readCapabilities();
+    return this.#serialize(() =>
+      this.#measureCycle("pull", () => this.#pull(options, true)),
+    );
+  }
+
   syncOnce(options?: CallOptions): Promise<ExperimentalSyncOnceResult> {
     return this.#serialize(() =>
       this.#measureCycle("push", async () => ({
@@ -336,10 +346,15 @@ export class ExperimentalSyncHttpAdapter {
     return statuses;
   }
 
-  async #pull(options?: CallOptions): Promise<ExperimentalSyncStatus> {
+  async #pull(
+    options?: CallOptions,
+    forceReset = false,
+  ): Promise<ExperimentalSyncStatus> {
     const span = this.#telemetry?.begin("pull", this.#cycle);
     try {
-      const checkpoint = await this.#sync.checkpointToken(options);
+      const checkpoint = forceReset
+        ? undefined
+        : await this.#sync.checkpointToken(options);
       const responseJson = await this.#postPull(
         "/v1/sync/pull",
         {

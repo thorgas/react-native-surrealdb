@@ -6,6 +6,9 @@
 //! correctness boundary compatible with asynchronous transactional stores
 //! without selecting an async runtime or persistence dependency.
 
+mod read;
+pub use read::*;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
 use std::fmt;
@@ -23,6 +26,8 @@ pub struct ResolvedCommit<V> {
     pub outcome: DurableOutcome<V>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resolution: Option<ConflictResolution>,
+    #[serde(default)]
+    pub covered_by_reset: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -70,6 +75,8 @@ pub struct DurableClientState<V> {
     pub outbox: Vec<ClientCommit<V>>,
     pub outcomes: Vec<ResolvedCommit<V>>,
     pub checkpoint: Option<Checkpoint>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reset_coverage: Option<ResetCoverage>,
     pub id_map: BTreeMap<RecordId, RecordId>,
 }
 
@@ -90,6 +97,7 @@ impl<V> DurableClientState<V> {
             outbox: Vec::new(),
             outcomes: Vec::new(),
             checkpoint: None,
+            reset_coverage: None,
             id_map: BTreeMap::new(),
         }
     }
@@ -108,6 +116,11 @@ impl<V: Eq> DurableClientState<V> {
         }
         for resolved in &self.outcomes {
             validate_commit(&resolved.local_commit)?;
+            if resolved.covered_by_reset
+                && !matches!(resolved.outcome, DurableOutcome::Accepted { .. })
+            {
+                return Err(ClientError::InvalidReadCoverage);
+            }
             if resolved.outcome.identity() != &resolved.local_commit.identity {
                 return Err(ClientError::OutcomeIdentityMismatch);
             }
@@ -118,6 +131,7 @@ impl<V: Eq> DurableClientState<V> {
         }
         validate_conflict_resolutions(self)?;
         validate_checkpoint(self)?;
+        read::validate_coverage(self)?;
         validate_id_map(&self.id_map)?;
         validate_no_mapped_local_ids(self)
     }
@@ -158,7 +172,12 @@ fn validate_conflict_resolutions<V: Eq>(state: &DurableClientState<V>) -> Result
     Ok(())
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(
+    tag = "state",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
 pub enum OptimisticRecord<V> {
     Present {
         value: V,
@@ -201,6 +220,9 @@ pub enum ClientError {
     InvalidPullFraming,
     CheckpointMismatch,
     ScopeMismatch,
+    InvalidReadCoverage,
+    NeedsNewScopeJournal,
+    PendingQuarantineRequired,
     CursorEpochMismatch,
     CursorWouldMoveBackward,
     CommitSequenceGap,
@@ -228,6 +250,11 @@ impl fmt::Display for ClientError {
             Self::InvalidPullFraming => "pull response is not a complete batch",
             Self::CheckpointMismatch => "pull checkpoint does not match",
             Self::ScopeMismatch => "pull scope does not match this client",
+            Self::InvalidReadCoverage => "read coverage does not match durable state",
+            Self::NeedsNewScopeJournal => "authorized scope requires a new journal",
+            Self::PendingQuarantineRequired => {
+                "pending intent requires explicit quarantine before a scope change"
+            }
             Self::CursorEpochMismatch => "pull cursor epoch does not match",
             Self::CursorWouldMoveBackward => "pull cursor would move backward",
             Self::CommitSequenceGap => "pull commit sequence is incomplete",
@@ -345,6 +372,7 @@ impl<V: Clone + Eq> ClientRuntime<V> {
             local_commit,
             outcome: response.outcome,
             resolution,
+            covered_by_reset: false,
         });
         self.prepare(next)
     }
@@ -433,28 +461,41 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         Ok(())
     }
 
+    pub fn install_with_read_batch(
+        &mut self,
+        prepared: PreparedTransition<V>,
+    ) -> Result<Option<CommittedReadBatchV1<V>>, ClientError> {
+        if prepared.base_revision != self.state.revision {
+            return Err(ClientError::StaleTransition {
+                expected: prepared.base_revision,
+                actual: self.state.revision,
+            });
+        }
+        let batch = read::committed_batch(&self.state, &prepared.state);
+        self.state = prepared.state;
+        Ok(batch)
+    }
+
     fn prepare_pull_batch(
         &self,
         batch: PullBatch<V>,
     ) -> Result<PreparedTransition<V>, ClientError> {
         let (checkpoint, commits) = validate_pull_batch(&self.state, &batch)?;
+        let mut next = self.state.clone();
         if let Some(current) = &self.state.checkpoint
             && checkpoint.cursor.sequence == current.cursor.sequence
         {
             if checkpoint == *current {
-                return self.prepare(self.state.clone());
+                return self.prepare(next);
             }
-            // An empty pull can issue a fresh durable token at the same cursor.
-            // Retaining the consumed old token would replay that empty response
-            // forever, preventing later commits from reaching this replica.
+            // Same-cursor responses may only rotate a consumed opaque token.
+            // Never reapply commit frames at the already installed frontier.
             if !commits.is_empty() {
                 return Err(ClientError::InvalidPullFraming);
             }
-            let mut next = self.state.clone();
             next.checkpoint = Some(checkpoint);
             return self.prepare(next);
         }
-        let mut next = self.state.clone();
         for commit in commits {
             for record in &commit.records {
                 match &record.state {
@@ -490,6 +531,19 @@ impl<V: Clone + Eq> ClientRuntime<V> {
             if incoming.scope.authorization_revision < current.scope.authorization_revision {
                 return Err(ClientError::ScopeMismatch);
             }
+            if incoming.scope != current.scope {
+                if !self.state.outbox.is_empty()
+                    || self.state.outcomes.iter().any(|outcome| {
+                        matches!(outcome.outcome, DurableOutcome::Conflict { .. })
+                            && outcome.resolution.is_none()
+                    })
+                {
+                    return Err(ClientError::PendingQuarantineRequired);
+                }
+                if !self.state.outcomes.is_empty() {
+                    return Err(ClientError::NeedsNewScopeJournal);
+                }
+            }
         }
         let mut confirmed = BTreeMap::new();
         let mut record_ids = BTreeSet::new();
@@ -503,6 +557,15 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         }
         let mut next = self.state.clone();
         next.confirmed = confirmed;
+        for outcome in &mut next.outcomes {
+            if matches!(outcome.outcome, DurableOutcome::Accepted { .. }) {
+                outcome.covered_by_reset = true;
+            }
+        }
+        next.reset_coverage = Some(ResetCoverage {
+            cursor: snapshot.checkpoint.cursor,
+            scope: snapshot.checkpoint.scope.clone(),
+        });
         next.checkpoint = Some(snapshot.checkpoint);
         self.prepare(next)
     }
@@ -793,6 +856,9 @@ fn validate_pull_batch<'a, V: Eq>(
     }
     validate_scope(state, end)?;
     if let Some(current) = &state.checkpoint {
+        if end.scope != current.scope {
+            return Err(ClientError::ScopeMismatch);
+        }
         if end.cursor.epoch != current.cursor.epoch {
             return Err(ClientError::CursorEpochMismatch);
         }
@@ -892,7 +958,9 @@ pub fn optimistic_projection<V: Clone>(
             .outcomes
             .iter()
             .filter_map(|resolved| match &resolved.outcome {
-                DurableOutcome::Accepted { sequence, .. } if *sequence > applied_sequence => {
+                DurableOutcome::Accepted { sequence, .. }
+                    if !resolved.covered_by_reset && *sequence > applied_sequence =>
+                {
                     Some(&resolved.local_commit)
                 }
                 DurableOutcome::Accepted { .. }

@@ -1,3 +1,4 @@
+import { createNativeReadMocks } from "./helpers/native-read-mocks";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -18,6 +19,7 @@ const initialStatus: NativeSyncStatus = {
 function createNative() {
   let closed = false;
   const native = {
+    ...createNativeReadMocks(),
     applyPullResponse: vi.fn(async () => initialStatus),
     checkpointToken: vi.fn(async () => "checkpoint-1"),
     close: vi.fn(async () => {

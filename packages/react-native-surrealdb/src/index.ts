@@ -8,3 +8,5 @@ export * from "./sync-scheduler";
 export * from "./sync-websocket-hints";
 export * from "./wire";
 export * from "./sync-telemetry";
+
+export * from "./sync-read";

@@ -390,6 +390,8 @@ or proxy must enforce its own pre-allocation frame limit. Authority deployment i
 use this API for production data yet; see the repository
 [sync handoff](../../docs/SYNC_RUNTIME_HANDOFF.md) for the remaining gates.
 
+The private candidate also exposes [atomic local read snapshots and revision batches](../../docs/SYNC_READ_CONTRACT.md), with explicit coverage, bounded replay and scope quarantine. These additive native methods require matching rebuilt binaries; they are not an OTA overlay for older runtimes.
+
 The conflict-resolution facade is covered by native SurrealKV reopen tests, package tests, and the
 opt-in two-replica local-authority Harness flow on iOS and Android. These are local prototype tests,
 not deployed authentication or production-retention evidence.

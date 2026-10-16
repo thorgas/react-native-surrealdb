@@ -1160,6 +1160,9 @@ export enum NativeSyncError_Tags {
   Persistence = "Persistence",
   RecoveryRequired = "RecoveryRequired",
   RequiresEmbeddedDatabase = "RequiresEmbeddedDatabase",
+  ReadOutputTooLarge = "ReadOutputTooLarge",
+  NeedsNewScopeJournal = "NeedsNewScopeJournal",
+  PendingQuarantineRequired = "PendingQuarantineRequired",
   Internal = "Internal",
 }
 export const NativeSyncError = (() => {
@@ -1325,6 +1328,93 @@ export const NativeSyncError = (() => {
     }
   }
 
+  type ReadOutputTooLarge__interface = {
+    tag: NativeSyncError_Tags.ReadOutputTooLarge;
+  };
+  class ReadOutputTooLarge_
+    extends UniffiError
+    implements ReadOutputTooLarge__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeSyncError";
+    readonly tag = NativeSyncError_Tags.ReadOutputTooLarge;
+    constructor() {
+      super("NativeSyncError", "ReadOutputTooLarge");
+    }
+
+    static new(): ReadOutputTooLarge_ {
+      return new ReadOutputTooLarge_();
+    }
+
+    static instanceOf(obj: any): obj is ReadOutputTooLarge_ {
+      return obj.tag === NativeSyncError_Tags.ReadOutputTooLarge;
+    }
+    static hasInner(obj: any): obj is ReadOutputTooLarge_ {
+      return false;
+    }
+  }
+
+  type NeedsNewScopeJournal__interface = {
+    tag: NativeSyncError_Tags.NeedsNewScopeJournal;
+  };
+  class NeedsNewScopeJournal_
+    extends UniffiError
+    implements NeedsNewScopeJournal__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeSyncError";
+    readonly tag = NativeSyncError_Tags.NeedsNewScopeJournal;
+    constructor() {
+      super("NativeSyncError", "NeedsNewScopeJournal");
+    }
+
+    static new(): NeedsNewScopeJournal_ {
+      return new NeedsNewScopeJournal_();
+    }
+
+    static instanceOf(obj: any): obj is NeedsNewScopeJournal_ {
+      return obj.tag === NativeSyncError_Tags.NeedsNewScopeJournal;
+    }
+    static hasInner(obj: any): obj is NeedsNewScopeJournal_ {
+      return false;
+    }
+  }
+
+  type PendingQuarantineRequired__interface = {
+    tag: NativeSyncError_Tags.PendingQuarantineRequired;
+  };
+  class PendingQuarantineRequired_
+    extends UniffiError
+    implements PendingQuarantineRequired__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeSyncError";
+    readonly tag = NativeSyncError_Tags.PendingQuarantineRequired;
+    constructor() {
+      super("NativeSyncError", "PendingQuarantineRequired");
+    }
+
+    static new(): PendingQuarantineRequired_ {
+      return new PendingQuarantineRequired_();
+    }
+
+    static instanceOf(obj: any): obj is PendingQuarantineRequired_ {
+      return obj.tag === NativeSyncError_Tags.PendingQuarantineRequired;
+    }
+    static hasInner(obj: any): obj is PendingQuarantineRequired_ {
+      return false;
+    }
+  }
+
   type Internal__interface = {
     tag: NativeSyncError_Tags.Internal;
   };
@@ -1363,6 +1453,9 @@ export const NativeSyncError = (() => {
     Persistence: Persistence_,
     RecoveryRequired: RecoveryRequired_,
     RequiresEmbeddedDatabase: RequiresEmbeddedDatabase_,
+    ReadOutputTooLarge: ReadOutputTooLarge_,
+    NeedsNewScopeJournal: NeedsNewScopeJournal_,
+    PendingQuarantineRequired: PendingQuarantineRequired_,
     Internal: Internal_,
   });
 })();
@@ -1374,6 +1467,9 @@ export type NativeSyncError = InstanceType<
     | "Persistence"
     | "RecoveryRequired"
     | "RequiresEmbeddedDatabase"
+    | "ReadOutputTooLarge"
+    | "NeedsNewScopeJournal"
+    | "PendingQuarantineRequired"
     | "Internal"]
 >;
 
@@ -1397,6 +1493,12 @@ const FfiConverterTypeNativeSyncError = (() => {
         case 6:
           return new NativeSyncError.RequiresEmbeddedDatabase();
         case 7:
+          return new NativeSyncError.ReadOutputTooLarge();
+        case 8:
+          return new NativeSyncError.NeedsNewScopeJournal();
+        case 9:
+          return new NativeSyncError.PendingQuarantineRequired();
+        case 10:
           return new NativeSyncError.Internal();
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
@@ -1428,8 +1530,20 @@ const FfiConverterTypeNativeSyncError = (() => {
           ordinalConverter.write(6, into);
           return;
         }
-        case NativeSyncError_Tags.Internal: {
+        case NativeSyncError_Tags.ReadOutputTooLarge: {
           ordinalConverter.write(7, into);
+          return;
+        }
+        case NativeSyncError_Tags.NeedsNewScopeJournal: {
+          ordinalConverter.write(8, into);
+          return;
+        }
+        case NativeSyncError_Tags.PendingQuarantineRequired: {
+          ordinalConverter.write(9, into);
+          return;
+        }
+        case NativeSyncError_Tags.Internal: {
+          ordinalConverter.write(10, into);
           return;
         }
         default:
@@ -1457,8 +1571,17 @@ const FfiConverterTypeNativeSyncError = (() => {
         case NativeSyncError_Tags.RequiresEmbeddedDatabase: {
           return ordinalConverter.allocationSize(6);
         }
-        case NativeSyncError_Tags.Internal: {
+        case NativeSyncError_Tags.ReadOutputTooLarge: {
           return ordinalConverter.allocationSize(7);
+        }
+        case NativeSyncError_Tags.NeedsNewScopeJournal: {
+          return ordinalConverter.allocationSize(8);
+        }
+        case NativeSyncError_Tags.PendingQuarantineRequired: {
+          return ordinalConverter.allocationSize(9);
+        }
+        case NativeSyncError_Tags.Internal: {
+          return ordinalConverter.allocationSize(10);
         }
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
@@ -2041,6 +2164,15 @@ export interface NativeSyncClientLike {
   pendingJson(asyncOpts_?: {
     signal: AbortSignal;
   }) /*throws*/ : Promise<Array<string>>;
+  readCapabilitiesJson(): string;
+  readChangesJson(
+    cursorJson: string,
+    maxBatches: number,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<string>;
+  readSnapshotJson(asyncOpts_?: {
+    signal: AbortSignal;
+  }) /*throws*/ : Promise<string>;
   recordPushResponse(
     responseJson: string,
     asyncOpts_?: { signal: AbortSignal },
@@ -2054,6 +2186,9 @@ export interface NativeSyncClientLike {
     policy: NativeConflictPolicy,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<NativeSyncStatus>;
+  requiresAuthorizedReset(asyncOpts_?: {
+    signal: AbortSignal;
+  }) /*throws*/ : Promise<boolean>;
   resolveConflictKeepLocal(
     conflictedCommitId: string,
     replacementCommitId: string,
@@ -2068,6 +2203,11 @@ export interface NativeSyncClientLike {
     replacementCommitJson: string,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<NativeSyncStatus>;
+  scopeTransitionDecision(
+    scope: string,
+    subscriptionRevision: bigint,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<string>;
   status(asyncOpts_?: {
     signal: AbortSignal;
   }) /*throws*/ : Promise<NativeSyncStatus>;
@@ -2384,6 +2524,116 @@ export class NativeSyncClient
     }
   }
 
+  readCapabilitiesJson(): string {
+    return ((__rb: Uint8Array) => {
+      try {
+        return FfiConverterString.lift(__rb);
+      } finally {
+        nativeModule().rustbuffer_free(__rb);
+      }
+    })(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_read_capabilities_json(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  async readChangesJson(
+    cursorJson: string,
+    maxBatches: number,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_read_changes_json(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              cursorJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterUInt32.lower(
+              maxBatches,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async readSnapshotJson(asyncOpts_?: {
+    signal: AbortSignal;
+  }): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_read_snapshot_json(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
   async recordPushResponse(
     responseJson: string,
     asyncOpts_?: { signal: AbortSignal },
@@ -2473,6 +2723,46 @@ export class NativeSyncClient
         /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
           FfiConverterTypeNativeSyncStatus,
         ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async requiresAuthorizedReset(asyncOpts_?: {
+    signal: AbortSignal;
+  }): Promise<boolean> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_requires_authorized_reset(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_i8,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_i8,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_i8,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_i8,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterBool.lift.bind(FfiConverterBool),
         /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
         /*asyncOpts:*/ asyncOpts_,
         /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
@@ -2624,6 +2914,53 @@ export class NativeSyncClient
         /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
           FfiConverterTypeNativeSyncStatus,
         ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async scopeTransitionDecision(
+    scope: string,
+    subscriptionRevision: bigint,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_scope_transition_decision(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(scope, nativeModule().rustbuffer_alloc),
+            FfiConverterUInt64.lower(
+              subscriptionRevision,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
         /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
         /*asyncOpts:*/ asyncOpts_,
         /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
@@ -4167,6 +4504,30 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_capabilities_json() !==
+    31734
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_capabilities_json",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_changes_json() !==
+    58018
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_changes_json",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_snapshot_json() !==
+    31871
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_snapshot_json",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_record_push_response() !==
     13878
   ) {
@@ -4180,6 +4541,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_record_push_response_with_policy",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_requires_authorized_reset() !==
+    3352
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_requires_authorized_reset",
     );
   }
   if (
@@ -4204,6 +4573,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_merge",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_scope_transition_decision() !==
+    60650
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_scope_transition_decision",
     );
   }
   if (

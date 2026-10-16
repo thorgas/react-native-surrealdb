@@ -1,3 +1,4 @@
+import { createNativeReadMocks } from "./helpers/native-read-mocks";
 import { createServer, type Server } from "node:http";
 
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -87,6 +88,7 @@ describe("ExperimentalSyncHttpAdapter network boundary", () => {
 
   it("pushes and pulls through a real HTTP server", async () => {
     const native = {
+      ...createNativeReadMocks(),
       applyPullResponse: vi.fn(async () => status),
       checkpointToken: vi.fn(async () => "checkpoint-0"),
       close: vi.fn(async () => undefined),

@@ -233,6 +233,7 @@ fn conflict_is_durable_and_retains_local_intent() {
             local_commit: local,
             outcome,
             resolution: None,
+            covered_by_reset: false,
         }]
     );
     assert_eq!(
@@ -263,6 +264,7 @@ fn runtime_with_conflict(
         },
         local_commit: local,
         resolution: None,
+        covered_by_reset: false,
     });
     ClientRuntime::open(state).expect("conflict state is valid")
 }
@@ -708,6 +710,7 @@ fn accepted_id_mapping_rewrites_every_durable_reference() {
             reason: RejectReason::InvalidOperation,
         },
         resolution: None,
+        covered_by_reset: false,
     });
     let mut runtime = ClientRuntime::open(state).expect("state is valid");
     let pending = commit("map", vec![upsert("temp", "new", Some("parent"))]);
@@ -834,4 +837,293 @@ fn delayed_reset_cannot_roll_back_epoch_sequence_or_authorization() {
                 .is_ok()
         );
     }
+}
+
+#[test]
+fn read_snapshot_and_batch_only_change_at_install() {
+    use surrealdb_sync_client::{ReadConfirmedAbsenceV1, ReadCoverageV1, ReadReadinessV1};
+    let mut runtime = ClientRuntime::open(empty_state()).unwrap();
+    let before = runtime.read_snapshot();
+    assert_eq!(before.metadata.coverage, ReadCoverageV1::Unknown);
+    assert_eq!(
+        before.row(&record_id("missing")).confirmed_absence,
+        ReadConfirmedAbsenceV1::Unknown
+    );
+    let prepared = runtime
+        .prepare_enqueue(commit(
+            "two",
+            vec![upsert("a", "A", None), upsert("b", "B", None)],
+        ))
+        .unwrap();
+    let stale = prepared.clone();
+    assert_eq!(runtime.read_snapshot(), before);
+    // A failed persistence attempt simply drops the prepared value.
+    drop(
+        runtime
+            .prepare_enqueue(commit("discard", vec![upsert("c", "C", None)]))
+            .unwrap(),
+    );
+    assert_eq!(runtime.read_snapshot(), before);
+    let batch = runtime.install_with_read_batch(prepared).unwrap().unwrap();
+    assert_eq!(batch.before_revision, before.metadata.revision);
+    assert_eq!(batch.changes.len(), 2);
+    assert_eq!(batch.revision, runtime.read_snapshot().metadata.revision);
+    let installed = runtime.read_snapshot();
+    assert!(matches!(
+        runtime.install_with_read_batch(stale),
+        Err(ClientError::StaleTransition { .. })
+    ));
+    assert_eq!(runtime.read_snapshot(), installed);
+    assert_eq!(
+        installed.metadata.readiness,
+        ReadReadinessV1::LocalAvailableAwaitingCoverage
+    );
+}
+
+#[test]
+fn authorized_reset_coverage_survives_reopen_but_checkpoint_alone_is_unknown() {
+    use surrealdb_sync_client::{ReadConfirmedAbsenceV1, ReadCoverageV1, ReadReadinessV1};
+    let mut runtime = ClientRuntime::open(empty_state()).unwrap();
+    let prepared = runtime
+        .prepare_pull_response(pull_batch(checkpoint("opaque-secret", 1, 0), vec![]))
+        .unwrap();
+    install(&mut runtime, prepared);
+    assert_eq!(
+        runtime.read_snapshot().metadata.coverage,
+        ReadCoverageV1::Unknown
+    );
+    let prepared = runtime
+        .prepare_pull_response(PullResponse::Reset(ResetSnapshot {
+            reason: ResetReason::EpochChanged,
+            checkpoint: checkpoint("reset-secret", 2, 0),
+            records: vec![],
+        }))
+        .unwrap();
+    let persisted = install(&mut runtime, prepared);
+    let reopened = ClientRuntime::open(persisted).unwrap();
+    let snapshot = reopened.read_snapshot();
+    assert_eq!(
+        snapshot.metadata.readiness,
+        ReadReadinessV1::AuthorizedScopeAsOf
+    );
+    assert_eq!(
+        snapshot.row(&record_id("missing")).confirmed_absence,
+        ReadConfirmedAbsenceV1::AbsentWithinAuthorizedScope
+    );
+    assert!(!format!("{:?}", snapshot.metadata).contains("secret"));
+    for invalid in 0..4 {
+        let mut state = reopened.state().clone();
+        match invalid {
+            0 => state.checkpoint = None,
+            1 => state.reset_coverage.as_mut().unwrap().cursor.epoch = 1,
+            2 => state.reset_coverage.as_mut().unwrap().cursor.sequence = 1,
+            3 => {
+                state
+                    .reset_coverage
+                    .as_mut()
+                    .unwrap()
+                    .scope
+                    .authorization_revision = 99
+            }
+            _ => unreachable!(),
+        }
+        assert!(matches!(
+            ClientRuntime::open(state),
+            Err(ClientError::InvalidReadCoverage)
+        ));
+    }
+}
+
+#[test]
+fn same_cursor_fresh_token_is_metadata_only_but_cannot_reapply_frames() {
+    let mut runtime = ClientRuntime::open(empty_state()).unwrap();
+    let prepared = runtime
+        .prepare_pull_response(pull_batch(
+            checkpoint("first", 1, 1),
+            vec![PullCommit {
+                sequence: 1,
+                source: None,
+                records: vec![],
+            }],
+        ))
+        .unwrap();
+    install(&mut runtime, prepared);
+    let prepared = runtime
+        .prepare_pull_response(pull_batch(checkpoint("fresh", 1, 1), vec![]))
+        .unwrap();
+    let batch = runtime.install_with_read_batch(prepared).unwrap().unwrap();
+    assert!(batch.changes.is_empty());
+    let prepared = runtime
+        .prepare_pull_response(pull_batch(checkpoint("fresh", 1, 1), vec![]))
+        .unwrap();
+    assert!(runtime.install_with_read_batch(prepared).unwrap().is_none());
+    let response = pull_batch(
+        checkpoint("another", 1, 1),
+        vec![PullCommit {
+            sequence: 1,
+            source: None,
+            records: vec![],
+        }],
+    );
+    assert!(matches!(
+        runtime.prepare_pull_response(response),
+        Err(ClientError::InvalidPullFraming)
+    ));
+}
+
+#[test]
+fn auth_reset_with_pending_or_outcome_history_preserves_old_journal() {
+    use surrealdb_sync_client::ScopeTransitionDecisionV1;
+    let mut runtime = ClientRuntime::open(empty_state()).unwrap();
+    let prepared = runtime
+        .prepare_pull_response(pull_batch(checkpoint("old", 1, 0), vec![]))
+        .unwrap();
+    install(&mut runtime, prepared);
+    let local = commit("local", vec![upsert("private", "old", None)]);
+    let prepared = runtime.prepare_enqueue(local.clone()).unwrap();
+    install(&mut runtime, prepared);
+    let mut incoming = checkpoint("new-auth", 1, 1);
+    incoming.scope.authorization_revision = 2;
+    let reset = PullResponse::Reset(ResetSnapshot {
+        reason: ResetReason::EpochChanged,
+        checkpoint: incoming,
+        records: vec![],
+    });
+    let before = runtime.state().clone();
+    assert!(matches!(
+        runtime.prepare_pull_response(reset.clone()),
+        Err(ClientError::PendingQuarantineRequired)
+    ));
+    assert_eq!(runtime.state(), &before);
+    assert_eq!(
+        runtime.scope_transition_decision(&ScopeIdentity("other".into()), 1),
+        ScopeTransitionDecisionV1::PendingQuarantineRequired
+    );
+    let prepared = runtime
+        .prepare_push_response(push_response(DurableOutcome::Accepted {
+            identity: local.identity,
+            sequence: 1,
+            id_mappings: vec![],
+        }))
+        .unwrap();
+    install(&mut runtime, prepared);
+    let before = runtime.state().clone();
+    assert!(matches!(
+        runtime.prepare_pull_response(reset),
+        Err(ClientError::NeedsNewScopeJournal)
+    ));
+    assert_eq!(runtime.state(), &before);
+    assert_eq!(
+        runtime.scope_transition_decision(&ScopeIdentity("other".into()), 1),
+        ScopeTransitionDecisionV1::NeedsNewScopeJournal
+    );
+}
+
+#[test]
+fn late_ack_after_reset_has_unknown_epoch_and_never_becomes_confirmed() {
+    use surrealdb_sync_client::{ReadAcceptedStatusV1, ReadConfirmedAbsenceV1};
+    let mut runtime = ClientRuntime::open(empty_state()).unwrap();
+    let local = commit("late", vec![upsert("a", "intent", None)]);
+    let prepared = runtime.prepare_enqueue(local.clone()).unwrap();
+    install(&mut runtime, prepared);
+    let prepared = runtime
+        .prepare_pull_response(PullResponse::Reset(ResetSnapshot {
+            reason: ResetReason::EpochChanged,
+            checkpoint: checkpoint("new", 2, 0),
+            records: vec![],
+        }))
+        .unwrap();
+    install(&mut runtime, prepared);
+    let prepared = runtime
+        .prepare_push_response(push_response(DurableOutcome::Accepted {
+            identity: local.identity,
+            sequence: 9,
+            id_mappings: vec![],
+        }))
+        .unwrap();
+    install(&mut runtime, prepared);
+    let row = runtime.read_snapshot().row(&record_id("a"));
+    assert_eq!(row.confirmed, RecordState::Absent);
+    assert_eq!(
+        row.confirmed_absence,
+        ReadConfirmedAbsenceV1::AbsentWithinAuthorizedScope
+    );
+    assert!(row.optimistic.is_some());
+    assert_eq!(
+        row.accepted[0].status,
+        ReadAcceptedStatusV1::AwaitingPullEpochUnknown
+    );
+}
+
+#[test]
+fn covered_reset_marker_is_accepted_only_and_keeps_original_receipt() {
+    use surrealdb_sync_client::ReadAcceptedStatusV1;
+    let mut runtime = ClientRuntime::open(empty_state()).unwrap();
+    let local = commit("accepted", vec![upsert("a", "old", None)]);
+    let prepared = runtime.prepare_enqueue(local.clone()).unwrap();
+    install(&mut runtime, prepared);
+    let receipt = DurableOutcome::Accepted {
+        identity: local.identity.clone(),
+        sequence: u64::MAX,
+        id_mappings: vec![],
+    };
+    let prepared = runtime
+        .prepare_push_response(push_response(receipt.clone()))
+        .unwrap();
+    install(&mut runtime, prepared);
+    let prepared = runtime
+        .prepare_pull_response(PullResponse::Reset(ResetSnapshot {
+            reason: ResetReason::EpochChanged,
+            checkpoint: checkpoint("new", 2, 0),
+            records: vec![],
+        }))
+        .unwrap();
+    let durable = install(&mut runtime, prepared);
+    assert_eq!(durable.outcomes[0].outcome, receipt);
+    assert_eq!(durable.outcomes[0].local_commit, local);
+    let reopened = ClientRuntime::open(durable.clone()).unwrap();
+    let row = reopened.read_snapshot().row(&record_id("a"));
+    assert!(row.optimistic.is_none());
+    assert_eq!(row.accepted[0].sequence, u64::MAX);
+    assert_eq!(
+        row.accepted[0].status,
+        ReadAcceptedStatusV1::CoveredByAuthorizedReset
+    );
+    let mut invalid = durable;
+    invalid.outcomes[0].outcome = DurableOutcome::Rejected {
+        identity: local.identity,
+        reason: RejectReason::Unauthorized,
+    };
+    assert!(matches!(
+        ClientRuntime::open(invalid),
+        Err(ClientError::InvalidReadCoverage)
+    ));
+}
+
+#[test]
+fn outcome_only_conflict_is_visible_even_without_projection_row() {
+    let local = commit(
+        "delete-conflict",
+        vec![Operation::Delete {
+            record_id: record_id("a"),
+            base_version: 1,
+        }],
+    );
+    let mut runtime = runtime_with_conflict(local.clone(), RecordState::Absent);
+    let row = runtime.read_snapshot().row(&record_id("a"));
+    assert!(row.optimistic.is_none());
+    assert_eq!(row.conflicts.len(), 1);
+    assert!(row.conflicts[0].resolution.is_none());
+    let prepared = runtime
+        .prepare_resolve_conflict(
+            &local.identity.client_commit_id,
+            ConflictResolutionRequest::KeepServer,
+        )
+        .unwrap();
+    let batch = runtime.install_with_read_batch(prepared).unwrap().unwrap();
+    assert_eq!(batch.changes.len(), 1);
+    assert_eq!(
+        runtime.read_snapshot().row(&record_id("a")).conflicts[0].resolution,
+        Some(ConflictResolution::KeepServer)
+    );
 }

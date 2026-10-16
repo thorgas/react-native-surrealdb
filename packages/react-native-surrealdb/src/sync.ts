@@ -11,6 +11,44 @@ import {
   type SurrealScalar,
 } from "./wire";
 
+import {
+  decodeSyncReadBootstrap,
+  decodeSyncReadChanges,
+  decodeSyncReadCapabilities,
+} from "./sync-read-codec";
+import {
+  ExperimentalSyncReadStore,
+  syncReadScopeError,
+  readSyncRecord,
+  type SyncReadBootstrap,
+  type SyncReadChanges,
+  type SyncReadCursor,
+  type SyncReadCapabilities,
+  type SyncReadRecord,
+  type SyncScopeTransitionDecision,
+} from "./sync-read";
+
+interface NativeReadPort {
+  readCapabilitiesJson(): string;
+  readSnapshotJson(options?: CallOptions): Promise<string>;
+  readChangesJson(
+    cursorJson: string,
+    maxBatches: number,
+    options?: CallOptions,
+  ): Promise<string>;
+  requiresAuthorizedReset(options?: CallOptions): Promise<boolean>;
+  scopeTransitionDecision(
+    scope: string,
+    subscriptionRevision: bigint,
+    options?: CallOptions,
+  ): Promise<string>;
+}
+function missingReadAbi(): never {
+  throw new Error(
+    "Sync read protocol v1 requires matching rebuilt native binaries; update the native build and its runtime fingerprint",
+  );
+}
+
 /** Lossless values accepted by the experimental protocol boundary. */
 export type SyncJsonValue =
   | SurrealScalar
@@ -49,10 +87,112 @@ const nativeConflictPolicy = (
  * prototype and is not release-ready.
  */
 export class ExperimentalSyncClient {
-  readonly #native: NativeSyncClientLike;
+  readonly #native: NativeSyncClientLike & Partial<NativeReadPort>;
+  #readCapabilities?: SyncReadCapabilities;
+  readonly #readStores = new Set<ExperimentalSyncReadStore>();
 
-  constructor(native: NativeSyncClientLike) {
+  constructor(native: NativeSyncClientLike & Partial<NativeReadPort>) {
     this.#native = native;
+  }
+
+  #readFailure(error: unknown): unknown {
+    const blocked = syncReadScopeError(error);
+    if (blocked)
+      for (const store of [...this.#readStores]) store.invalidateScope(blocked);
+    return blocked ?? error;
+  }
+
+  /** Additive read capability; generated bindings still require a matching binary. */
+  readCapabilities(): SyncReadCapabilities {
+    if (!this.#readCapabilities) {
+      const method = this.#native.readCapabilitiesJson;
+      if (!method) return missingReadAbi();
+      this.#readCapabilities = decodeSyncReadCapabilities(
+        method.call(this.#native),
+      );
+    }
+    return this.#readCapabilities;
+  }
+
+  async readSnapshot(options?: CallOptions): Promise<SyncReadBootstrap> {
+    this.readCapabilities();
+    const method = this.#native.readSnapshotJson;
+    if (!method) return missingReadAbi();
+    return decodeSyncReadBootstrap(
+      await method.call(this.#native, options).catch((error) => {
+        throw this.#readFailure(error);
+      }),
+    );
+  }
+
+  async readChanges(
+    cursor: SyncReadCursor,
+    maxBatches = 32,
+    options?: CallOptions,
+  ): Promise<SyncReadChanges> {
+    this.readCapabilities();
+    if (!Number.isInteger(maxBatches) || maxBatches < 1 || maxBatches > 128)
+      throw new RangeError("Sync read batch limit must be between 1 and 128");
+    const method = this.#native.readChangesJson;
+    if (!method) return missingReadAbi();
+    return decodeSyncReadChanges(
+      await method
+        .call(this.#native, JSON.stringify(cursor), maxBatches, options)
+        .catch((error) => {
+          throw this.#readFailure(error);
+        }),
+    );
+  }
+
+  async readRecord(
+    recordId: string,
+    options?: CallOptions,
+  ): Promise<SyncReadRecord> {
+    const { snapshot } = await this.readSnapshot(options);
+    return readSyncRecord(snapshot, recordId);
+  }
+
+  /** True for legacy caches until an authorized reset establishes coverage. */
+  requiresAuthorizedReset(options?: CallOptions): Promise<boolean> {
+    this.readCapabilities();
+    const method = this.#native.requiresAuthorizedReset;
+    if (!method) return missingReadAbi();
+    return method.call(this.#native, options);
+  }
+
+  async scopeTransitionDecision(
+    scope: string,
+    subscriptionRevision: bigint,
+    options?: CallOptions,
+  ): Promise<SyncScopeTransitionDecision> {
+    this.readCapabilities();
+    const method = this.#native.scopeTransitionDecision;
+    if (!method) return missingReadAbi();
+    const result = await method.call(
+      this.#native,
+      scope,
+      subscriptionRevision,
+      options,
+    );
+    if (
+      result !== "unchanged" &&
+      result !== "needs_new_scope_journal" &&
+      result !== "pending_quarantine_required"
+    )
+      throw new Error("Unsupported native scope transition decision");
+    return result;
+  }
+
+  createReadStore(options?: {
+    pollMs?: number;
+    maxBatches?: number;
+  }): ExperimentalSyncReadStore {
+    this.readCapabilities();
+    const store = new ExperimentalSyncReadStore(this, options, () => {
+      this.#readStores.delete(store);
+    });
+    this.#readStores.add(store);
+    return store;
   }
 
   enqueue(
@@ -89,10 +229,11 @@ export class ExperimentalSyncClient {
     response: SyncJsonValue,
     options?: CallOptions,
   ): Promise<ExperimentalSyncStatus> {
-    return this.#native.applyPullResponse(
-      encodeProtocolJson(response),
-      options,
-    );
+    return this.#native
+      .applyPullResponse(encodeProtocolJson(response), options)
+      .catch((error) => {
+        throw this.#readFailure(error);
+      });
   }
 
   /** Accept the current authority value and durably close a conflict. */
@@ -166,7 +307,11 @@ export class ExperimentalSyncClient {
     responseJson: string,
     options?: CallOptions,
   ): Promise<ExperimentalSyncStatus> {
-    return this.#native.applyPullResponse(responseJson, options);
+    return this.#native
+      .applyPullResponse(responseJson, options)
+      .catch((error) => {
+        throw this.#readFailure(error);
+      });
   }
 
   async conflicts<T extends SyncJsonValue = SyncJsonValue>(
@@ -190,6 +335,7 @@ export class ExperimentalSyncClient {
   }
 
   close(options?: CallOptions): Promise<void> {
+    for (const store of [...this.#readStores]) store.close();
     return this.#native.close(options);
   }
 

@@ -1,3 +1,4 @@
+import { createNativeReadMocks } from "./helpers/native-read-mocks";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
@@ -34,6 +35,17 @@ const commit = {
 
 function createSync() {
   const native = {
+    ...createNativeReadMocks(),
+    readCapabilitiesJson: vi.fn(() =>
+      JSON.stringify({
+        protocolVersion: 1,
+        maxJournalBatches: 128,
+        maxJournalBytes: 4194304,
+        maxOutputBytes: 16777216,
+        requiresMatchingNativeAbi: true,
+        predicateSubscriptions: false,
+      }),
+    ),
     applyPullResponse: vi.fn(async () => status),
     checkpointToken: vi.fn(async () => "checkpoint-0"),
     close: vi.fn(async () => undefined),
@@ -118,6 +130,25 @@ function createAdapter(
 }
 
 describe("ExperimentalSyncHttpAdapter", () => {
+  it("bootstraps legacy read coverage without deleting or dispatching pending intent", async () => {
+    const fetch = vi
+      .fn<typeof globalThis.fetch>()
+      .mockResolvedValue(response(pullResponse()));
+    const { adapter, native } = createAdapter(fetch);
+    await adapter.bootstrapReadCoverage();
+    expect(native.checkpointToken).not.toHaveBeenCalled();
+    expect(native.pendingJson).not.toHaveBeenCalled();
+    expect(native.enqueue).not.toHaveBeenCalled();
+    expect(native.close).not.toHaveBeenCalled();
+    const body = JSON.parse(String(fetch.mock.calls[0]?.[1]?.body));
+    expect(body).toMatchObject({
+      checkpoint: null,
+      requestedScope: "all",
+      subscriptionRevision: 7,
+    });
+    expect(native.applyPullResponse).toHaveBeenCalledOnce();
+  });
+
   it("keeps manual as the default and opts in only through explicit configuration", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

@@ -37,7 +37,21 @@ pub const MAX_SYNC_STATE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_COMPONENT_ITEMS: usize = 16_384;
 const MAX_AGGREGATE_STATE_BYTES: usize = 64 * 1024 * 1024;
 
+#[derive(Debug, Clone, SurrealValue)]
+pub(crate) struct ScopeBarrier {
+    pub reason: String,
+    pub required_scope: String,
+    pub required_subscription_revision: String,
+    pub required_authorization_revision: String,
+}
+
 const DEFINE_SCHEMA: &str = r#"
+DEFINE TABLE IF NOT EXISTS _sync_client_scope_barrier SCHEMAFULL PERMISSIONS NONE;
+DEFINE FIELD IF NOT EXISTS reason ON _sync_client_scope_barrier TYPE string ASSERT $value IN ["pending_quarantine_required", "needs_new_scope_journal"];
+DEFINE FIELD IF NOT EXISTS required_scope ON _sync_client_scope_barrier TYPE string;
+DEFINE FIELD IF NOT EXISTS required_subscription_revision ON _sync_client_scope_barrier TYPE string;
+DEFINE FIELD IF NOT EXISTS required_authorization_revision ON _sync_client_scope_barrier TYPE string;
+
 DEFINE TABLE IF NOT EXISTS _sync_client_state SCHEMAFULL PERMISSIONS NONE;
 DEFINE FIELD OVERWRITE format_version ON _sync_client_state TYPE int
     ASSERT $value = 1 OR $value = 2;
@@ -194,6 +208,8 @@ struct StateMeta {
     subscription_revision: String,
     revision: String,
     checkpoint: Option<Checkpoint>,
+    #[serde(default)]
+    reset_coverage: Option<surrealdb_sync_client::ResetCoverage>,
     confirmed_keys: Vec<ProtocolRecordId>,
     outbox_keys: Vec<String>,
     outcome_keys: Vec<String>,
@@ -257,6 +273,52 @@ impl<'a> SyncStateStore<'a> {
             .map_err(SyncStateError::Database)?
             .check()
             .map_err(SyncStateError::Database)?;
+        Ok(())
+    }
+
+    pub(crate) async fn load_scope_barrier(
+        &self,
+        key: SyncStateKey<'_>,
+    ) -> Result<Option<ScopeBarrier>, SyncStateError> {
+        validate_key(key)?;
+        let client = self.database.client().await.map_err(SyncStateError::Core)?;
+        let barrier: Option<ScopeBarrier> = client
+            .select(scope_barrier_record_id(key))
+            .await
+            .map_err(SyncStateError::Database)?;
+        if let Some(value) = &barrier
+            && (!matches!(
+                value.reason.as_str(),
+                "pending_quarantine_required" | "needs_new_scope_journal"
+            ) || value.required_scope.len() > MAX_IDENTITY_BYTES
+                || [
+                    &value.required_subscription_revision,
+                    &value.required_authorization_revision,
+                ]
+                .iter()
+                .any(|s| match s.parse::<u64>() {
+                    Ok(value) => value.to_string() != **s,
+                    Err(_) => true,
+                }))
+        {
+            return Err(SyncStateError::CorruptState);
+        }
+        Ok(barrier)
+    }
+
+    // Independent of ordinary journal saves: never removed or weakened by them.
+    pub(crate) async fn save_scope_barrier(
+        &self,
+        key: SyncStateKey<'_>,
+        barrier: ScopeBarrier,
+    ) -> Result<(), SyncStateError> {
+        validate_key(key)?;
+        let client = self.database.client().await.map_err(SyncStateError::Core)?;
+        client.query("UPSERT $id SET reason = IF reason = 'pending_quarantine_required' OR $reason = 'pending_quarantine_required' THEN 'pending_quarantine_required' ELSE 'needs_new_scope_journal' END, required_scope = $scope, required_subscription_revision = $subscription, required_authorization_revision = $authorization;")
+            .bind(("id", scope_barrier_record_id(key)))
+            .bind(("reason", barrier.reason)).bind(("scope", barrier.required_scope))
+            .bind(("subscription", barrier.required_subscription_revision)).bind(("authorization", barrier.required_authorization_revision))
+            .await.map_err(SyncStateError::Database)?.check().map_err(SyncStateError::Database)?;
         Ok(())
     }
 
@@ -468,6 +530,7 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
         subscription_revision: state.subscription_revision.to_string(),
         revision: state.revision.to_string(),
         checkpoint: state.checkpoint.clone(),
+        reset_coverage: state.reset_coverage.clone(),
         confirmed_keys: state.confirmed.keys().cloned().collect(),
         outbox_keys: state
             .outbox
@@ -749,6 +812,7 @@ async fn load_v2(
         outbox,
         outcomes,
         checkpoint: meta.checkpoint,
+        reset_coverage: meta.reset_coverage,
         id_map,
     };
     state.validate().map_err(SyncStateError::InvalidState)?;
@@ -1055,6 +1119,13 @@ fn native_record_id(record_id: &ProtocolRecordId) -> Result<NativeRecordId, Sync
     Ok(record_id)
 }
 
+fn scope_barrier_record_id(key: SyncStateKey<'_>) -> NativeRecordId {
+    NativeRecordId::new(
+        "_sync_client_scope_barrier",
+        Array::from(vec![key.partition_id.0.clone(), key.client_id.0.clone()]),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -1215,6 +1286,48 @@ mod tests {
             .unwrap();
         transaction.commit().await.unwrap();
         assert_eq!(store.load(key).await.unwrap(), Some(queued));
+    }
+
+    #[tokio::test]
+    async fn scope_barrier_survives_disk_reopen_and_ordinary_journal_saves() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let database = surrealkv_database(directory.path()).await;
+        let state = empty_state("partition", "client");
+        let key = SyncStateKey::new(&state.partition_id, &state.client_id);
+        let store = SyncStateStore::new(&database);
+        store.define_schema().await.unwrap();
+        store.save_atomic(None, &state).await.unwrap();
+        let barrier = ScopeBarrier {
+            reason: "pending_quarantine_required".into(),
+            required_scope: "all".into(),
+            required_subscription_revision: "1".into(),
+            required_authorization_revision: "2".into(),
+        };
+        store
+            .save_scope_barrier(key, barrier.clone())
+            .await
+            .unwrap();
+        let mut weaker = barrier.clone();
+        weaker.reason = "needs_new_scope_journal".into();
+        store.save_scope_barrier(key, weaker).await.unwrap();
+        let queued = enqueue(
+            state.clone(),
+            "barrier-preserved",
+            "person:local",
+            json!("Ada"),
+        );
+        store.save_atomic(Some(0), &queued).await.unwrap();
+        database.close().await.unwrap();
+        drop(database);
+        let reopened = surrealkv_database(directory.path()).await;
+        let store = SyncStateStore::new(&reopened);
+        store.define_schema().await.unwrap();
+        assert_eq!(
+            store.load_scope_barrier(key).await.unwrap().unwrap().reason,
+            barrier.reason
+        );
+        assert_eq!(store.load(key).await.unwrap().unwrap(), queued);
+        reopened.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -1502,6 +1615,7 @@ mod tests {
                 reason: RejectReason::InvalidOperation,
             },
             resolution: None,
+            covered_by_reset: false,
         });
         state.id_map.insert(
             RecordId("recipe:temporary-unused".into()),
@@ -1589,6 +1703,78 @@ mod tests {
         let reopened = surrealkv_database(directory.path()).await;
         let reopened_store = SyncStateStore::new(&reopened);
         assert_eq!(reopened_store.load(key).await.unwrap(), Some(state));
+    }
+
+    #[tokio::test]
+    async fn legacy_blob_and_normalized_metadata_default_to_unknown_then_persist_reset_coverage() {
+        let db = memory_database().await;
+        let store = SyncStateStore::new(&db);
+        store.define_schema().await.unwrap();
+        let mut state = enqueue(
+            empty_state("partition", "coverage-client"),
+            "intent",
+            "recipe:local",
+            json!({"name":"local"}),
+        );
+        state.checkpoint = Some(Checkpoint {
+            token: OpaqueCheckpoint("private-token".into()),
+            cursor: surrealdb_sync_protocol::Cursor {
+                epoch: 1,
+                sequence: 0,
+            },
+            scope: ScopeSnapshot {
+                identity: ScopeIdentity("all".into()),
+                authorization_revision: 1,
+                subscription_revision: 1,
+            },
+        });
+        let key = SyncStateKey::new(&state.partition_id, &state.client_id);
+        let mut legacy = serde_json::to_value(&state).unwrap();
+        legacy.as_object_mut().unwrap().remove("reset_coverage");
+        let client = db.client().await.unwrap();
+        let _: Option<Value> = client
+            .upsert(record_id(key))
+            .content(StoredRecord {
+                format_version: LEGACY_FORMAT_VERSION,
+                partition_id: state.partition_id.0.clone(),
+                client_id: state.client_id.0.clone(),
+                revision: state.revision.to_string(),
+                payload: serde_json::to_vec(&legacy).unwrap().into(),
+            })
+            .await
+            .unwrap();
+        let loaded = store.load(key).await.unwrap().unwrap();
+        assert_eq!(loaded, state);
+        assert!(loaded.reset_coverage.is_none());
+        assert_eq!(loaded.outbox.len(), 1);
+        let mut row: StoredMetaRow = client.select(meta_record_id(key)).await.unwrap().unwrap();
+        let mut payload: JsonValue = decode_tagged(&row.payload).unwrap();
+        payload.as_object_mut().unwrap().remove("reset_coverage");
+        row.payload = encode_tagged(&payload).unwrap().into();
+        let _: Option<Value> = client
+            .upsert(meta_record_id(key))
+            .content(row)
+            .await
+            .unwrap();
+        assert!(
+            store
+                .load(key)
+                .await
+                .unwrap()
+                .unwrap()
+                .reset_coverage
+                .is_none()
+        );
+        state.revision += 1;
+        state.reset_coverage = Some(surrealdb_sync_client::ResetCoverage {
+            cursor: state.checkpoint.as_ref().unwrap().cursor,
+            scope: state.checkpoint.as_ref().unwrap().scope.clone(),
+        });
+        store
+            .save_atomic(Some(state.revision - 1), &state)
+            .await
+            .unwrap();
+        assert_eq!(store.load(key).await.unwrap(), Some(state));
     }
 
     #[tokio::test]
