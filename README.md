@@ -401,7 +401,10 @@ pnpm typecheck:react-native-matrix
 
 `e2e:ios` uses `iPhone 17 Pro` by default; set `SURREALDB_IOS_SIMULATOR` to an
 available simulator name. `e2e:android` uses the connected emulator selected by
-the React Native CLI; the harness then requires the configured `Pixel_9` AVD.
+the React Native CLI. The harness defaults to `Pixel_9`; set
+`SURREALDB_ANDROID_EMULATOR_NAME` to reuse another existing AVD, for example
+`HausSyncStaging20261012`. This selects the harness device only; use the same
+emulator for the React Native CLI deployment.
 The local proxy test in each static host imports the single shared suite from
 `apps/harness-shared`, which keeps the tests bundleable without duplicating
 their behavior.

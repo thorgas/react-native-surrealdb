@@ -12,12 +12,15 @@ export function createHarnessConfig({
     runners: [
       androidPlatform({
         name: "android",
-        device: androidEmulator("Pixel_9", {
-          apiLevel: 36,
-          profile: "pixel_9",
-          diskSize: "8G",
-          heapSize: "2G",
-        }),
+        device: androidEmulator(
+          process.env.SURREALDB_ANDROID_EMULATOR_NAME ?? "Pixel_9",
+          {
+            apiLevel: 36,
+            profile: "pixel_9",
+            diskSize: "8G",
+            heapSize: "2G",
+          },
+        ),
         bundleId: androidBundleId,
         activityName: "com.microsoft.reacttestapp.MainActivity",
       }),
@@ -25,7 +28,7 @@ export function createHarnessConfig({
         name: "ios",
         device: appleSimulator(
           process.env.SURREALDB_IOS_SIMULATOR_NAME ?? "iPhone 17 Pro",
-          "26.1"
+          "26.1",
         ),
         bundleId: iosBundleId,
       }),
