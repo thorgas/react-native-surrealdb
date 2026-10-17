@@ -92,6 +92,11 @@ pub enum NativeSyncError {
     #[error("scope change requires explicit pending intent quarantine")]
     PendingQuarantineRequired,
 
+    #[error("subscription generation is durably cancelled")]
+    SubscriptionCancelled,
+    #[error("invalid subscription transition")]
+    InvalidSubscription,
+
     #[error("sync client internal conversion failed")]
     Internal,
 }
@@ -161,6 +166,7 @@ pub async fn open_sync_client(
         runtime: AsyncMutex::new(RuntimeState {
             runtime: Some(runtime),
             journal: Default::default(),
+            subscription_journal: Default::default(),
             recovery_required: false,
             scope_blocked,
         }),
@@ -239,7 +245,12 @@ impl NativeSyncClient {
         let mut slot = self.lock_runtime().await;
         let required_scope = match &response {
             PullResponse::Reset(snapshot) => Some(snapshot.checkpoint.scope.clone()),
-            _ => None,
+            PullResponse::Batch(batch) => batch.frames.iter().find_map(|frame| match frame {
+                surrealdb_sync_protocol::PullFrame::End { checkpoint } => {
+                    Some(checkpoint.scope.clone())
+                }
+                _ => None,
+            }),
         };
         let prepared = match slot.client()?.prepare_pull_response(response) {
             Ok(prepared) => prepared,
@@ -385,6 +396,135 @@ impl NativeSyncClient {
         slot.recovery_required = false;
     }
 
+    pub fn subscription_capabilities_json(&self) -> String {
+        crate::sync_subscription::capabilities()
+    }
+
+    pub async fn start_subscription_json(
+        &self,
+        request_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let request = crate::sync_subscription::parse_request(&request_json)?;
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        let prepared = slot
+            .read_client()?
+            .prepare_start_subscription(request)
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    pub async fn cancel_subscription(
+        &self,
+        subscription_id: String,
+        generation: u64,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        // Local cancellation remains available after quarantine and never exposes old rows.
+        let prepared = slot
+            .client()?
+            .prepare_cancel_subscription(&subscription_id, generation)
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    pub async fn apply_subscription_response_json(
+        &self,
+        response_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let response = crate::sync_subscription::parse_response(&response_json)?;
+        let required_scope = response.scope.clone();
+        let subscription_id = response.subscription_id.clone();
+        let generation = response.generation;
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        let prepared = match slot.read_client()?.prepare_subscription_response(response) {
+            Ok(prepared) => prepared,
+            Err(
+                error
+                @ (ClientError::PendingQuarantineRequired | ClientError::NeedsNewScopeJournal),
+            ) => {
+                let block = if error == ClientError::PendingQuarantineRequired {
+                    ScopeBlock::PendingQuarantine
+                } else {
+                    ScopeBlock::NewJournal
+                };
+                slot.scope_blocked = Some(block);
+                let state = slot.client()?.state();
+                let persisted = SyncStateStore::new(&self.database)
+                    .save_scope_barrier(
+                        SyncStateKey::new(&state.partition_id, &state.client_id),
+                        ScopeBarrier {
+                            reason: block.reason().into(),
+                            required_scope: required_scope.identity.0,
+                            required_subscription_revision: required_scope
+                                .subscription_revision
+                                .to_string(),
+                            required_authorization_revision: required_scope
+                                .authorization_revision
+                                .to_string(),
+                        },
+                    )
+                    .await;
+                if persisted.is_err() {
+                    slot.runtime.take();
+                    slot.recovery_required = true;
+                    return Err(NativeSyncError::RecoveryRequired);
+                }
+                let cancel = slot
+                    .client()?
+                    .prepare_cancel_subscription(&subscription_id, generation)
+                    .map_err(map_protocol_error)?;
+                self.persist_and_install(&mut slot, cancel).await?;
+                return Err(map_protocol_error(error));
+            }
+            Err(error) => return Err(map_protocol_error(error)),
+        };
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    pub async fn subscription_request_json(
+        &self,
+        subscription_id: String,
+    ) -> Result<String, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        crate::sync_subscription::output(&crate::sync_subscription::request(
+            slot.read_client()?,
+            &subscription_id,
+        )?)
+    }
+
+    pub async fn subscription_snapshot_json(
+        &self,
+        subscription_id: String,
+    ) -> Result<String, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        crate::sync_subscription::output(
+            &slot
+                .subscription_journal
+                .bootstrap(slot.read_client()?, &subscription_id)?,
+        )
+    }
+
+    pub async fn subscription_changes_json(
+        &self,
+        subscription_id: String,
+        cursor_json: String,
+        max_batches: u32,
+    ) -> Result<String, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        crate::sync_subscription::output(&slot.subscription_journal.changes(
+            slot.read_client()?,
+            &subscription_id,
+            &cursor_json,
+            max_batches,
+        )?)
+    }
+
     pub fn read_capabilities_json(&self) -> String {
         crate::sync_read::capabilities()
     }
@@ -468,6 +608,7 @@ impl ScopeBlock {
 struct RuntimeState {
     runtime: Option<ClientRuntime<JsonValue>>,
     journal: crate::sync_read::ReadJournal,
+    subscription_journal: crate::sync_subscription::SubscriptionJournal,
     recovery_required: bool,
     scope_blocked: Option<ScopeBlock>,
 }
@@ -549,6 +690,7 @@ impl NativeSyncClient {
         prepared: PreparedTransition<JsonValue>,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
         let current = slot.client()?.state();
+        let before_revision = current.revision;
         let next = prepared.state();
         validate_state_codec(next)?;
         let storage_started = Instant::now();
@@ -589,6 +731,16 @@ impl NativeSyncClient {
             .map_err(map_protocol_error)?;
         let status = status(runtime)?;
         slot.journal.record(batch);
+        // Query replay is installed only after the same durable transaction and runtime install.
+        let RuntimeState {
+            runtime,
+            subscription_journal,
+            ..
+        } = slot;
+        subscription_journal.record(
+            runtime.as_ref().ok_or(NativeSyncError::Closed)?,
+            before_revision,
+        );
         Ok(status)
     }
 }
@@ -692,6 +844,8 @@ fn status(runtime: &ClientRuntime<JsonValue>) -> Result<NativeSyncStatus, Native
 
 fn map_protocol_error(error: ClientError) -> NativeSyncError {
     match error {
+        ClientError::SubscriptionCancelled => NativeSyncError::SubscriptionCancelled,
+        ClientError::InvalidSubscription => NativeSyncError::InvalidSubscription,
         ClientError::NeedsNewScopeJournal => NativeSyncError::NeedsNewScopeJournal,
         ClientError::PendingQuarantineRequired => NativeSyncError::PendingQuarantineRequired,
         _ => NativeSyncError::Protocol,
@@ -781,6 +935,224 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn subscription_native_atomic_cancel_reopen_and_scope_barriers() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let db = surrealkv_database(directory.path()).await;
+        let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+        client
+            .enqueue(serde_json::to_string(&commit()).unwrap())
+            .await
+            .unwrap();
+        let v1_before = client
+            .lock_runtime()
+            .await
+            .client()
+            .unwrap()
+            .state()
+            .clone();
+        let initial: JsonValue = serde_json::from_str(
+            &client
+                .subscription_snapshot_json("window".into())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        let v1_cursor: JsonValue =
+            serde_json::from_str(&client.read_snapshot_json().await.unwrap()).unwrap();
+        client
+            .start_subscription_json(crate::sync_subscription::test_request().to_string())
+            .await
+            .unwrap();
+        client
+            .apply_subscription_response_json(crate::sync_subscription::test_response().to_string())
+            .await
+            .unwrap();
+        let v1_events: JsonValue = serde_json::from_str(
+            &client
+                .read_changes_json(v1_cursor["cursor"].to_string(), 128)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(v1_events["batches"].as_array().unwrap().len(), 2);
+        assert!(
+            v1_events["batches"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|batch| batch["changes"].as_array().unwrap().is_empty())
+        );
+        let installed: JsonValue = serde_json::from_str(
+            &client
+                .subscription_snapshot_json("window".into())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(installed["snapshot"]["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            installed["snapshot"]["metadata"]["revision"],
+            installed["cursor"]["revision"]
+        );
+        assert!(installed["snapshot"]["pendingOutsideWindow"].is_null());
+        let changes: JsonValue = serde_json::from_str(
+            &client
+                .subscription_changes_json("window".into(), initial["cursor"].to_string(), 128)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(changes["batches"].as_array().unwrap().len(), 2);
+        let state = client
+            .lock_runtime()
+            .await
+            .client()
+            .unwrap()
+            .state()
+            .clone();
+        assert_eq!(state.confirmed, v1_before.confirmed);
+        assert_eq!(state.outbox, v1_before.outbox);
+        assert_eq!(state.reset_coverage, v1_before.reset_coverage);
+        client.close().await;
+        db.close().await.unwrap();
+        drop(client);
+        drop(db);
+        let db = surrealkv_database(directory.path()).await;
+        let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let recovered: JsonValue = serde_json::from_str(
+            &client
+                .subscription_snapshot_json("window".into())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(recovered["snapshot"], installed["snapshot"]);
+        let delayed = crate::sync_subscription::test_response().to_string();
+        let (response, cancel) = tokio::join!(
+            client.apply_subscription_response_json(delayed.clone()),
+            client.cancel_subscription("window".into(), 1)
+        );
+        assert!(
+            response.is_ok() || matches!(response, Err(NativeSyncError::SubscriptionCancelled))
+        );
+        cancel.unwrap();
+        assert!(matches!(
+            client.apply_subscription_response_json(delayed).await,
+            Err(NativeSyncError::SubscriptionCancelled)
+        ));
+        client.close().await;
+        let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let cancelled: JsonValue = serde_json::from_str(
+            &client
+                .subscription_snapshot_json("window".into())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(cancelled["snapshot"].is_null());
+        assert_eq!(cancelled["cancelledThrough"], "1");
+        if std::env::var_os("SURREALDB_EXPORT_WINDOW_FIXTURES").is_some() {
+            println!(
+                "WINDOW_FIXTURE_JSON={}",
+                json!({"installed":installed,"changes":changes,"cancelled":cancelled})
+            );
+        }
+        let mut next = crate::sync_subscription::test_request();
+        next["command"]["generation"] = json!("2");
+        client
+            .start_subscription_json(next.to_string())
+            .await
+            .unwrap();
+        let mut response = crate::sync_subscription::test_response();
+        response["generation"] = json!("2");
+        client
+            .apply_subscription_response_json(response.to_string())
+            .await
+            .unwrap();
+        let second = open_sync_client(db.clone(), options("all")).await.unwrap();
+        response["scope"]["authorizationRevision"] = json!("2");
+        response["viewRevision"] = json!("2");
+        assert!(matches!(
+            client
+                .apply_subscription_response_json(response.to_string())
+                .await,
+            Err(NativeSyncError::PendingQuarantineRequired)
+        ));
+        assert!(matches!(
+            second.subscription_snapshot_json("window".into()).await,
+            Err(NativeSyncError::PendingQuarantineRequired)
+        ));
+        assert!(matches!(
+            second.subscription_request_json("window".into()).await,
+            Err(NativeSyncError::PendingQuarantineRequired)
+        ));
+        assert_eq!(client.pending_json().await.unwrap().len(), 1);
+        client.close().await;
+        second.close().await;
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn subscription_lost_ack_has_no_emission_and_recovers_durable_cancel() {
+        let db = database().await;
+        let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+        client
+            .start_subscription_json(crate::sync_subscription::test_request().to_string())
+            .await
+            .unwrap();
+        client
+            .apply_subscription_response_json(crate::sync_subscription::test_response().to_string())
+            .await
+            .unwrap();
+        let before: JsonValue = serde_json::from_str(
+            &client
+                .subscription_snapshot_json("window".into())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        client
+            .lose_next_persist_ack
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(matches!(
+            client.cancel_subscription("window".into(), 1).await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        assert!(matches!(
+            client
+                .subscription_changes_json("window".into(), before["cursor"].to_string(), 128)
+                .await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        let durable = SyncStateStore::new(&db)
+            .load(SyncStateKey::new(
+                &PartitionId("partition".into()),
+                &ClientId("client".into()),
+            ))
+            .await
+            .unwrap()
+            .unwrap();
+        let recovered = ClientRuntime::open(durable).unwrap();
+        let slot = client.lock_runtime().await;
+        let replay = slot
+            .subscription_journal
+            .changes(&recovered, "window", &before["cursor"].to_string(), 128)
+            .unwrap();
+        assert!(replay["batches"].as_array().unwrap().is_empty());
+        drop(slot);
+        let reopened = open_sync_client(db, options("all")).await.unwrap();
+        let frame: JsonValue = serde_json::from_str(
+            &reopened
+                .subscription_snapshot_json("window".into())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(frame["snapshot"].is_null());
+        assert_eq!(frame["cancelledThrough"], "1");
     }
 
     #[tokio::test]

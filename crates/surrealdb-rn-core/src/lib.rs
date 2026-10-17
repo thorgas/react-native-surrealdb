@@ -10,6 +10,7 @@ pub mod sync_diagnostics;
 mod sync_http_codec;
 mod sync_read;
 pub mod sync_state;
+mod sync_subscription;
 mod wire;
 
 use std::sync::atomic::{AtomicBool, Ordering};

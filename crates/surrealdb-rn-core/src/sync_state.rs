@@ -23,11 +23,13 @@ use crate::{SurrealDatabase, SurrealRnError};
 
 const LEGACY_FORMAT_VERSION: i64 = 1;
 const FORMAT_VERSION: i64 = 2;
+const SUBSCRIPTION_FORMAT_VERSION: i64 = 3;
 const STATE_TABLE: &str = "_sync_client_state";
 const META_TABLE: &str = "_sync_client_meta";
 const CONFIRMED_TABLE: &str = "_sync_client_confirmed";
 const OUTBOX_TABLE: &str = "_sync_client_outbox";
 const OUTCOME_TABLE: &str = "_sync_client_outcome";
+const SUBSCRIPTION_RECORD_TABLE: &str = "_sync_client_subscription_record";
 const ID_MAP_TABLE: &str = "_sync_client_id_map";
 const MIGRATED_SENTINEL: &[u8] = b"migrated-to-v2";
 const MAX_IDENTITY_BYTES: usize = 512;
@@ -61,13 +63,13 @@ DEFINE FIELD IF NOT EXISTS revision ON _sync_client_state TYPE string;
 DEFINE FIELD IF NOT EXISTS payload ON _sync_client_state TYPE bytes;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_meta SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD IF NOT EXISTS format_version ON _sync_client_meta TYPE int ASSERT $value = 2;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_meta TYPE int ASSERT $value = 2 OR $value = 3;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_meta TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_meta TYPE string;
 DEFINE FIELD IF NOT EXISTS payload ON _sync_client_meta TYPE bytes;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_confirmed SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD IF NOT EXISTS format_version ON _sync_client_confirmed TYPE int ASSERT $value = 2;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_confirmed TYPE int ASSERT $value = 2 OR $value = 3;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_confirmed TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_confirmed TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_confirmed TYPE string;
@@ -75,7 +77,7 @@ DEFINE FIELD IF NOT EXISTS payload ON _sync_client_confirmed TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_confirmed FIELDS partition_id, client_id;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_outbox SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD IF NOT EXISTS format_version ON _sync_client_outbox TYPE int ASSERT $value = 2;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_outbox TYPE int ASSERT $value = 2 OR $value = 3;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_outbox TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_outbox TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_outbox TYPE string;
@@ -83,7 +85,7 @@ DEFINE FIELD IF NOT EXISTS payload ON _sync_client_outbox TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_outbox FIELDS partition_id, client_id;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_outcome SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD IF NOT EXISTS format_version ON _sync_client_outcome TYPE int ASSERT $value = 2;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_outcome TYPE int ASSERT $value = 2 OR $value = 3;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_outcome TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_outcome TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_outcome TYPE string;
@@ -91,12 +93,19 @@ DEFINE FIELD IF NOT EXISTS payload ON _sync_client_outcome TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_outcome FIELDS partition_id, client_id;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_id_map SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD IF NOT EXISTS format_version ON _sync_client_id_map TYPE int ASSERT $value = 2;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_id_map TYPE int ASSERT $value = 2 OR $value = 3;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_id_map TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_id_map TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_id_map TYPE string;
 DEFINE FIELD IF NOT EXISTS payload ON _sync_client_id_map TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_id_map FIELDS partition_id, client_id;
+DEFINE TABLE IF NOT EXISTS _sync_client_subscription_record SCHEMAFULL PERMISSIONS NONE;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_subscription_record TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_subscription_record TYPE string;
+DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_subscription_record TYPE string;
+DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_subscription_record TYPE string;
+DEFINE FIELD IF NOT EXISTS payload ON _sync_client_subscription_record TYPE bytes;
+DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_subscription_record FIELDS partition_id, client_id;
 "#;
 
 pub type StoredSyncState = DurableClientState<JsonValue>;
@@ -210,6 +219,10 @@ struct StateMeta {
     checkpoint: Option<Checkpoint>,
     #[serde(default)]
     reset_coverage: Option<surrealdb_sync_client::ResetCoverage>,
+    #[serde(default)]
+    subscriptions: Option<surrealdb_sync_client::DurableSubscriptions<JsonValue>>,
+    #[serde(default)]
+    subscription_record_keys: Vec<String>,
     confirmed_keys: Vec<ProtocolRecordId>,
     outbox_keys: Vec<String>,
     outcome_keys: Vec<String>,
@@ -236,6 +249,7 @@ struct ComponentAddress {
 }
 
 struct NormalizedRows {
+    format_version: i64,
     meta: Vec<u8>,
     components: BTreeMap<ComponentAddress, Vec<u8>>,
 }
@@ -503,7 +517,13 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
     let count = state
         .confirmed
         .len()
-        .checked_add(state.outbox.len())
+        .checked_add(
+            state
+                .subscriptions
+                .as_ref()
+                .map_or(0, |value| value.records.len()),
+        )
+        .and_then(|value| value.checked_add(state.outbox.len()))
         .and_then(|value| value.checked_add(state.outcomes.len()))
         .and_then(|value| value.checked_add(state.id_map.len()))
         .ok_or(SyncStateError::StateTooLarge)?;
@@ -523,6 +543,14 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
         validate_component_key(&local_id.0)?;
         validate_component_key(&canonical_id.0)?;
     }
+    let mut subscription_meta = state.subscriptions.clone();
+    let subscription_records = subscription_meta
+        .as_mut()
+        .map(|value| std::mem::take(&mut value.records))
+        .unwrap_or_default();
+    for key in subscription_records.keys() {
+        validate_component_key(key)?;
+    }
     let meta = encode_tagged(&StateMeta {
         partition_id: state.partition_id.0.clone(),
         client_id: state.client_id.0.clone(),
@@ -531,6 +559,8 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
         revision: state.revision.to_string(),
         checkpoint: state.checkpoint.clone(),
         reset_coverage: state.reset_coverage.clone(),
+        subscriptions: subscription_meta,
+        subscription_record_keys: subscription_records.keys().cloned().collect(),
         confirmed_keys: state.confirmed.keys().cloned().collect(),
         outbox_keys: state
             .outbox
@@ -545,6 +575,12 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
         id_map_keys: state.id_map.keys().cloned().collect(),
     })?;
     let mut components = BTreeMap::new();
+    for (key, value) in subscription_records {
+        components.insert(
+            address(SUBSCRIPTION_RECORD_TABLE, key),
+            encode_tagged(&value)?,
+        );
+    }
     for (key, value) in &state.confirmed {
         components.insert(
             address(CONFIRMED_TABLE, key.0.clone()),
@@ -577,7 +613,15 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
     if total > MAX_AGGREGATE_STATE_BYTES {
         return Err(SyncStateError::StateTooLarge);
     }
-    Ok(NormalizedRows { meta, components })
+    Ok(NormalizedRows {
+        format_version: if state.subscriptions.is_some() {
+            SUBSCRIPTION_FORMAT_VERSION
+        } else {
+            FORMAT_VERSION
+        },
+        meta,
+        components,
+    })
 }
 
 fn address(table: &'static str, key: String) -> ComponentAddress {
@@ -612,6 +656,14 @@ async fn replace_v2_in_transaction(
         None if expected_revision.is_some() => return Err(SyncStateError::RevisionConflict),
         _ => {}
     }
+    // A normal save must never erase a feature's durable cancellation/auth barriers.
+    if current
+        .as_ref()
+        .is_some_and(|current| current.subscriptions.is_some())
+        && state.subscriptions.is_none()
+    {
+        return Err(SyncStateError::CorruptState);
+    }
     let current_rows = current.as_ref().map(normalize_state).transpose()?;
     write_row_diff(transaction, key, current_rows.as_ref(), rows).await?;
     Ok(SyncStateWrite::Applied)
@@ -638,7 +690,7 @@ async fn write_row_diff(
             continue;
         }
         let row = StoredComponentRow {
-            format_version: FORMAT_VERSION,
+            format_version: next.format_version,
             partition_id: key.partition_id.0.clone(),
             client_id: key.client_id.0.clone(),
             component_key: item.key.clone(),
@@ -651,7 +703,7 @@ async fn write_row_diff(
             .map_err(SyncStateError::Database)?;
     }
     let row = StoredMetaRow {
-        format_version: FORMAT_VERSION,
+        format_version: next.format_version,
         partition_id: key.partition_id.0.clone(),
         client_id: key.client_id.0.clone(),
         payload: next.meta.clone().into(),
@@ -683,6 +735,9 @@ impl Connection<'_> {
         key: SyncStateKey<'_>,
     ) -> Result<Vec<StoredComponentRow>, SyncStateError> {
         let statement = match table {
+            SUBSCRIPTION_RECORD_TABLE => {
+                "SELECT * FROM _sync_client_subscription_record WHERE partition_id = $partition_id AND client_id = $client_id LIMIT 16385"
+            }
             CONFIRMED_TABLE => {
                 "SELECT * FROM _sync_client_confirmed WHERE partition_id = $partition_id AND client_id = $client_id LIMIT 16385"
             }
@@ -737,10 +792,14 @@ async fn load_v2(
         };
     };
     validate_meta_row(key, &row)?;
-    let meta: StateMeta = decode_tagged(&row.payload)?;
+    let mut meta: StateMeta = decode_tagged(&row.payload)?;
+    if (row.format_version == SUBSCRIPTION_FORMAT_VERSION) != meta.subscriptions.is_some() {
+        return Err(SyncStateError::CorruptState);
+    }
     if meta.partition_id != key.partition_id.0
         || meta.client_id != key.client_id.0
         || !strictly_sorted(&meta.confirmed_keys)
+        || !strictly_sorted(&meta.subscription_record_keys)
         || !strictly_sorted(&meta.id_map_keys)
     {
         return Err(SyncStateError::CorruptState);
@@ -748,7 +807,8 @@ async fn load_v2(
     let count = meta
         .confirmed_keys
         .len()
-        .checked_add(meta.outbox_keys.len())
+        .checked_add(meta.subscription_record_keys.len())
+        .and_then(|value| value.checked_add(meta.outbox_keys.len()))
         .and_then(|value| value.checked_add(meta.outcome_keys.len()))
         .and_then(|value| value.checked_add(meta.id_map_keys.len()))
         .ok_or(SyncStateError::StateTooLarge)?;
@@ -799,6 +859,25 @@ async fn load_v2(
         let bytes = take_component(&mut inventory, &address(ID_MAP_TABLE, local.0.clone()))?;
         id_map.insert(local.clone(), decode_tagged::<ProtocolRecordId>(&bytes)?);
     }
+    if meta
+        .subscriptions
+        .as_ref()
+        .is_some_and(|value| !value.records.is_empty())
+    {
+        return Err(SyncStateError::CorruptState);
+    }
+    for key in &meta.subscription_record_keys {
+        let bytes = take_component(
+            &mut inventory,
+            &address(SUBSCRIPTION_RECORD_TABLE, key.clone()),
+        )?;
+        let records = &mut meta
+            .subscriptions
+            .as_mut()
+            .ok_or(SyncStateError::CorruptState)?
+            .records;
+        records.insert(key.clone(), decode_tagged(&bytes)?);
+    }
     if !inventory.is_empty() {
         return Err(SyncStateError::CorruptState);
     }
@@ -813,6 +892,7 @@ async fn load_v2(
         outcomes,
         checkpoint: meta.checkpoint,
         reset_coverage: meta.reset_coverage,
+        subscriptions: meta.subscriptions,
         id_map,
     };
     state.validate().map_err(SyncStateError::InvalidState)?;
@@ -824,14 +904,22 @@ async fn load_inventory(
     key: SyncStateKey<'_>,
 ) -> Result<BTreeMap<ComponentAddress, Bytes>, SyncStateError> {
     let mut inventory = BTreeMap::new();
-    for table in [CONFIRMED_TABLE, OUTBOX_TABLE, OUTCOME_TABLE, ID_MAP_TABLE] {
+    for table in [
+        CONFIRMED_TABLE,
+        OUTBOX_TABLE,
+        OUTCOME_TABLE,
+        ID_MAP_TABLE,
+        SUBSCRIPTION_RECORD_TABLE,
+    ] {
         let rows = connection.components(table, key).await?;
         if rows.len() > MAX_COMPONENT_ITEMS {
             return Err(SyncStateError::StateTooLarge);
         }
         for row in rows {
-            if row.format_version != FORMAT_VERSION
-                || row.partition_id != key.partition_id.0
+            if !matches!(
+                row.format_version,
+                FORMAT_VERSION | SUBSCRIPTION_FORMAT_VERSION
+            ) || row.partition_id != key.partition_id.0
                 || row.client_id != key.client_id.0
                 || row.payload.len() > MAX_SYNC_STATE_BYTES
             {
@@ -858,10 +946,18 @@ fn take_component(
 }
 
 fn validate_meta_row(key: SyncStateKey<'_>, row: &StoredMetaRow) -> Result<(), SyncStateError> {
+    validate_meta_row_version(key, row, SUBSCRIPTION_FORMAT_VERSION)
+}
+
+fn validate_meta_row_version(
+    key: SyncStateKey<'_>,
+    row: &StoredMetaRow,
+    max_version: i64,
+) -> Result<(), SyncStateError> {
     if row.payload.len() > MAX_SYNC_STATE_BYTES {
         return Err(SyncStateError::StateTooLarge);
     }
-    if row.format_version != FORMAT_VERSION
+    if !(FORMAT_VERSION..=max_version).contains(&row.format_version)
         || row.partition_id != key.partition_id.0
         || row.client_id != key.client_id.0
     {
@@ -1286,6 +1382,105 @@ mod tests {
             .unwrap();
         transaction.commit().await.unwrap();
         assert_eq!(store.load(key).await.unwrap(), Some(queued));
+    }
+
+    #[tokio::test]
+    async fn subscription_format_upgrade_preserves_pending_and_refuses_v2_downgrade() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let database = surrealkv_database(directory.path()).await;
+        let store = SyncStateStore::new(&database);
+        store.define_schema().await.unwrap();
+        let initial = empty_state("partition", "client");
+        store.save_atomic(None, &initial).await.unwrap();
+        let queued = enqueue(
+            initial,
+            "pending-before-upgrade",
+            "probe:local",
+            json!({"name":"pending"}),
+        );
+        store.save_atomic(Some(0), &queued).await.unwrap();
+        let key = SyncStateKey::new(&queued.partition_id, &queued.client_id);
+        let before: StoredMetaRow = database
+            .client()
+            .await
+            .unwrap()
+            .select(meta_record_id(key))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(before.format_version, FORMAT_VERSION);
+        let mut runtime = surrealdb_sync_client::ClientRuntime::open(queued.clone()).unwrap();
+        let start = runtime
+            .prepare_start_subscription(
+                crate::sync_subscription::parse_request(
+                    &crate::sync_subscription::test_request().to_string(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        store
+            .apply_transition_atomic(runtime.state(), start.state())
+            .await
+            .unwrap();
+        runtime.install_with_read_batch(start).unwrap();
+        let response = runtime
+            .prepare_subscription_response(
+                crate::sync_subscription::parse_response(
+                    &crate::sync_subscription::test_response().to_string(),
+                )
+                .unwrap(),
+            )
+            .unwrap();
+        store
+            .apply_transition_atomic(runtime.state(), response.state())
+            .await
+            .unwrap();
+        runtime.install_with_read_batch(response).unwrap();
+        let cancel = runtime.prepare_cancel_subscription("window", 1).unwrap();
+        store
+            .apply_transition_atomic(runtime.state(), cancel.state())
+            .await
+            .unwrap();
+        runtime.install_with_read_batch(cancel).unwrap();
+        let metadata: StoredMetaRow = database
+            .client()
+            .await
+            .unwrap()
+            .select(meta_record_id(key))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(metadata.format_version, SUBSCRIPTION_FORMAT_VERSION);
+        // Models the prior V2 reader's exact version check, before decode or mutation.
+        assert!(matches!(
+            validate_meta_row_version(key, &metadata, FORMAT_VERSION),
+            Err(SyncStateError::CorruptState)
+        ));
+        let mut downgrade = runtime.state().clone();
+        downgrade.subscriptions = None;
+        downgrade.revision += 1;
+        assert!(matches!(
+            store
+                .save_atomic(Some(runtime.state().revision), &downgrade)
+                .await,
+            Err(SyncStateError::CorruptState)
+        ));
+        assert_eq!(
+            store.load(key).await.unwrap().as_ref(),
+            Some(runtime.state())
+        );
+        assert_eq!(runtime.state().outbox, queued.outbox);
+        database.close().await.unwrap();
+        let reopened = surrealkv_database(directory.path()).await;
+        let store = SyncStateStore::new(&reopened);
+        store.define_schema().await.unwrap();
+        let recovered = store.load(key).await.unwrap().unwrap();
+        assert_eq!(recovered.outbox, queued.outbox);
+        let subscriptions = recovered.subscriptions.unwrap();
+        assert_eq!(subscriptions.cancelled.get("window"), Some(&1));
+        assert!(subscriptions.authorization_scope.is_some());
+        assert!(subscriptions.slots.is_empty());
+        reopened.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -1731,6 +1926,7 @@ mod tests {
         let key = SyncStateKey::new(&state.partition_id, &state.client_id);
         let mut legacy = serde_json::to_value(&state).unwrap();
         legacy.as_object_mut().unwrap().remove("reset_coverage");
+        legacy.as_object_mut().unwrap().remove("subscriptions");
         let client = db.client().await.unwrap();
         let _: Option<Value> = client
             .upsert(record_id(key))
@@ -1746,10 +1942,16 @@ mod tests {
         let loaded = store.load(key).await.unwrap().unwrap();
         assert_eq!(loaded, state);
         assert!(loaded.reset_coverage.is_none());
+        assert!(loaded.subscriptions.is_none());
         assert_eq!(loaded.outbox.len(), 1);
         let mut row: StoredMetaRow = client.select(meta_record_id(key)).await.unwrap().unwrap();
         let mut payload: JsonValue = decode_tagged(&row.payload).unwrap();
         payload.as_object_mut().unwrap().remove("reset_coverage");
+        payload.as_object_mut().unwrap().remove("subscriptions");
+        payload
+            .as_object_mut()
+            .unwrap()
+            .remove("subscription_record_keys");
         row.payload = encode_tagged(&payload).unwrap().into();
         let _: Option<Value> = client
             .upsert(meta_record_id(key))

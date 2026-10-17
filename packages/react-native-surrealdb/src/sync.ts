@@ -26,7 +26,13 @@ import {
   type SyncReadCapabilities,
   type SyncReadRecord,
   type SyncScopeTransitionDecision,
+  type SyncReadScopeError,
 } from "./sync-read";
+
+import {
+  ExperimentalSyncWindowClient,
+  type NativeWindowPort,
+} from "./sync-window";
 
 interface NativeReadPort {
   readCapabilitiesJson(): string;
@@ -87,19 +93,42 @@ const nativeConflictPolicy = (
  * prototype and is not release-ready.
  */
 export class ExperimentalSyncClient {
-  readonly #native: NativeSyncClientLike & Partial<NativeReadPort>;
+  readonly #native: NativeSyncClientLike &
+    Partial<NativeReadPort> &
+    Partial<NativeWindowPort>;
   #readCapabilities?: SyncReadCapabilities;
   readonly #readStores = new Set<ExperimentalSyncReadStore>();
+  readonly #windowClients = new Set<ExperimentalSyncWindowClient>();
+  #scopeBlocked?: SyncReadScopeError;
 
-  constructor(native: NativeSyncClientLike & Partial<NativeReadPort>) {
+  constructor(
+    native: NativeSyncClientLike &
+      Partial<NativeReadPort> &
+      Partial<NativeWindowPort>,
+  ) {
     this.#native = native;
   }
 
   #readFailure(error: unknown): unknown {
     const blocked = syncReadScopeError(error);
-    if (blocked)
+    if (blocked) {
+      this.#scopeBlocked = blocked;
       for (const store of [...this.#readStores]) store.invalidateScope(blocked);
+      for (const client of [...this.#windowClients])
+        client.invalidateScope(blocked);
+    }
     return blocked ?? error;
+  }
+
+  /** Separate ordered-window capability; full-scope v1 semantics remain unchanged. */
+  createWindowClient(): ExperimentalSyncWindowClient {
+    const client = new ExperimentalSyncWindowClient(this.#native, (error) =>
+      this.#readFailure(error),
+    );
+    client.capabilities();
+    if (this.#scopeBlocked) client.invalidateScope(this.#scopeBlocked);
+    this.#windowClients.add(client);
+    return client;
   }
 
   /** Additive read capability; generated bindings still require a matching binary. */
@@ -115,6 +144,7 @@ export class ExperimentalSyncClient {
   }
 
   async readSnapshot(options?: CallOptions): Promise<SyncReadBootstrap> {
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
     this.readCapabilities();
     const method = this.#native.readSnapshotJson;
     if (!method) return missingReadAbi();
@@ -130,6 +160,7 @@ export class ExperimentalSyncClient {
     maxBatches = 32,
     options?: CallOptions,
   ): Promise<SyncReadChanges> {
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
     this.readCapabilities();
     if (!Number.isInteger(maxBatches) || maxBatches < 1 || maxBatches > 128)
       throw new RangeError("Sync read batch limit must be between 1 and 128");
@@ -191,6 +222,7 @@ export class ExperimentalSyncClient {
     const store = new ExperimentalSyncReadStore(this, options, () => {
       this.#readStores.delete(store);
     });
+    if (this.#scopeBlocked) store.invalidateScope(this.#scopeBlocked);
     this.#readStores.add(store);
     return store;
   }
@@ -336,6 +368,8 @@ export class ExperimentalSyncClient {
 
   close(options?: CallOptions): Promise<void> {
     for (const store of [...this.#readStores]) store.close();
+    for (const client of [...this.#windowClients]) client.close();
+    this.#windowClients.clear();
     return this.#native.close(options);
   }
 

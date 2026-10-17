@@ -7,7 +7,9 @@
 //! without selecting an async runtime or persistence dependency.
 
 mod read;
+mod subscriptions;
 pub use read::*;
+pub use subscriptions::*;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::error::Error;
@@ -78,6 +80,8 @@ pub struct DurableClientState<V> {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_coverage: Option<ResetCoverage>,
     pub id_map: BTreeMap<RecordId, RecordId>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subscriptions: Option<DurableSubscriptions<V>>,
 }
 
 impl<V> DurableClientState<V> {
@@ -99,6 +103,7 @@ impl<V> DurableClientState<V> {
             checkpoint: None,
             reset_coverage: None,
             id_map: BTreeMap::new(),
+            subscriptions: None,
         }
     }
 }
@@ -132,6 +137,9 @@ impl<V: Eq> DurableClientState<V> {
         validate_conflict_resolutions(self)?;
         validate_checkpoint(self)?;
         read::validate_coverage(self)?;
+        if let Some(subscriptions) = &self.subscriptions {
+            subscriptions.validate(self)?;
+        }
         validate_id_map(&self.id_map)?;
         validate_no_mapped_local_ids(self)
     }
@@ -208,6 +216,8 @@ impl<V> PreparedTransition<V> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ClientError {
+    InvalidSubscription,
+    SubscriptionCancelled,
     EmptyCommit,
     DuplicateOperation(RecordId),
     DuplicateCommitId(ClientCommitId),
@@ -238,6 +248,8 @@ pub enum ClientError {
 impl fmt::Display for ClientError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         let message = match self {
+            Self::InvalidSubscription => "invalid subscription transition",
+            Self::SubscriptionCancelled => "subscription generation is durably cancelled",
             Self::EmptyCommit => "commit has no operations",
             Self::DuplicateOperation(_) => "commit repeats a record operation",
             Self::DuplicateCommitId(_) => "commit identity is already durable",
@@ -481,6 +493,7 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         batch: PullBatch<V>,
     ) -> Result<PreparedTransition<V>, ClientError> {
         let (checkpoint, commits) = validate_pull_batch(&self.state, &batch)?;
+        subscriptions::guard_subscription_scope(&self.state, &checkpoint.scope)?;
         let mut next = self.state.clone();
         if let Some(current) = &self.state.checkpoint
             && checkpoint.cursor.sequence == current.cursor.sequence
@@ -518,6 +531,7 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         snapshot: ResetSnapshot<V>,
     ) -> Result<PreparedTransition<V>, ClientError> {
         validate_scope(&self.state, &snapshot.checkpoint)?;
+        subscriptions::guard_subscription_scope(&self.state, &snapshot.checkpoint.scope)?;
         // Reset responses can be delayed/reordered just like incremental pulls.
         // Never replace a newer installed frontier or authorization snapshot.
         if let Some(current) = &self.state.checkpoint {

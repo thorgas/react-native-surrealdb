@@ -1,4 +1,6 @@
 import { decodeSurrealValue } from "./wire";
+import type { WindowRequest } from "./sync-window";
+import { validateWindowRequest } from "./sync-window-codec";
 import type { ExperimentalSyncTelemetry } from "./sync-telemetry";
 import type { CallOptions } from "./client";
 import {
@@ -741,4 +743,167 @@ function isSyncJsonValue(value: unknown): value is SyncJsonValue {
     return false;
   }
   return Object.values(value).every(isSyncJsonValue);
+}
+
+export interface ExperimentalSubscriptionHttpNativeBridge {
+  encodeSubscriptionRequestJson(
+    requestJson: string,
+    options?: CallOptions,
+  ): Promise<ArrayBuffer>;
+  decodeSubscriptionResponse(
+    bytes: ArrayBuffer,
+    options?: CallOptions,
+  ): Promise<string>;
+}
+
+/** One bounded CBOR exchange. Callers durably start/cancel and install responses. */
+export function experimentalCanonicalSubscriptionHttpTransport(config: {
+  baseUrl: string;
+  native: ExperimentalSubscriptionHttpNativeBridge;
+  accessToken: (options?: CallOptions) => string | Promise<string>;
+  fetch?: typeof globalThis.fetch;
+  requestTimeoutMs?: number;
+  allowInsecureLocalhost?: boolean;
+}): {
+  exchange(request: WindowRequest, options?: CallOptions): Promise<string>;
+} {
+  assertSecureHttpUrl(config.baseUrl, config.allowInsecureLocalhost ?? false);
+  const endpoint = new URL(config.baseUrl);
+  if (
+    endpoint.username ||
+    endpoint.password ||
+    endpoint.search ||
+    endpoint.hash
+  )
+    throw new TypeError(
+      "Subscription base URL must not contain credentials, query or fragment",
+    );
+  const timeoutMs = config.requestTimeoutMs ?? 30000;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300000)
+    throw new RangeError("Invalid subscription HTTP deadline");
+  const mediaType = "application/vnd.surrealdb-subscription.v1+cbor";
+  const fetcher = config.fetch ?? globalThis.fetch;
+  return {
+    async exchange(request, options) {
+      validateWindowRequest(request);
+      if (options?.signal.aborted)
+        throw new ExperimentalSyncHttpError(
+          "Subscription request was aborted",
+          "aborted",
+        );
+      const controller = new AbortController();
+      let timedOut = false;
+      const onAbort = () => controller.abort();
+      options?.signal.addEventListener("abort", onAbort, { once: true });
+      const timeout = setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+      const boundedOptions = { signal: controller.signal };
+      let receivedResponse = false;
+      const operation = async () => {
+        const json = JSON.stringify(request);
+        if (new TextEncoder().encode(json).byteLength > 262144)
+          throw new ExperimentalSyncHttpError(
+            "Subscription request exceeds its byte limit",
+            "body_limit",
+          );
+        const body = await config.native.encodeSubscriptionRequestJson(
+          json,
+          boundedOptions,
+        );
+        if (body.byteLength > 262144)
+          throw new ExperimentalSyncHttpError(
+            "Subscription request exceeds its byte limit",
+            "body_limit",
+          );
+        if (controller.signal.aborted)
+          throw new ExperimentalSyncHttpError(
+            "Subscription request was aborted",
+            "aborted",
+          );
+        const token = await config.accessToken(boundedOptions);
+        if (!token.trim())
+          throw new ExperimentalSyncHttpError(
+            "Subscription access token is empty",
+            "protocol",
+          );
+        if (controller.signal.aborted)
+          throw new ExperimentalSyncHttpError(
+            "Subscription request was aborted",
+            "aborted",
+          );
+        const response = await fetcher(
+          `${config.baseUrl.replace(/\/$/, "")}/v1/sync/subscriptions`,
+          {
+            method: "POST",
+            headers: {
+              Accept: mediaType,
+              "Content-Type": mediaType,
+              Authorization: `Bearer ${token}`,
+            },
+            body,
+            signal: controller.signal,
+            redirect: "error",
+          },
+        );
+        receivedResponse = true;
+        if (response.status !== 200)
+          throw new ExperimentalSyncHttpError(
+            `Subscription request failed with status ${response.status}`,
+            "http",
+            response.status,
+          );
+        if (
+          response.headers.get("Content-Type")?.split(";", 1)[0]?.trim() !==
+          mediaType
+        )
+          throw new ExperimentalSyncHttpError(
+            "Unexpected subscription content type",
+            "content_type",
+          );
+        const bytes = await boundedResponseBytes(response, 262144);
+        if (controller.signal.aborted)
+          throw new ExperimentalSyncHttpError(
+            "Subscription request was aborted",
+            "aborted",
+          );
+        const decoded = await config.native.decodeSubscriptionResponse(
+          bytes,
+          boundedOptions,
+        );
+        if (controller.signal.aborted)
+          throw new ExperimentalSyncHttpError(
+            "Subscription request was aborted",
+            "aborted",
+          );
+        return decoded;
+      };
+      try {
+        return await Promise.race([
+          operation(),
+          abortFailure(controller.signal),
+        ]);
+      } catch (error) {
+        if (timedOut)
+          throw new ExperimentalSyncHttpError(
+            "Subscription request timed out",
+            "timeout",
+          );
+        if (options?.signal.aborted)
+          throw new ExperimentalSyncHttpError(
+            "Subscription request was aborted",
+            "aborted",
+          );
+        if (error instanceof ExperimentalSyncHttpError) throw error;
+        throw new ExperimentalSyncHttpError(
+          "Subscription exchange failed",
+          receivedResponse ? "protocol" : "network",
+        );
+      } finally {
+        clearTimeout(timeout);
+        options?.signal.removeEventListener("abort", onAbort);
+      }
+    },
+  };
 }

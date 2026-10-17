@@ -34,6 +34,11 @@ pub(crate) fn canonical_fingerprint(
 pub(crate) fn validate_state_codec(
     state: &DurableClientState<JsonValue>,
 ) -> Result<(), NativeSyncError> {
+    if let Some(subscriptions) = &state.subscriptions {
+        for row in subscriptions.records.values() {
+            canonical_json(&row.value)?;
+        }
+    }
     for record in state.confirmed.values() {
         validate_record_state(record)?;
     }

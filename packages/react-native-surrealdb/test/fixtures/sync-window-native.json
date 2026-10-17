@@ -1,0 +1,202 @@
+{
+  "cancelled": {
+    "cancelledThrough": "1",
+    "cursor": {
+      "processEpoch": "native-fixture-reopened-handle",
+      "revision": "4",
+      "subscriptionId": "window"
+    },
+    "request": {
+      "clientId": "client",
+      "command": {
+        "generation": "1",
+        "kind": "cancel",
+        "subscriptionId": "window"
+      },
+      "partitionId": "partition",
+      "requestedScope": "all",
+      "subscriptionRevision": "1"
+    },
+    "snapshot": null
+  },
+  "changes": {
+    "batches": [
+      {
+        "beforeRevision": "1",
+        "cancelledThrough": null,
+        "request": {
+          "clientId": "client",
+          "command": {
+            "definitionId": "ranked",
+            "generation": "1",
+            "kind": "start",
+            "limit": 2,
+            "parameters": {
+              "score": {
+                "kind": "int",
+                "value": "-9223372036854775808"
+              }
+            },
+            "subscriptionId": "window"
+          },
+          "partitionId": "partition",
+          "requestedScope": "all",
+          "subscriptionRevision": "1"
+        },
+        "revision": "2",
+        "snapshot": null
+      },
+      {
+        "beforeRevision": "2",
+        "cancelledThrough": null,
+        "request": {
+          "clientId": "client",
+          "command": {
+            "generation": "1",
+            "kind": "resume",
+            "subscriptionId": "window",
+            "token": "resume-token"
+          },
+          "partitionId": "partition",
+          "requestedScope": "all",
+          "subscriptionRevision": "1"
+        },
+        "revision": "3",
+        "snapshot": {
+          "metadata": {
+            "coverage": {
+              "definitionId": "ranked",
+              "direction": "ascending",
+              "limit": 2,
+              "orderField": "score",
+              "orderKind": "int"
+            },
+            "frontier": {
+              "epoch": "1",
+              "sequence": "0"
+            },
+            "generation": "1",
+            "planFingerprint": "plan",
+            "revision": "3",
+            "scope": {
+              "authorizationRevision": "1",
+              "identity": "all",
+              "subscriptionRevision": "1"
+            },
+            "subscriptionId": "window",
+            "viewRevision": "1"
+          },
+          "pendingOutsideWindow": null,
+          "rows": [
+            {
+              "recordId": "probe:a",
+              "sortKey": {
+                "kind": "int",
+                "value": "-9223372036854775808"
+              },
+              "value": {
+                "counter": {
+                  "$surreal": "int",
+                  "value": "9007199254740993"
+                },
+                "name": "a"
+              },
+              "version": "18446744073709551615"
+            },
+            {
+              "recordId": "probe:b",
+              "sortKey": {
+                "kind": "int",
+                "value": "0"
+              },
+              "value": {
+                "name": "b"
+              },
+              "version": "2"
+            }
+          ]
+        }
+      }
+    ],
+    "cursor": {
+      "processEpoch": "native-fixture-handle",
+      "revision": "3",
+      "subscriptionId": "window"
+    },
+    "kind": "batches"
+  },
+  "installed": {
+    "cancelledThrough": null,
+    "cursor": {
+      "processEpoch": "native-fixture-handle",
+      "revision": "3",
+      "subscriptionId": "window"
+    },
+    "request": {
+      "clientId": "client",
+      "command": {
+        "generation": "1",
+        "kind": "resume",
+        "subscriptionId": "window",
+        "token": "resume-token"
+      },
+      "partitionId": "partition",
+      "requestedScope": "all",
+      "subscriptionRevision": "1"
+    },
+    "snapshot": {
+      "metadata": {
+        "coverage": {
+          "definitionId": "ranked",
+          "direction": "ascending",
+          "limit": 2,
+          "orderField": "score",
+          "orderKind": "int"
+        },
+        "frontier": {
+          "epoch": "1",
+          "sequence": "0"
+        },
+        "generation": "1",
+        "planFingerprint": "plan",
+        "revision": "3",
+        "scope": {
+          "authorizationRevision": "1",
+          "identity": "all",
+          "subscriptionRevision": "1"
+        },
+        "subscriptionId": "window",
+        "viewRevision": "1"
+      },
+      "pendingOutsideWindow": null,
+      "rows": [
+        {
+          "recordId": "probe:a",
+          "sortKey": {
+            "kind": "int",
+            "value": "-9223372036854775808"
+          },
+          "value": {
+            "counter": {
+              "$surreal": "int",
+              "value": "9007199254740993"
+            },
+            "name": "a"
+          },
+          "version": "18446744073709551615"
+        },
+        {
+          "recordId": "probe:b",
+          "sortKey": {
+            "kind": "int",
+            "value": "0"
+          },
+          "value": {
+            "name": "b"
+          },
+          "version": "2"
+        }
+      ]
+    }
+  }
+}

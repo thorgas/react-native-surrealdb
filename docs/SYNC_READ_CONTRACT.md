@@ -93,3 +93,7 @@ The private [community adapter experiment](../experiments/community-adapters/REA
 feeds Legend State and an eager TanStack DB collection from this contract, with
 the engine retaining sole ownership of durability and mutations. It has its own
 optional peers and lockfile; neither library is loaded by this SDK's exports.
+
+Ordered query windows are a separate private protocol and capability; see
+[SYNC_ORDERED_WINDOWS.md](SYNC_ORDERED_WINDOWS.md). They do not change v1
+full-scope coverage or its predicate-subscription capability claim.

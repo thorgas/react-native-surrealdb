@@ -134,6 +134,47 @@ export async function connect(
   }
 }
 
+export async function decodeSubscriptionResponse(
+  bytes: ArrayBuffer,
+  asyncOpts_?: { signal: AbortSignal },
+): Promise<string> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_func_decode_subscription_response(
+          FfiConverterArrayBuffer.lower(bytes, nativeModule().rustbuffer_alloc),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+        FfiConverterTypeNativeSyncError,
+      ),
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
 export async function decodeSyncPullResponse(
   bytes: ArrayBuffer,
   asyncOpts_?: { signal: AbortSignal },
@@ -202,6 +243,50 @@ export async function decodeSyncPushResponse(
       // export. The bytes the runtime hands back must be deserialized
       // here using the per-callable return-type converter.
       /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+        FfiConverterTypeNativeSyncError,
+      ),
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+export async function encodeSubscriptionRequestJson(
+  requestJson: string,
+  asyncOpts_?: { signal: AbortSignal },
+): Promise<ArrayBuffer> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_func_encode_subscription_request_json(
+          FfiConverterString.lower(
+            requestJson,
+            nativeModule().rustbuffer_alloc,
+          ),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterArrayBuffer.lift.bind(FfiConverterArrayBuffer),
       /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
       /*asyncOpts:*/ asyncOpts_,
       /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
@@ -1163,6 +1248,8 @@ export enum NativeSyncError_Tags {
   ReadOutputTooLarge = "ReadOutputTooLarge",
   NeedsNewScopeJournal = "NeedsNewScopeJournal",
   PendingQuarantineRequired = "PendingQuarantineRequired",
+  SubscriptionCancelled = "SubscriptionCancelled",
+  InvalidSubscription = "InvalidSubscription",
   Internal = "Internal",
 }
 export const NativeSyncError = (() => {
@@ -1415,6 +1502,64 @@ export const NativeSyncError = (() => {
     }
   }
 
+  type SubscriptionCancelled__interface = {
+    tag: NativeSyncError_Tags.SubscriptionCancelled;
+  };
+  class SubscriptionCancelled_
+    extends UniffiError
+    implements SubscriptionCancelled__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeSyncError";
+    readonly tag = NativeSyncError_Tags.SubscriptionCancelled;
+    constructor() {
+      super("NativeSyncError", "SubscriptionCancelled");
+    }
+
+    static new(): SubscriptionCancelled_ {
+      return new SubscriptionCancelled_();
+    }
+
+    static instanceOf(obj: any): obj is SubscriptionCancelled_ {
+      return obj.tag === NativeSyncError_Tags.SubscriptionCancelled;
+    }
+    static hasInner(obj: any): obj is SubscriptionCancelled_ {
+      return false;
+    }
+  }
+
+  type InvalidSubscription__interface = {
+    tag: NativeSyncError_Tags.InvalidSubscription;
+  };
+  class InvalidSubscription_
+    extends UniffiError
+    implements InvalidSubscription__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeSyncError";
+    readonly tag = NativeSyncError_Tags.InvalidSubscription;
+    constructor() {
+      super("NativeSyncError", "InvalidSubscription");
+    }
+
+    static new(): InvalidSubscription_ {
+      return new InvalidSubscription_();
+    }
+
+    static instanceOf(obj: any): obj is InvalidSubscription_ {
+      return obj.tag === NativeSyncError_Tags.InvalidSubscription;
+    }
+    static hasInner(obj: any): obj is InvalidSubscription_ {
+      return false;
+    }
+  }
+
   type Internal__interface = {
     tag: NativeSyncError_Tags.Internal;
   };
@@ -1456,6 +1601,8 @@ export const NativeSyncError = (() => {
     ReadOutputTooLarge: ReadOutputTooLarge_,
     NeedsNewScopeJournal: NeedsNewScopeJournal_,
     PendingQuarantineRequired: PendingQuarantineRequired_,
+    SubscriptionCancelled: SubscriptionCancelled_,
+    InvalidSubscription: InvalidSubscription_,
     Internal: Internal_,
   });
 })();
@@ -1470,6 +1617,8 @@ export type NativeSyncError = InstanceType<
     | "ReadOutputTooLarge"
     | "NeedsNewScopeJournal"
     | "PendingQuarantineRequired"
+    | "SubscriptionCancelled"
+    | "InvalidSubscription"
     | "Internal"]
 >;
 
@@ -1499,6 +1648,10 @@ const FfiConverterTypeNativeSyncError = (() => {
         case 9:
           return new NativeSyncError.PendingQuarantineRequired();
         case 10:
+          return new NativeSyncError.SubscriptionCancelled();
+        case 11:
+          return new NativeSyncError.InvalidSubscription();
+        case 12:
           return new NativeSyncError.Internal();
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
@@ -1542,8 +1695,16 @@ const FfiConverterTypeNativeSyncError = (() => {
           ordinalConverter.write(9, into);
           return;
         }
-        case NativeSyncError_Tags.Internal: {
+        case NativeSyncError_Tags.SubscriptionCancelled: {
           ordinalConverter.write(10, into);
+          return;
+        }
+        case NativeSyncError_Tags.InvalidSubscription: {
+          ordinalConverter.write(11, into);
+          return;
+        }
+        case NativeSyncError_Tags.Internal: {
+          ordinalConverter.write(12, into);
           return;
         }
         default:
@@ -1580,8 +1741,14 @@ const FfiConverterTypeNativeSyncError = (() => {
         case NativeSyncError_Tags.PendingQuarantineRequired: {
           return ordinalConverter.allocationSize(9);
         }
-        case NativeSyncError_Tags.Internal: {
+        case NativeSyncError_Tags.SubscriptionCancelled: {
           return ordinalConverter.allocationSize(10);
+        }
+        case NativeSyncError_Tags.InvalidSubscription: {
+          return ordinalConverter.allocationSize(11);
+        }
+        case NativeSyncError_Tags.Internal: {
+          return ordinalConverter.allocationSize(12);
         }
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
@@ -2140,6 +2307,15 @@ export interface NativeSyncClientLike {
     responseJson: string,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<NativeSyncStatus>;
+  applySubscriptionResponseJson(
+    responseJson: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeSyncStatus>;
+  cancelSubscription(
+    subscriptionId: string,
+    generation: bigint,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeSyncStatus>;
   /**
    * Returns the token from the last completely and atomically applied pull.
    */
@@ -2208,9 +2384,28 @@ export interface NativeSyncClientLike {
     subscriptionRevision: bigint,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<string>;
+  startSubscriptionJson(
+    requestJson: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeSyncStatus>;
   status(asyncOpts_?: {
     signal: AbortSignal;
   }) /*throws*/ : Promise<NativeSyncStatus>;
+  subscriptionCapabilitiesJson(): string;
+  subscriptionChangesJson(
+    subscriptionId: string,
+    cursorJson: string,
+    maxBatches: number,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<string>;
+  subscriptionRequestJson(
+    subscriptionId: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<string>;
+  subscriptionSnapshotJson(
+    subscriptionId: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<string>;
 }
 /**
  * @deprecated Use `NativeSyncClientLike` instead.
@@ -2245,6 +2440,105 @@ export class NativeSyncClient
             uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
             FfiConverterString.lower(
               responseJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
+          FfiConverterTypeNativeSyncStatus,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async applySubscriptionResponseJson(
+    responseJson: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeSyncStatus> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_apply_subscription_response_json(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              responseJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
+          FfiConverterTypeNativeSyncStatus,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async cancelSubscription(
+    subscriptionId: string,
+    generation: bigint,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeSyncStatus> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_cancel_subscription(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              subscriptionId,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterUInt64.lower(
+              generation,
               nativeModule().rustbuffer_alloc,
             ),
           );
@@ -2975,6 +3269,53 @@ export class NativeSyncClient
     }
   }
 
+  async startSubscriptionJson(
+    requestJson: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeSyncStatus> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_start_subscription_json(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              requestJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
+          FfiConverterTypeNativeSyncStatus,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
   async status(asyncOpts_?: {
     signal: AbortSignal;
   }): Promise<NativeSyncStatus> /*throws*/ {
@@ -3003,6 +3344,171 @@ export class NativeSyncClient
         /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
           FfiConverterTypeNativeSyncStatus,
         ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  subscriptionCapabilitiesJson(): string {
+    return ((__rb: Uint8Array) => {
+      try {
+        return FfiConverterString.lift(__rb);
+      } finally {
+        nativeModule().rustbuffer_free(__rb);
+      }
+    })(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_subscription_capabilities_json(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  async subscriptionChangesJson(
+    subscriptionId: string,
+    cursorJson: string,
+    maxBatches: number,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_subscription_changes_json(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              subscriptionId,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterString.lower(
+              cursorJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterUInt32.lower(
+              maxBatches,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async subscriptionRequestJson(
+    subscriptionId: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_subscription_request_json(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              subscriptionId,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async subscriptionSnapshotJson(
+    subscriptionId: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_subscription_snapshot_json(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              subscriptionId,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
         /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
         /*asyncOpts:*/ asyncOpts_,
         /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
@@ -4376,6 +4882,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_func_decode_subscription_response() !==
+    675
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_func_decode_subscription_response",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_func_decode_sync_pull_response() !==
     62475
   ) {
@@ -4389,6 +4903,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_func_decode_sync_push_response",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_subscription_request_json() !==
+    22608
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_func_encode_subscription_request_json",
     );
   }
   if (
@@ -4445,6 +4967,22 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_pull_response",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_subscription_response_json() !==
+    13286
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_subscription_response_json",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_cancel_subscription() !==
+    48058
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_cancel_subscription",
     );
   }
   if (
@@ -4584,11 +5122,51 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_start_subscription_json() !==
+    35694
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_start_subscription_json",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_status() !==
     3696
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_status",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_capabilities_json() !==
+    54579
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_capabilities_json",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_changes_json() !==
+    57638
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_changes_json",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_request_json() !==
+    65401
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_request_json",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_snapshot_json() !==
+    931
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_snapshot_json",
     );
   }
   if (

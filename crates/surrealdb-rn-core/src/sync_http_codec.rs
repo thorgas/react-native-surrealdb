@@ -189,7 +189,7 @@ fn record_state_to_json(
     })
 }
 
-fn canonical_to_json(value: CanonicalValue) -> Result<JsonValue, NativeSyncError> {
+pub(crate) fn canonical_to_json(value: CanonicalValue) -> Result<JsonValue, NativeSyncError> {
     Ok(match value {
         CanonicalValue::None => json!({ TAG: "none" }),
         CanonicalValue::Null => JsonValue::Null,

@@ -200,11 +200,17 @@ interface NativeModuleInterface {
   ): void;
   ubrn_uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop(): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_func_connect(options: Uint8Array): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_decode_subscription_response(
+    bytes: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_func_decode_sync_pull_response(
     bytes: Uint8Array,
   ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_func_decode_sync_push_response(
     bytes: Uint8Array,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_encode_subscription_request_json(
+    requestJson: Uint8Array,
   ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_func_encode_sync_pull_request(
     partitionId: Uint8Array,
@@ -235,6 +241,15 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_apply_pull_response(
     uniffiSelf: bigint,
     responseJson: Uint8Array,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_apply_subscription_response_json(
+    uniffiSelf: bigint,
+    responseJson: Uint8Array,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_cancel_subscription(
+    uniffiSelf: bigint,
+    subscriptionId: Uint8Array,
+    generation: bigint,
   ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_checkpoint_token(
     uniffiSelf: bigint,
@@ -303,8 +318,30 @@ interface NativeModuleInterface {
     scope: Uint8Array,
     subscriptionRevision: bigint,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_start_subscription_json(
+    uniffiSelf: bigint,
+    requestJson: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_status(
     uniffiSelf: bigint,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_subscription_capabilities_json(
+    uniffiSelf: bigint,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): Uint8Array;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_subscription_changes_json(
+    uniffiSelf: bigint,
+    subscriptionId: Uint8Array,
+    cursorJson: Uint8Array,
+    maxBatches: number,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_subscription_request_json(
+    uniffiSelf: bigint,
+    subscriptionId: Uint8Array,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_subscription_snapshot_json(
+    uniffiSelf: bigint,
+    subscriptionId: Uint8Array,
   ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_surrealdatabase_authenticate(
     uniffiSelf: bigint,
@@ -399,8 +436,10 @@ interface NativeModuleInterface {
   ubrn_ffi_surrealdb_rn_core_uniffi_contract_version(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_connect(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_decode_subscription_response(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_decode_sync_pull_response(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_decode_sync_push_response(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_subscription_request_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_sync_pull_request(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_sync_push_request(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_open_sync_client(): number;
@@ -408,6 +447,8 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_next(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_pull_response(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_subscription_response_json(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_cancel_subscription(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_checkpoint_token(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_close(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_conflicts_json(): number;
@@ -425,7 +466,12 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_keep_server(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_merge(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_scope_transition_decision(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_start_subscription_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_status(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_capabilities_json(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_changes_json(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_request_json(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_subscription_snapshot_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_authenticate(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_begin_transaction(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealdatabase_close(): number;

@@ -7,6 +7,8 @@ import {
   SurrealRnError_Tags,
   benchmarkBoundaryNoop as nativeBenchmarkBoundaryNoop,
   connect as nativeConnect,
+  decodeSubscriptionResponse as nativeDecodeSubscriptionResponse,
+  encodeSubscriptionRequestJson as nativeEncodeSubscriptionRequestJson,
   decodeSyncPullResponse as nativeDecodeSyncPullResponse,
   decodeSyncPushResponse as nativeDecodeSyncPushResponse,
   encodeSyncPullRequest as nativeEncodeSyncPullRequest,
@@ -33,6 +35,7 @@ import {
 } from "./sync";
 import {
   experimentalCanonicalCborSyncHttpCodec,
+  experimentalCanonicalSubscriptionHttpTransport,
   type ExperimentalSyncHttpCodec,
 } from "./sync-http";
 
@@ -51,6 +54,21 @@ export function createExperimentalCanonicalCborSyncHttpCodec(): ExperimentalSync
     decodeSyncPushResponse: nativeDecodeSyncPushResponse,
     encodeSyncPullRequest: nativeEncodeSyncPullRequest,
     decodeSyncPullResponse: nativeDecodeSyncPullResponse,
+  });
+}
+/** Create the separate one-shot native ordered-subscription transport. */
+export function createExperimentalCanonicalSubscriptionHttpTransport(
+  options: Omit<
+    Parameters<typeof experimentalCanonicalSubscriptionHttpTransport>[0],
+    "native"
+  >,
+): ReturnType<typeof experimentalCanonicalSubscriptionHttpTransport> {
+  return experimentalCanonicalSubscriptionHttpTransport({
+    ...options,
+    native: {
+      encodeSubscriptionRequestJson: nativeEncodeSubscriptionRequestJson,
+      decodeSubscriptionResponse: nativeDecodeSubscriptionResponse,
+    },
   });
 }
 export { LiveSubscription } from "./subscription";

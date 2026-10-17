@@ -10,3 +10,7 @@ export * from "./wire";
 export * from "./sync-telemetry";
 
 export * from "./sync-read";
+
+export * from "./sync-window";
+
+export * from "./sync-window-store";
