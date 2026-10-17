@@ -88,3 +88,8 @@ Build iOS and Android with the same native candidate, use their matching runtime
 fingerprints, and reject incompatible updates before enabling this facade.
 Host Rust/TypeScript tests do not prove mobile ABI, device acceptance, hosted
 synchronization or release readiness.
+
+The private [community adapter experiment](../experiments/community-adapters/README.md)
+feeds Legend State and an eager TanStack DB collection from this contract, with
+the engine retaining sole ownership of durability and mutations. It has its own
+optional peers and lockfile; neither library is loaded by this SDK's exports.

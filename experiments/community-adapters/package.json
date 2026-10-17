@@ -1,0 +1,39 @@
+{
+  "name": "@surrealdb-sync/private-community-adapters",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.5.0",
+  "engines": {
+    "node": ">=20 <23"
+  },
+  "exports": {
+    "./legend": "./src/legend.ts",
+    "./tanstack": "./src/tanstack.ts",
+    "./contract": "./src/contract.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --check src test package.json tsconfig.json"
+  },
+  "peerDependencies": {
+    "@legendapp/state": "3.0.0-beta.48",
+    "@tanstack/db": "0.15.0"
+  },
+  "peerDependenciesMeta": {
+    "@legendapp/state": {
+      "optional": true
+    },
+    "@tanstack/db": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@legendapp/state": "3.0.0-beta.48",
+    "@tanstack/db": "0.15.0",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7",
+    "prettier": "3.6.2"
+  }
+}
