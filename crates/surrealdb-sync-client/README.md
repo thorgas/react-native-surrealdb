@@ -24,6 +24,10 @@ Accepted commits remain in the derived optimistic projection until a complete pu
 reaches their authority sequence. Conflict and rejected outcomes retain the original local commit
 for explicit resolution but are not silently presented as canonical state.
 
+Within a known unchanged epoch, a delayed reset covers accepted receipts only at or below its
+frontier. Newer accepted intent survives durable restart until a later pull/reset covers it.
+Higher-epoch and initially unknown-epoch behavior is unchanged.
+
 Run the focused suite from any directory:
 
 ```bash

@@ -414,3 +414,13 @@ Debug/Harness local-prototype results, not deployment evidence.
 
 Only GitHub runner/billing availability is a user-side operational blocker. The codec, transport,
 and authority items are engineering/architecture follow-ups, not account setup tasks.
+
+## Delayed-reset client repair (2026-10-19)
+
+Vendored only the client reset-coverage fix and both permanent transition regressions from private
+engine commit `9bebd93e9e1db4fe131ae6e9511581bdafea1b66` onto SDK base
+`59a14cf399c238fca3a50b57e47b627280bbad75`. The source/test patch is identical to the canonical
+commit; SDK-specific automatic conflict policy and all other existing changes are preserved.
+The SDK client README describes the same frontier rule. No bootstrap codec, protocol wire change,
+ABI, dependency, generated binding or native artifact is included. This source-level repair still
+requires rebuilt native binaries and independent device acceptance before release.

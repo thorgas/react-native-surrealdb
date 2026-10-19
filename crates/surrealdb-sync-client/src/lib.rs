@@ -571,8 +571,15 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         }
         let mut next = self.state.clone();
         next.confirmed = confirmed;
+        let same_epoch = self
+            .state
+            .checkpoint
+            .as_ref()
+            .is_some_and(|current| current.cursor.epoch == snapshot.checkpoint.cursor.epoch);
         for outcome in &mut next.outcomes {
-            if matches!(outcome.outcome, DurableOutcome::Accepted { .. }) {
+            if let DurableOutcome::Accepted { sequence, .. } = outcome.outcome
+                && (!same_epoch || sequence <= snapshot.checkpoint.cursor.sequence)
+            {
                 outcome.covered_by_reset = true;
             }
         }

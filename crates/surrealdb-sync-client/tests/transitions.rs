@@ -1127,3 +1127,94 @@ fn outcome_only_conflict_is_visible_even_without_projection_row() {
         Some(ConflictResolution::KeepServer)
     );
 }
+
+#[test]
+fn delayed_same_epoch_reset_preserves_newer_accepted_intent_after_restart() {
+    let mut runtime = ClientRuntime::open(empty_state()).unwrap();
+    let initial = runtime
+        .prepare_pull_response(PullResponse::Reset(ResetSnapshot {
+            reason: ResetReason::EpochChanged,
+            checkpoint: checkpoint("initial", 1, 0),
+            records: vec![],
+        }))
+        .unwrap();
+    install(&mut runtime, initial);
+    let local = commit("after-snapshot", vec![upsert("a", "local", None)]);
+    let queued = runtime.prepare_enqueue(local.clone()).unwrap();
+    install(&mut runtime, queued);
+    let accepted = runtime
+        .prepare_push_response(push_response(DurableOutcome::Accepted {
+            identity: local.identity,
+            sequence: 2,
+            id_mappings: vec![],
+        }))
+        .unwrap();
+    install(&mut runtime, accepted);
+    let delayed = runtime
+        .prepare_pull_response(PullResponse::Reset(ResetSnapshot {
+            reason: ResetReason::CheckpointExpired,
+            checkpoint: checkpoint("delayed", 1, 1),
+            records: vec![],
+        }))
+        .unwrap();
+    let durable = install(&mut runtime, delayed);
+    assert!(!durable.outcomes[0].covered_by_reset);
+    let reopened = ClientRuntime::open(durable).unwrap();
+    assert!(matches!(reopened.optimistic().get(&record_id("a")),
+        Some(OptimisticRecord::Present { value, .. }) if value == "local"));
+    assert_eq!(
+        reopened
+            .state()
+            .checkpoint
+            .as_ref()
+            .unwrap()
+            .cursor
+            .sequence,
+        1
+    );
+}
+
+#[test]
+fn same_epoch_reset_at_or_above_accepted_frontier_covers_accepted_intent() {
+    for frontier in [2, 3] {
+        let mut runtime = ClientRuntime::open(empty_state()).unwrap();
+        let initial = runtime
+            .prepare_pull_response(PullResponse::Reset(ResetSnapshot {
+                reason: ResetReason::EpochChanged,
+                checkpoint: checkpoint("initial", 1, 0),
+                records: vec![],
+            }))
+            .unwrap();
+        install(&mut runtime, initial);
+        let local = commit("before-snapshot", vec![upsert("a", "local", None)]);
+        let queued = runtime.prepare_enqueue(local.clone()).unwrap();
+        install(&mut runtime, queued);
+        let accepted = runtime
+            .prepare_push_response(push_response(DurableOutcome::Accepted {
+                identity: local.identity,
+                sequence: 2,
+                id_mappings: vec![],
+            }))
+            .unwrap();
+        install(&mut runtime, accepted);
+        let reset = runtime
+            .prepare_pull_response(PullResponse::Reset(ResetSnapshot {
+                reason: ResetReason::CheckpointExpired,
+                checkpoint: checkpoint("current", 1, frontier),
+                records: vec![SnapshotRecord {
+                    record_id: record_id("a"),
+                    state: RecordState::Present {
+                        value: "remote-overwrite".to_owned(),
+                        version: 2,
+                        reference: None,
+                    },
+                }],
+            }))
+            .unwrap();
+        let durable = install(&mut runtime, reset);
+        assert!(durable.outcomes[0].covered_by_reset);
+        let reopened = ClientRuntime::open(durable).unwrap();
+        assert!(matches!(reopened.optimistic().get(&record_id("a")),
+        Some(OptimisticRecord::Present { value, .. }) if value == "remote-overwrite"));
+    }
+}
