@@ -210,6 +210,34 @@ disclosure is about how the code was produced, not a claim that generated code
 is automatically correct; the native test matrix and release checks remain the
 standard for accepting changes.
 
+### Inspect an existing experimental sync journal
+
+This is a source-foundation milestone: checked-in generated bindings and
+packaged native artifacts have not yet been regenerated for inspection. The
+method fails closed on those existing bindings. Before app activation, regenerate
+the UniFFI TS/C++ bindings, build matching iOS and Android binaries, and prove the
+method on both platforms. Host verification does not satisfy these gates.
+
+`database.inspectExperimentalSync(expectedScope)` returns `kind: "missing"` or
+`kind: "present"` with a lossless bigint revision, pending/outcome/unresolved
+conflict counts and the persisted scope barrier. It performs one consistent
+cancelled read transaction, without defining tables, creating an empty journal,
+migrating legacy storage, updating projections or clearing barriers. Corruption,
+unreadable state and a scope/revision mismatch reject rather than returning zero.
+A catalog-marked ready journal reported missing must remain an integrity failure;
+applications must not recreate or rebind it automatically.
+
+Close all journal handles and quiesce writes before inventorying a retained
+journal. Before loading payloads, the inspector projects scalar byte lengths and
+checks the existing 4 MiB row, 64 MiB aggregate and 16,384 component budgets in
+the same transaction. It then validates complete state. A small counts-only
+result does not imply constant database scan work or CPU; metadata query limits
+bound returned rows, not physical database work.
+Connecting the embedded database itself is not a physical read-only filesystem
+operation. This additive API requires regenerated bindings and matching native
+binaries; an older ABI fails closed. Host tests do not establish iOS/Android
+acceptance, and this API must not be activated through an OTA-only update.
+
 ## Development
 
 This repository is a pnpm workspace containing the Rust core, the published

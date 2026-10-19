@@ -27,8 +27,8 @@ use crate::sync_codec::{
     validate_state_codec,
 };
 use crate::sync_state::{
-    MAX_SYNC_STATE_BYTES, ScopeBarrier, StoredSyncState, SyncStateError, SyncStateKey,
-    SyncStateStore,
+    MAX_IDENTITY_BYTES, MAX_SYNC_STATE_BYTES, ScopeBarrier, StoredSyncState, SyncStateError,
+    SyncStateKey, SyncStateStore,
 };
 
 #[derive(Clone, Debug, uniffi::Record)]
@@ -47,6 +47,71 @@ pub struct NativeSyncStatus {
     pub conflict_count: u32,
     pub cursor_epoch: Option<u64>,
     pub cursor_sequence: Option<u64>,
+}
+
+/// Counts remain available when a persisted scope barrier blocks ordinary reads.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum NativeSyncInspectionBarrier {
+    None,
+    NeedsNewScopeJournal,
+    PendingQuarantineRequired,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum NativeSyncInspection {
+    Missing,
+    Present {
+        revision: u64,
+        pending_count: u32,
+        outcome_count: u32,
+        conflict_count: u32,
+        barrier: NativeSyncInspectionBarrier,
+    },
+}
+
+/// Read existing durable state only; never initialize, migrate, or clear a barrier.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn inspect_sync_state(
+    database: Arc<SurrealDatabase>,
+    options: NativeSyncOpenOptions,
+) -> Result<NativeSyncInspection, NativeSyncError> {
+    if !database.embedded {
+        return Err(NativeSyncError::RequiresEmbeddedDatabase);
+    }
+    if options.requested_scope.len() > MAX_IDENTITY_BYTES {
+        return Err(NativeSyncError::InvalidInput);
+    }
+    let partition = PartitionId(options.partition_id);
+    let client = ClientId(options.client_id);
+    let (state, barrier) = SyncStateStore::new(&database)
+        .inspect(SyncStateKey::new(&partition, &client))
+        .await
+        .map_err(map_persistence_error)?;
+    let Some(state) = state else {
+        return Ok(NativeSyncInspection::Missing);
+    };
+    if state.requested_scope.0 != options.requested_scope
+        || state.subscription_revision != options.subscription_revision
+    {
+        return Err(NativeSyncError::Protocol);
+    }
+    validate_state_codec(&state)?;
+    let runtime = ClientRuntime::open(state).map_err(map_protocol_error)?;
+    let counts = status(&runtime)?;
+    Ok(NativeSyncInspection::Present {
+        revision: counts.revision,
+        pending_count: counts.pending_count,
+        outcome_count: counts.outcome_count,
+        conflict_count: counts.conflict_count,
+        barrier: match barrier.as_ref().map(|value| value.reason.as_str()) {
+            None => NativeSyncInspectionBarrier::None,
+            Some("needs_new_scope_journal") => NativeSyncInspectionBarrier::NeedsNewScopeJournal,
+            Some("pending_quarantine_required") => {
+                NativeSyncInspectionBarrier::PendingQuarantineRequired
+            }
+            _ => return Err(NativeSyncError::RecoveryRequired),
+        },
+    })
 }
 
 #[derive(Clone, Copy, Debug, uniffi::Enum)]
@@ -935,6 +1000,145 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn inspection_rejects_unavailable_and_nonembedded_database() {
+        let closed = database().await;
+        closed.close().await.unwrap();
+        assert!(inspect_sync_state(closed, options("all")).await.is_err());
+        let mut database = Arc::try_unwrap(database().await).ok().unwrap();
+        database.embedded = false;
+        let database = Arc::new(database);
+        assert!(matches!(
+            inspect_sync_state(database.clone(), options("all")).await,
+            Err(NativeSyncError::RequiresEmbeddedDatabase)
+        ));
+        database.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn inspection_counts_survive_reopen_and_scope_barrier_without_mutation() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let database = surrealkv_database(directory.path()).await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        client
+            .enqueue(serde_json::to_string(&commit()).unwrap())
+            .await
+            .unwrap();
+        let pending: ClientCommit<JsonValue> =
+            serde_json::from_str(&client.pending_json().await.unwrap()[0]).unwrap();
+        client
+            .record_push_response(
+                serde_json::to_string(&PushResponse::<JsonValue> {
+                    schema_version: SchemaVersion::V1,
+                    partition_id: PartitionId("partition".into()),
+                    client_id: ClientId("client".into()),
+                    outcome: DurableOutcome::Conflict {
+                        identity: pending.identity,
+                        record_id: RecordId("person:ada".into()),
+                        authoritative: RecordState::Absent,
+                    },
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let first = inspect_sync_state(database.clone(), options("all"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            first,
+            NativeSyncInspection::Present {
+                pending_count: 0,
+                outcome_count: 1,
+                conflict_count: 1,
+                ..
+            }
+        ));
+        client
+            .resolve_conflict_keep_local("commit-1".into(), "commit-2".into())
+            .await
+            .unwrap();
+        let store = SyncStateStore::new(&database);
+        let partition = PartitionId("partition".into());
+        let account = ClientId("client".into());
+        let key = SyncStateKey::new(&partition, &account);
+        store
+            .save_scope_barrier(
+                key,
+                ScopeBarrier {
+                    reason: "pending_quarantine_required".into(),
+                    required_scope: "new".into(),
+                    required_subscription_revision: "2".into(),
+                    required_authorization_revision: "3".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let before = store.inspect(key).await.unwrap().0.unwrap();
+        let expected = NativeSyncInspection::Present {
+            revision: before.revision,
+            pending_count: 1,
+            outcome_count: 1,
+            conflict_count: 0,
+            barrier: NativeSyncInspectionBarrier::PendingQuarantineRequired,
+        };
+        assert_eq!(
+            inspect_sync_state(database.clone(), options("all"))
+                .await
+                .unwrap(),
+            expected
+        );
+        assert_eq!(store.inspect(key).await.unwrap().0.unwrap(), before);
+        assert_eq!(
+            store.load_scope_barrier(key).await.unwrap().unwrap().reason,
+            "pending_quarantine_required"
+        );
+        for changed in [
+            NativeSyncOpenOptions {
+                requested_scope: "other".into(),
+                ..options("all")
+            },
+            NativeSyncOpenOptions {
+                subscription_revision: 2,
+                ..options("all")
+            },
+        ] {
+            assert!(matches!(
+                inspect_sync_state(database.clone(), changed).await,
+                Err(NativeSyncError::Protocol)
+            ));
+        }
+        for changed in [
+            NativeSyncOpenOptions {
+                partition_id: "other".into(),
+                ..options("all")
+            },
+            NativeSyncOpenOptions {
+                client_id: "other-account".into(),
+                ..options("all")
+            },
+        ] {
+            assert_eq!(
+                inspect_sync_state(database.clone(), changed).await.unwrap(),
+                NativeSyncInspection::Missing
+            );
+        }
+        client.close().await;
+        database.close().await.unwrap();
+        drop(client);
+        drop(database);
+        let reopened = surrealkv_database(directory.path()).await;
+        assert_eq!(
+            inspect_sync_state(reopened.clone(), options("all"))
+                .await
+                .unwrap(),
+            expected
+        );
+        reopened.close().await.unwrap();
     }
 
     #[tokio::test]

@@ -1,3 +1,4 @@
+import * as nativeBindings from "./native";
 import {
   LiveAction as NativeLiveAction,
   NativeOutputEncoding,
@@ -46,6 +47,20 @@ export {
   SurrealRnError_Tags,
 };
 export type { ConnectOptions };
+
+/** Existing-journal inventory. Missing is never an empty initialized journal. */
+export type ExperimentalSyncInspection =
+  | { kind: "missing" }
+  | {
+      kind: "present";
+      revision: bigint;
+      pendingCount: number;
+      outcomeCount: number;
+      /** Durable conflicts without an explicit resolution. */
+      conflictCount: number;
+      barrier:
+        "none" | "needs_new_scope_journal" | "pending_quarantine_required";
+    };
 
 /** Create the native, bounded `surrealdb-sync/1` canonical CBOR codec. */
 export function createExperimentalCanonicalCborSyncHttpCodec(): ExperimentalSyncHttpCodec {
@@ -396,6 +411,55 @@ export class SurrealClient {
     return new ExperimentalSyncClient(
       await nativeOpenSyncClient(this.#native, options, callOptions),
     );
+  }
+
+  /**
+   * Inspect existing local state without schema installation, initialization or
+   * migration. Requires a quiesced embedded journal and matching native ABI.
+   * Opening a database itself is not a physical read-only filesystem operation.
+   * A ready journal reported missing must be treated as an integrity failure.
+   */
+  async inspectExperimentalSync(
+    options: ExperimentalSyncOpenOptions,
+    callOptions?: CallOptions,
+  ): Promise<ExperimentalSyncInspection> {
+    // Optional lookup deliberately fails closed on older generated/native ABIs.
+    const inspect = (
+      nativeBindings as unknown as {
+        inspectSyncState?: (
+          database: SurrealDatabaseLike,
+          options: ExperimentalSyncOpenOptions,
+          callOptions?: CallOptions,
+        ) => Promise<{
+          tag: "Missing" | "Present";
+          inner?: {
+            revision: bigint;
+            pendingCount: number;
+            outcomeCount: number;
+            conflictCount: number;
+            barrier: 0 | 1 | 2;
+          };
+        }>;
+      }
+    ).inspectSyncState;
+    if (typeof inspect !== "function") {
+      throw new Error(
+        "Sync inspection requires matching rebuilt native binaries",
+      );
+    }
+    const result = await inspect(this.#native, options, callOptions);
+    if (result.tag === "Missing") return { kind: "missing" };
+    const value = result.inner;
+    if (result.tag !== "Present" || !value)
+      throw new Error("Invalid sync inspection result");
+    const barriers = {
+      0: "none",
+      1: "needs_new_scope_journal",
+      2: "pending_quarantine_required",
+    } as const;
+    if (!(value.barrier in barriers))
+      throw new Error("Invalid sync inspection barrier");
+    return { kind: "present", ...value, barrier: barriers[value.barrier] };
   }
 
   use(namespace: string, database: string, options?: CallOptions) {

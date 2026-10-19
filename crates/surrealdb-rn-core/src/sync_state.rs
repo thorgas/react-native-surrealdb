@@ -32,7 +32,7 @@ const OUTCOME_TABLE: &str = "_sync_client_outcome";
 const SUBSCRIPTION_RECORD_TABLE: &str = "_sync_client_subscription_record";
 const ID_MAP_TABLE: &str = "_sync_client_id_map";
 const MIGRATED_SENTINEL: &[u8] = b"migrated-to-v2";
-const MAX_IDENTITY_BYTES: usize = 512;
+pub(crate) const MAX_IDENTITY_BYTES: usize = 512;
 const MAX_RECORD_ID_BYTES: usize = 1024;
 const MAX_COMPONENT_KEY_BYTES: usize = 1024;
 pub const MAX_SYNC_STATE_BYTES: usize = 4 * 1024 * 1024;
@@ -300,23 +300,7 @@ impl<'a> SyncStateStore<'a> {
             .select(scope_barrier_record_id(key))
             .await
             .map_err(SyncStateError::Database)?;
-        if let Some(value) = &barrier
-            && (!matches!(
-                value.reason.as_str(),
-                "pending_quarantine_required" | "needs_new_scope_journal"
-            ) || value.required_scope.len() > MAX_IDENTITY_BYTES
-                || [
-                    &value.required_subscription_revision,
-                    &value.required_authorization_revision,
-                ]
-                .iter()
-                .any(|s| match s.parse::<u64>() {
-                    Ok(value) => value.to_string() != **s,
-                    Err(_) => true,
-                }))
-        {
-            return Err(SyncStateError::CorruptState);
-        }
+        validate_scope_barrier(barrier.as_ref())?;
         Ok(barrier)
     }
 
@@ -334,6 +318,94 @@ impl<'a> SyncStateStore<'a> {
             .bind(("subscription", barrier.required_subscription_revision)).bind(("authorization", barrier.required_authorization_revision))
             .await.map_err(SyncStateError::Database)?.check().map_err(SyncStateError::Database)?;
         Ok(())
+    }
+
+    /// Inspect a journal without installing schema, initializing, or migrating it.
+    /// The cancelled read transaction keeps all components and the barrier coherent.
+    pub(crate) async fn inspect(
+        &self,
+        key: SyncStateKey<'_>,
+    ) -> Result<(Option<StoredSyncState>, Option<ScopeBarrier>), SyncStateError> {
+        validate_key(key)?;
+        let client = self.database.client().await.map_err(SyncStateError::Core)?;
+        let transaction = client.begin().await.map_err(SyncStateError::Database)?;
+        let result = async {
+            #[derive(SurrealValue)]
+            struct Schema {
+                tables: BTreeMap<String, String>,
+            }
+            let response = transaction
+                .query("INFO FOR DB")
+                .await
+                .map_err(SyncStateError::Database)?;
+            let mut response = match response.check() {
+                Ok(response) => response,
+                Err(error)
+                    if matches!(
+                        error.not_found_details(),
+                        Some(
+                            surrealdb::types::NotFoundError::Namespace { .. }
+                                | surrealdb::types::NotFoundError::Database { .. }
+                        )
+                    ) =>
+                {
+                    return Ok((None, None));
+                }
+                Err(error) => return Err(SyncStateError::Database(error)),
+            };
+            let schema: Option<Schema> = response.take(0).map_err(SyncStateError::Database)?;
+            let tables: BTreeSet<String> = schema
+                .ok_or(SyncStateError::CorruptState)?
+                .tables
+                .into_keys()
+                .collect();
+            preflight_inspection(&transaction, &tables, key).await?;
+            let state = load_v2(Connection::Inspection(&transaction, &tables), key).await?;
+            let legacy: Option<StoredRecord> = if tables.contains(STATE_TABLE) {
+                transaction
+                    .select(record_id(key))
+                    .await
+                    .map_err(SyncStateError::Database)?
+            } else {
+                None
+            };
+            let state = match (state, legacy) {
+                (Some(state), Some(sentinel)) => {
+                    if sentinel.format_version != FORMAT_VERSION
+                        || sentinel.partition_id != key.partition_id.0
+                        || sentinel.client_id != key.client_id.0
+                        || sentinel.payload.as_ref() != MIGRATED_SENTINEL
+                        || parse_revision(&sentinel.revision)? > state.revision
+                    {
+                        return Err(SyncStateError::CorruptState);
+                    }
+                    Some(state)
+                }
+                (Some(state), None) => Some(state),
+                (None, Some(legacy)) => Some(decode_record(key, legacy)?),
+                (None, None) => None,
+            };
+            let barrier: Option<ScopeBarrier> = if tables.contains("_sync_client_scope_barrier") {
+                transaction
+                    .select(scope_barrier_record_id(key))
+                    .await
+                    .map_err(SyncStateError::Database)?
+            } else {
+                None
+            };
+            validate_scope_barrier(barrier.as_ref())?;
+            if state.is_none() && barrier.is_some() {
+                return Err(SyncStateError::CorruptState);
+            }
+            Ok((state, barrier))
+        }
+        .await;
+        // Cancellation failure is an error even if the reads succeeded.
+        transaction
+            .cancel()
+            .await
+            .map_err(SyncStateError::Database)?;
+        result
     }
 
     pub async fn load(
@@ -716,16 +788,172 @@ async fn write_row_diff(
     Ok(())
 }
 
+/// Only scalar lengths cross into Rust until the entire journal passes its budgets.
+/// LIMIT bounds returned metadata rows, not database scans or server-side CPU.
+#[derive(SurrealValue)]
+struct InspectionLengths {
+    payload_bytes: u64,
+    partition_bytes: u64,
+    client_bytes: u64,
+    key_bytes: u64,
+}
+
+fn inspection_length_budget(
+    row: &InspectionLengths,
+    component: bool,
+    aggregate: &mut u64,
+    count: &mut usize,
+) -> Result<(), SyncStateError> {
+    // JSON encoding can expand each UTF-8 byte by up to six bytes plus quotes.
+    // Exact decoded identity/key limits are still checked by the normal loader.
+    if row.payload_bytes > MAX_SYNC_STATE_BYTES as u64
+        || row.partition_bytes > (6 * MAX_IDENTITY_BYTES + 2) as u64
+        || row.client_bytes > (6 * MAX_IDENTITY_BYTES + 2) as u64
+        || row.key_bytes > (6 * MAX_COMPONENT_KEY_BYTES + 2) as u64
+    {
+        return Err(SyncStateError::StateTooLarge);
+    }
+    *aggregate = aggregate
+        .checked_add(row.payload_bytes)
+        .ok_or(SyncStateError::StateTooLarge)?;
+    *count = count
+        .checked_add(usize::from(component))
+        .ok_or(SyncStateError::StateTooLarge)?;
+    if *aggregate > MAX_AGGREGATE_STATE_BYTES as u64 || *count > MAX_COMPONENT_ITEMS {
+        return Err(SyncStateError::StateTooLarge);
+    }
+    Ok(())
+}
+
+async fn preflight_inspection(
+    transaction: &Transaction<Any>,
+    tables: &BTreeSet<String>,
+    key: SyncStateKey<'_>,
+) -> Result<(), SyncStateError> {
+    let mut aggregate = 0;
+    let mut count = 0;
+    for table in [
+        META_TABLE,
+        STATE_TABLE,
+        CONFIRMED_TABLE,
+        OUTBOX_TABLE,
+        OUTCOME_TABLE,
+        ID_MAP_TABLE,
+        SUBSCRIPTION_RECORD_TABLE,
+    ] {
+        if !tables.contains(table) {
+            continue;
+        }
+        let component = !matches!(table, META_TABLE | STATE_TABLE);
+        let key_expression = if component {
+            "bytes::len(<bytes>encoding::json::encode(component_key))"
+        } else if table == STATE_TABLE {
+            "bytes::len(<bytes>encoding::json::encode(revision))"
+        } else {
+            "0"
+        };
+        let projection = format!(
+            "SELECT bytes::len(payload) AS payload_bytes, bytes::len(<bytes>encoding::json::encode(partition_id)) AS partition_bytes, bytes::len(<bytes>encoding::json::encode(client_id)) AS client_bytes, {key_expression} AS key_bytes"
+        );
+        let statement = if component {
+            format!(
+                "{projection} FROM {table} WHERE partition_id = $partition_id AND client_id = $client_id LIMIT 16385"
+            )
+        } else {
+            format!("{projection} FROM $id")
+        };
+        let mut response = transaction
+            .query(statement)
+            .bind(("partition_id", key.partition_id.0.clone()))
+            .bind(("client_id", key.client_id.0.clone()))
+            .bind((
+                "id",
+                if table == STATE_TABLE {
+                    record_id(key)
+                } else {
+                    meta_record_id(key)
+                },
+            ))
+            .await
+            .map_err(SyncStateError::Database)?
+            .check()
+            .map_err(SyncStateError::Database)?;
+        let rows: Vec<InspectionLengths> = response.take(0).map_err(SyncStateError::Database)?;
+        for row in rows {
+            if table == STATE_TABLE {
+                if row.key_bytes > 6 * 20 + 2 {
+                    return Err(SyncStateError::StateTooLarge);
+                }
+                // A migrated sentinel is additional to the current format's budget;
+                // a genuine legacy journal has its own stricter 4 MiB envelope.
+                inspection_length_budget(&row, false, &mut 0, &mut 0)?;
+            } else {
+                inspection_length_budget(&row, component, &mut aggregate, &mut count)?;
+            }
+        }
+    }
+    if tables.contains("_sync_client_scope_barrier") {
+        #[derive(SurrealValue)]
+        struct BarrierLengths {
+            reason_bytes: u64,
+            scope_bytes: u64,
+            subscription_bytes: u64,
+            authorization_bytes: u64,
+        }
+        let mut response = transaction.query("SELECT bytes::len(<bytes>encoding::json::encode(reason)) AS reason_bytes, bytes::len(<bytes>encoding::json::encode(required_scope)) AS scope_bytes, bytes::len(<bytes>encoding::json::encode(required_subscription_revision)) AS subscription_bytes, bytes::len(<bytes>encoding::json::encode(required_authorization_revision)) AS authorization_bytes FROM $id")
+            .bind(("id", scope_barrier_record_id(key))).await.map_err(SyncStateError::Database)?.check().map_err(SyncStateError::Database)?;
+        let rows: Vec<BarrierLengths> = response.take(0).map_err(SyncStateError::Database)?;
+        if rows.iter().any(|row| {
+            row.reason_bytes > 6 * 32 + 2
+                || row.scope_bytes > (6 * MAX_IDENTITY_BYTES + 2) as u64
+                || row.subscription_bytes > 6 * 20 + 2
+                || row.authorization_bytes > 6 * 20 + 2
+        }) {
+            return Err(SyncStateError::StateTooLarge);
+        }
+    }
+    Ok(())
+}
+
+fn validate_scope_barrier(barrier: Option<&ScopeBarrier>) -> Result<(), SyncStateError> {
+    if let Some(value) = barrier
+        && (!matches!(
+            value.reason.as_str(),
+            "pending_quarantine_required" | "needs_new_scope_journal"
+        ) || value.required_scope.len() > MAX_IDENTITY_BYTES
+            || [
+                &value.required_subscription_revision,
+                &value.required_authorization_revision,
+            ]
+            .iter()
+            .any(|s| match s.parse::<u64>() {
+                Ok(value) => value.to_string() != **s,
+                Err(_) => true,
+            }))
+    {
+        return Err(SyncStateError::CorruptState);
+    }
+    Ok(())
+}
+
 enum Connection<'a> {
     Client(&'a surrealdb::Surreal<Any>),
     Transaction(&'a Transaction<Any>),
+    Inspection(&'a Transaction<Any>, &'a BTreeSet<String>),
 }
 
 impl Connection<'_> {
     async fn meta(&self, id: NativeRecordId) -> Result<Option<StoredMetaRow>, SyncStateError> {
+        if let Self::Inspection(_, tables) = self
+            && !tables.contains(META_TABLE)
+        {
+            return Ok(None);
+        }
         match self {
             Self::Client(value) => value.select(id).await.map_err(SyncStateError::Database),
-            Self::Transaction(value) => value.select(id).await.map_err(SyncStateError::Database),
+            Self::Transaction(value) | Self::Inspection(value, _) => {
+                value.select(id).await.map_err(SyncStateError::Database)
+            }
         }
     }
 
@@ -734,6 +962,11 @@ impl Connection<'_> {
         table: &'static str,
         key: SyncStateKey<'_>,
     ) -> Result<Vec<StoredComponentRow>, SyncStateError> {
+        if let Self::Inspection(_, tables) = self
+            && !tables.contains(table)
+        {
+            return Ok(Vec::new());
+        }
         let statement = match table {
             SUBSCRIPTION_RECORD_TABLE => {
                 "SELECT * FROM _sync_client_subscription_record WHERE partition_id = $partition_id AND client_id = $client_id LIMIT 16385"
@@ -764,7 +997,7 @@ impl Connection<'_> {
                     .map_err(SyncStateError::Database)?;
                 response.take(0).map_err(SyncStateError::Database)
             }
-            Self::Transaction(value) => {
+            Self::Transaction(value) | Self::Inspection(value, _) => {
                 let mut response = value
                     .query(statement)
                     .bind(("partition_id", key.partition_id.0.clone()))
@@ -1303,6 +1536,226 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn inspection_missing_and_legacy_never_install_or_migrate() {
+        let database = memory_database().await;
+        let client = database.client().await.unwrap();
+        let state = enqueue(
+            empty_state("partition", "legacy"),
+            "one",
+            "person:local",
+            json!("private"),
+        );
+        let key = SyncStateKey::new(&state.partition_id, &state.client_id);
+        let store = SyncStateStore::new(&database);
+        let before = client
+            .query("INFO FOR ROOT")
+            .await
+            .unwrap()
+            .take::<Option<Value>>(0)
+            .unwrap();
+        assert!(store.inspect(key).await.unwrap().0.is_none());
+        let after = client
+            .query("INFO FOR ROOT")
+            .await
+            .unwrap()
+            .take::<Option<Value>>(0)
+            .unwrap();
+        assert_eq!(before, after);
+        // A genuine v1-only schema: no normalized tables are defined.
+        client
+            .query("DEFINE TABLE _sync_client_state SCHEMALESS")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        let _: Option<Value> = client
+            .upsert(record_id(key))
+            .content(StoredRecord {
+                format_version: LEGACY_FORMAT_VERSION,
+                partition_id: state.partition_id.0.clone(),
+                client_id: state.client_id.0.clone(),
+                revision: state.revision.to_string(),
+                payload: serde_json::to_vec(&state).unwrap().into(),
+            })
+            .await
+            .unwrap();
+        let before = client
+            .query("INFO FOR DB; SELECT * FROM _sync_client_state")
+            .await
+            .unwrap();
+        let mut before = before;
+        let schema: Option<Value> = before.take(0).unwrap();
+        let rows: Vec<Value> = before.take(1).unwrap();
+        assert_eq!(store.inspect(key).await.unwrap().0, Some(state));
+        let mut after = client
+            .query("INFO FOR DB; SELECT * FROM _sync_client_state")
+            .await
+            .unwrap();
+        assert_eq!(schema, after.take::<Option<Value>>(0).unwrap());
+        assert_eq!(rows, after.take::<Vec<Value>>(1).unwrap());
+    }
+
+    #[tokio::test]
+    async fn inspection_rejects_barrier_only_orphan_and_corrupt_legacy() {
+        let database = memory_database().await;
+        let store = SyncStateStore::new(&database);
+        store.define_schema().await.unwrap();
+        let state = empty_state("partition", "client");
+        let key = SyncStateKey::new(&state.partition_id, &state.client_id);
+        store
+            .save_scope_barrier(
+                key,
+                ScopeBarrier {
+                    reason: "needs_new_scope_journal".into(),
+                    required_scope: "new".into(),
+                    required_subscription_revision: "2".into(),
+                    required_authorization_revision: "3".into(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            store.inspect(key).await,
+            Err(SyncStateError::CorruptState)
+        ));
+        let client = database.client().await.unwrap();
+        let _: Option<Value> = client.delete(scope_barrier_record_id(key)).await.unwrap();
+        let _: Option<Value> = client
+            .upsert(record_id(key))
+            .content(StoredRecord {
+                format_version: LEGACY_FORMAT_VERSION,
+                partition_id: "wrong-owner".into(),
+                client_id: "client".into(),
+                revision: "0".into(),
+                payload: b"invalid".to_vec().into(),
+            })
+            .await
+            .unwrap();
+        assert!(store.inspect(key).await.is_err());
+        let _: Option<Value> = client.delete(record_id(key)).await.unwrap();
+        store.save_atomic(None, &state).await.unwrap();
+        let queued = enqueue(state.clone(), "one", "person:local", json!("private"));
+        store.save_atomic(Some(0), &queued).await.unwrap();
+        let _: Option<Value> = client.delete(meta_record_id(key)).await.unwrap();
+        assert!(matches!(
+            store.inspect(key).await,
+            Err(SyncStateError::CorruptState)
+        ));
+    }
+
+    #[tokio::test]
+    async fn inspection_rejects_missing_components_and_foreign_metadata() {
+        for foreign_metadata in [false, true] {
+            let database = memory_database().await;
+            let store = SyncStateStore::new(&database);
+            store.define_schema().await.unwrap();
+            let state = enqueue(
+                empty_state("partition", "client"),
+                "one",
+                "person:local",
+                json!("private"),
+            );
+            let key = SyncStateKey::new(&state.partition_id, &state.client_id);
+            let initial = empty_state("partition", "client");
+            store.save_atomic(None, &initial).await.unwrap();
+            store.save_atomic(Some(0), &state).await.unwrap();
+            let client = database.client().await.unwrap();
+            client
+                .query(if foreign_metadata {
+                    "UPDATE _sync_client_meta SET partition_id = 'foreign'"
+                } else {
+                    "DELETE _sync_client_outbox"
+                })
+                .await
+                .unwrap()
+                .check()
+                .unwrap();
+            assert!(matches!(
+                store.inspect(key).await,
+                Err(SyncStateError::CorruptState)
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn inspection_preflights_oversize_and_aggregate_before_decoding_payloads() {
+        for aggregate_overflow in [false, true] {
+            let database = memory_database().await;
+            let store = SyncStateStore::new(&database);
+            store.define_schema().await.unwrap();
+            let state = empty_state("partition", "client");
+            let key = SyncStateKey::new(&state.partition_id, &state.client_id);
+            let client = database.client().await.unwrap();
+            // Deliberately malformed metadata: any payload decoding would fail
+            // differently, before reaching the aggregate validation in load_v2.
+            let _: Option<Value> = client
+                .upsert(meta_record_id(key))
+                .content(StoredMetaRow {
+                    format_version: FORMAT_VERSION,
+                    partition_id: "partition".into(),
+                    client_id: "client".into(),
+                    payload: b"not-json".to_vec().into(),
+                })
+                .await
+                .unwrap();
+            let rows = if aggregate_overflow { 17 } else { 1 };
+            let payload = vec![0; MAX_SYNC_STATE_BYTES + usize::from(!aggregate_overflow)];
+            for index in 0..rows {
+                let component_key = format!("commit-{index}");
+                let _: Option<Value> = client
+                    .upsert(component_record_id(
+                        key,
+                        &address(OUTBOX_TABLE, component_key.clone()),
+                    ))
+                    .content(StoredComponentRow {
+                        format_version: FORMAT_VERSION,
+                        partition_id: "partition".into(),
+                        client_id: "client".into(),
+                        component_key,
+                        payload: payload.clone().into(),
+                    })
+                    .await
+                    .unwrap();
+            }
+            assert!(matches!(
+                store.inspect(key).await,
+                Err(SyncStateError::StateTooLarge)
+            ));
+        }
+    }
+
+    #[test]
+    fn inspection_preflight_metadata_budgets_preserve_exact_limits() {
+        let row = InspectionLengths {
+            payload_bytes: MAX_SYNC_STATE_BYTES as u64,
+            partition_bytes: 6 * MAX_IDENTITY_BYTES as u64 + 2,
+            client_bytes: 6 * MAX_IDENTITY_BYTES as u64 + 2,
+            key_bytes: 6 * MAX_COMPONENT_KEY_BYTES as u64 + 2,
+        };
+        let mut aggregate = 0;
+        let mut count = 0;
+        for _ in 0..16 {
+            inspection_length_budget(&row, true, &mut aggregate, &mut count).unwrap();
+        }
+        assert_eq!(aggregate, MAX_AGGREGATE_STATE_BYTES as u64);
+        assert!(matches!(
+            inspection_length_budget(&row, true, &mut aggregate, &mut count),
+            Err(SyncStateError::StateTooLarge)
+        ));
+        let row = InspectionLengths {
+            payload_bytes: 0,
+            partition_bytes: 0,
+            client_bytes: 0,
+            key_bytes: 0,
+        };
+        let mut count = MAX_COMPONENT_ITEMS;
+        assert!(matches!(
+            inspection_length_budget(&row, true, &mut 0, &mut count),
+            Err(SyncStateError::StateTooLarge)
+        ));
     }
 
     #[tokio::test]
