@@ -247,6 +247,10 @@ interface NativeModuleInterface {
     clientId: Uint8Array,
     commitJson: Uint8Array,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_inspect_storage(
+    database: bigint,
+    options: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_func_inspect_sync_state(
     database: bigint,
     options: Uint8Array,
@@ -494,6 +498,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_subscription_request_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_sync_pull_request(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_sync_push_request(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_inspect_storage(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_inspect_sync_state(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_open_sync_client(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_close(): number;

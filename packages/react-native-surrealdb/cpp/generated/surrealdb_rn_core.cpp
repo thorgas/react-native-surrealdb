@@ -280,6 +280,8 @@ uniffi_surrealdb_rn_core_fn_method_nativesyncclient_subscription_snapshot_json(
 /*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop();
 /*handle*/ uint64_t
 uniffi_surrealdb_rn_core_fn_func_connect(RustBuffer options);
+/*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_func_inspect_storage(
+    /*handle*/ uint64_t database, RustBuffer options);
 /*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_func_bind_bootstrap_session(
     /*handle*/ uint64_t client, RustBuffer expected);
 RustBuffer uniffi_surrealdb_rn_core_fn_func_bootstrap_capabilities(
@@ -423,6 +425,7 @@ void ffi_surrealdb_rn_core_rust_future_complete_void(
     /*handle*/ uint64_t handle, RustCallStatus *uniffi_out_err);
 uint16_t uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_connect();
+uint16_t uniffi_surrealdb_rn_core_checksum_func_inspect_storage();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_bind_bootstrap_session();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_bootstrap_capabilities();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_inspect_sync_state();
@@ -2716,6 +2719,17 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
             return this->cpp_uniffi_surrealdb_rn_core_fn_func_connect(
                 rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_func_inspect_storage"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt, "ubrn_uniffi_surrealdb_rn_core_fn_func_inspect_storage"),
+          2,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this->cpp_uniffi_surrealdb_rn_core_fn_func_inspect_storage(
+                rt, thisVal, args, count);
+          });
   props["ubrn_uniffi_surrealdb_rn_core_fn_func_bind_bootstrap_session"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -3393,6 +3407,19 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                  const jsi::Value *args, size_t count) -> jsi::Value {
             return this->cpp_uniffi_surrealdb_rn_core_checksum_func_connect(
                 rt, thisVal, args, count);
+          });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_func_inspect_storage"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(
+              rt,
+              "ubrn_uniffi_surrealdb_rn_core_checksum_func_inspect_storage"),
+          0,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_checksum_func_inspect_storage(
+                    rt, thisVal, args, count);
           });
   props["ubrn_uniffi_surrealdb_rn_core_checksum_func_bind_bootstrap_session"] =
       jsi::Function::createFromHostFunction(
@@ -5496,6 +5523,19 @@ jsi::Value NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_func_connect(
   return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
                                                          value);
 }
+jsi::Value
+NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_func_inspect_storage(
+    jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+    size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_func_inspect_storage(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]),
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[1]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
 jsi::Value NativeSurrealdbRnCore::
     cpp_uniffi_surrealdb_rn_core_fn_func_bind_bootstrap_session(
         jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
@@ -6236,6 +6276,14 @@ NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_checksum_func_connect(
     jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
     size_t count) {
   auto value = uniffi_surrealdb_rn_core_checksum_func_connect();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_func_inspect_storage(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_checksum_func_inspect_storage();
 
   return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }

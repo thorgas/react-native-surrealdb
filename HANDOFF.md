@@ -268,3 +268,44 @@ Logs/provenance: /private/tmp/haus-inspector-canonical-{build.log,artifacts.json
 provenance.json,tests.log,persistent.log,clippy.log}. Persistent fixture retained at
 /private/tmp/haus-inspector-canonical-persistent. Matching rebuilt iOS/Android
 acceptance remains required; no SDK public push is authorized pending user choice.
+
+
+## 2026-10-19 typed whole-storage inspection bridge
+
+Based on local e6b0d746 plus the accepted six-file internal inspector patch
+(subsequently committed by the coordinator as 216fc40). This additive source slice
+exports typed no-init inspectStorage options/result/error through UniFFI and
+SurrealClient.inspectExperimentalStorage. Existing APIs and all 66 previous native
+checksums remain unchanged. All 67 generated checksums match the actual immutable
+host dylib; two generator runs reproduce all six generated/entry files exactly.
+No generated code/checksum was edited by hand. Host dylib SHA256:
+2243845f79e58fcb77cb4f0b0e1013ea669fa0d0c6a3f03e666fa398d8719dab.
+
+The facade snapshots bounded own data properties, rejects hostile accessors/proxy
+traps with fixed redacted classifications, validates/copies/freezes bounded native
+output, preserves bigint revisions and forwards AbortSignal for this read only.
+Namespaced storage names accept the actual household-local profile name; they are
+bound/compared only, while SQL table identifiers remain strict. Permanent embedded
+coverage proves pristine and selected no-init behavior with hyphenated names.
+
+Host proof: 147 core tests pass (2 explicit fixture/server tests ignored by default),
+explicit SurrealKV inspector reopen 1 pass; all-target warning-denied clippy, fmt and
+diff checks pass. TypeScript 134 tests pass (focused new 8), typecheck, full source/test
+formatting and Bob module/declaration build pass. Generation/checksum receipt and
+frozen source/executable identity live under
+/private/tmp/haus-storage-inspection-abi-SOtM1l. This is source/host evidence only:
+matching rebuilt iOS/Android binaries, runtime fingerprints and device execution
+remain mandatory before app activation. Existing generated import gating can
+reject an old native binary before the method-level typed UnsupportedAbi path.
+No physical owner-marker policy, journal creation/migration, app activation,
+mobile artifact build, publication, push or commit belongs to this worker slice.
+
+Canonical ABI acceptance: all13 frozen source/generated hashes matched before
+source refresh and fresh:false exact-manifest host compilation. Immutable canonical
+test executable/listing/provenance saved at /private/tmp/haus-inspector-abi-canonical-*;
+147 core passed/2explicit ignored plus explicit SurrealKV reopen1pass/0skip.
+Full TypeScript134passed/0skip, typecheck and strict all-target Clippy/fmt/diff pass.
+The initial sandboxed HTTP test failed on listen EPERM; the identical suite passed
+with loopback permission. No pnpm install/module purge was accepted; installed
+binaries were used directly after pnpm's automatic preflight attempted a network
+metadata check. No SDK remote push, platform build or app activation is claimed.

@@ -28,3 +28,11 @@ export type {
   ExperimentalBootstrapProgress,
   ExperimentalBootstrapCompletion,
 } from "./sync-bootstrap";
+
+export { ExperimentalStorageInspectionError } from "./sync-storage-inspection";
+export type {
+  ExperimentalStorageInspectionOptions,
+  ExperimentalStorageInspection,
+  ExperimentalStorageJournalInspection,
+  ExperimentalStorageInspectionErrorCode,
+} from "./sync-storage-inspection";

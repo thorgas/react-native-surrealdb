@@ -1,11 +1,4 @@
-//! Internal, no-init whole-storage ownership observation. No ABI or app marker policy.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "internal inspector pending reviewed physical-owner composition"
-    )
-)]
+//! No-init whole-storage ownership observation. App marker policy remains separate.
 use crate::SurrealDatabase;
 use crate::sync_client::{
     NativeSyncInspection, NativeSyncInspectionBarrier, NativeSyncOpenOptions,
@@ -18,28 +11,29 @@ use surrealdb::types::{SurrealValue, Value};
 use surrealdb_sync_client::ClientRuntime;
 use surrealdb_sync_protocol::{ClientId, DurableOutcome, PartitionId};
 
-pub(crate) struct NativeStorageInspectionOptions {
+#[derive(Clone, Debug, uniffi::Record)]
+pub struct NativeStorageInspectionOptions {
     pub namespace: String,
     pub database: String,
     pub expected_journal: NativeSyncOpenOptions,
     pub application_tables: Vec<String>,
 }
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum NativeStorageInspection {
+#[derive(Debug, PartialEq, Eq, uniffi::Enum)]
+pub enum NativeStorageInspection {
     PristineUnselected,
     Selected {
         native: NativeSyncInspection,
         application_tables: Vec<NativeTableOccupancy>,
     },
 }
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) struct NativeTableOccupancy {
+#[derive(Debug, PartialEq, Eq, uniffi::Record)]
+pub struct NativeTableOccupancy {
     pub table: String,
     pub schema_present: bool,
     pub rows_present: bool,
 }
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum InspectionError {
+#[derive(Debug, thiserror::Error, uniffi::Error)]
+pub enum NativeStorageInspectionError {
     #[error("invalid inspection options")]
     InvalidOptions,
     #[error("storage is closed or unsettled")]
@@ -53,15 +47,23 @@ pub(crate) enum InspectionError {
     #[error("storage read or cancellation failed")]
     Persistence,
 }
-fn settled(db: &SurrealDatabase, generation: u64) -> Result<(), InspectionError> {
+fn settled(db: &SurrealDatabase, generation: u64) -> Result<(), NativeStorageInspectionError> {
     if db.is_closed()
         || db.sync_runtimes.is_poisoned()
         || db.session_generation.load(Ordering::Acquire) != generation
     {
-        return Err(InspectionError::Unsettled);
+        return Err(NativeStorageInspectionError::Unsettled);
     }
     Ok(())
 }
+// Namespace/database names are bound or compared, never interpolated as SQL.
+fn storage_name(s: &str) -> bool {
+    !s.is_empty()
+        && s.len() <= 64
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+}
+
 fn identifier(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= 64
@@ -69,14 +71,14 @@ fn identifier(s: &str) -> bool {
             .enumerate()
             .all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && b.is_ascii_digit()))
 }
-fn persistence(_: impl std::fmt::Debug) -> InspectionError {
-    InspectionError::Persistence
+fn persistence(_: impl std::fmt::Debug) -> NativeStorageInspectionError {
+    NativeStorageInspectionError::Persistence
 }
-fn state_error(error: SyncStateError) -> InspectionError {
+fn state_error(error: SyncStateError) -> NativeStorageInspectionError {
     match error {
-        SyncStateError::CorruptState => InspectionError::CorruptState,
-        SyncStateError::StateTooLarge => InspectionError::MetadataLimit,
-        _ => InspectionError::Persistence,
+        SyncStateError::CorruptState => NativeStorageInspectionError::CorruptState,
+        SyncStateError::StateTooLarge => NativeStorageInspectionError::MetadataLimit,
+        _ => NativeStorageInspectionError::Persistence,
     }
 }
 #[derive(SurrealValue)]
@@ -84,7 +86,10 @@ struct Metadata {
     count: u64,
     valid: bool,
 }
-async fn metadata(tx: &surrealdb::Surreal<Any>, sql: &str) -> Result<Metadata, InspectionError> {
+async fn metadata(
+    tx: &surrealdb::Surreal<Any>,
+    sql: &str,
+) -> Result<Metadata, NativeStorageInspectionError> {
     let mut r = tx
         .query(sql)
         .await
@@ -93,7 +98,7 @@ async fn metadata(tx: &surrealdb::Surreal<Any>, sql: &str) -> Result<Metadata, I
         .map_err(persistence)?;
     r.take::<Option<Metadata>>(r.num_statements() - 1)
         .map_err(persistence)?
-        .ok_or(InspectionError::UnsupportedLayout)
+        .ok_or(NativeStorageInspectionError::UnsupportedLayout)
 }
 
 /// Observation only: caller retains its lifecycle/owner fence after this returns.
@@ -101,15 +106,15 @@ async fn metadata(tx: &surrealdb::Surreal<Any>, sql: &str) -> Result<Metadata, I
 pub(crate) async fn inspect_storage(
     db: &SurrealDatabase,
     options: NativeStorageInspectionOptions,
-) -> Result<NativeStorageInspection, InspectionError> {
+) -> Result<NativeStorageInspection, NativeStorageInspectionError> {
     if !db.embedded
-        || !identifier(&options.namespace)
-        || !identifier(&options.database)
+        || !storage_name(&options.namespace)
+        || !storage_name(&options.database)
         || options.application_tables.len() > 16
         || options.expected_journal.requested_scope.is_empty()
         || options.expected_journal.requested_scope.len() > sync_state::MAX_IDENTITY_BYTES
     {
-        return Err(InspectionError::InvalidOptions);
+        return Err(NativeStorageInspectionError::InvalidOptions);
     }
     let app: BTreeSet<_> = options.application_tables.iter().cloned().collect();
     if app.len() != options.application_tables.len()
@@ -117,12 +122,12 @@ pub(crate) async fn inspect_storage(
             .iter()
             .any(|s| !identifier(s) || s.starts_with("_sync_"))
     {
-        return Err(InspectionError::InvalidOptions);
+        return Err(NativeStorageInspectionError::InvalidOptions);
     }
     let partition = PartitionId(options.expected_journal.partition_id.clone());
     let client = ClientId(options.expected_journal.client_id.clone());
     let key = SyncStateKey::new(&partition, &client);
-    sync_state::validate_key(key).map_err(|_| InspectionError::InvalidOptions)?;
+    sync_state::validate_key(key).map_err(|_| NativeStorageInspectionError::InvalidOptions)?;
     let generation = db.session_generation.load(Ordering::Acquire);
     settled(db, generation)?;
     let _guard = db.journal_lifecycle.write().await;
@@ -141,13 +146,13 @@ async fn inspect_transaction(
     options: &NativeStorageInspectionOptions,
     app: &BTreeSet<String>,
     key: SyncStateKey<'_>,
-) -> Result<NativeStorageInspection, InspectionError> {
+) -> Result<NativeStorageInspection, NativeStorageInspectionError> {
     // Pinned unselected scalar projections require a namespace. Direct INFO is
     // the reviewed metadata-only exception: engine allocation precedes admission.
     let response =
         tokio::time::timeout(std::time::Duration::from_secs(2), tx.query("INFO FOR ROOT"))
             .await
-            .map_err(|_| InspectionError::Persistence)?;
+            .map_err(|_| NativeStorageInspectionError::Persistence)?;
     let mut response = response
         .map_err(persistence)?
         .check()
@@ -155,7 +160,7 @@ async fn inspect_transaction(
     settled(db, generation)?;
     let root: Value = response.take(0).map_err(persistence)?;
     let Value::Object(root) = &root else {
-        return Err(InspectionError::UnsupportedLayout);
+        return Err(NativeStorageInspectionError::UnsupportedLayout);
     };
     let allowed = [
         "accesses",
@@ -167,30 +172,30 @@ async fn inspect_transaction(
         "config",
     ];
     if root.len() != allowed.len() || root.keys().any(|key| !allowed.contains(&key.as_str())) {
-        return Err(InspectionError::UnsupportedLayout);
+        return Err(NativeStorageInspectionError::UnsupportedLayout);
     }
     for field in ["accesses", "defaults", "users"] {
         if !matches!(root.get(field),Some(Value::Object(value)) if value.is_empty()) {
-            return Err(InspectionError::UnsupportedLayout);
+            return Err(NativeStorageInspectionError::UnsupportedLayout);
         }
     }
     if !matches!(root.get("config"),Some(Value::Object(value)) if value.len()==1 && value.get("QUERY_TIMEOUT")==Some(&Value::None))
     {
-        return Err(InspectionError::UnsupportedLayout);
+        return Err(NativeStorageInspectionError::UnsupportedLayout);
     }
     let Some(Value::Object(namespaces)) = root.get("namespaces") else {
-        return Err(InspectionError::UnsupportedLayout);
+        return Err(NativeStorageInspectionError::UnsupportedLayout);
     };
     if namespaces.is_empty() {
         return Ok(NativeStorageInspection::PristineUnselected);
     }
     if namespaces.len() != 1 || !namespaces.contains_key(&options.namespace) {
-        return Err(InspectionError::UnsupportedLayout);
+        return Err(NativeStorageInspectionError::UnsupportedLayout);
     }
     let ns = metadata(tx,"LET $s=(INFO FOR NS); RETURN {count:array::len(object::keys($s.databases)),valid:array::len(array::complement(object::keys($s),['accesses','databases','users']))=0 AND $s.accesses={} AND $s.users={}}").await?;
     settled(db, generation)?;
     if !ns.valid || ns.count != 1 {
-        return Err(InspectionError::UnsupportedLayout);
+        return Err(NativeStorageInspectionError::UnsupportedLayout);
     }
     let mut r = tx
         .query("LET $s=(INFO FOR NS); RETURN object::keys($s.databases)=[$expected]")
@@ -202,22 +207,22 @@ async fn inspect_transaction(
     let matches: Option<bool> = r.take(r.num_statements() - 1).map_err(persistence)?;
     settled(db, generation)?;
     if matches != Some(true) {
-        return Err(InspectionError::UnsupportedLayout);
+        return Err(NativeStorageInspectionError::UnsupportedLayout);
     }
     let schema = metadata(tx,"LET $s=(INFO FOR DB); RETURN {count:array::len(object::keys($s.tables)),valid:array::len(array::complement(object::keys($s),['accesses','apis','analyzers','buckets','functions','modules','models','params','tables','users','configs','sequences']))=0 AND $s.accesses={} AND $s.apis={} AND $s.analyzers={} AND $s.buckets={} AND $s.functions={} AND $s.modules={} AND $s.models={} AND $s.params={} AND $s.users={} AND $s.configs={} AND $s.sequences={}}").await?;
     settled(db, generation)?;
     if !schema.valid {
-        return Err(InspectionError::UnsupportedLayout);
+        return Err(NativeStorageInspectionError::UnsupportedLayout);
     }
     if schema.count > 10 + app.len() as u64 {
-        return Err(InspectionError::MetadataLimit);
+        return Err(NativeStorageInspectionError::MetadataLimit);
     }
     // Reject giant names inside the engine before returning even a bounded name list.
     let mut r = tx.query("LET $s=(INFO FOR DB); RETURN array::len(object::keys($s.tables)[WHERE bytes::len(<bytes>$this)>64])=0").await.map_err(persistence)?.check().map_err(persistence)?;
     let names_valid: Option<bool> = r.take(r.num_statements() - 1).map_err(persistence)?;
     settled(db, generation)?;
     if names_valid != Some(true) {
-        return Err(InspectionError::MetadataLimit);
+        return Err(NativeStorageInspectionError::MetadataLimit);
     }
     let mut r = tx
         .query("LET $s=(INFO FOR DB); RETURN object::keys($s.tables)")
@@ -233,7 +238,7 @@ async fn inspect_transaction(
             && !["_sync_bootstrap_header", "_sync_bootstrap_page"].contains(&t.as_str())
             && !app.contains(t)
     }) {
-        return Err(InspectionError::UnsupportedLayout);
+        return Err(NativeStorageInspectionError::UnsupportedLayout);
     }
     let transaction = tx.clone().begin().await.map_err(persistence)?;
     let tx = &transaction;
@@ -251,18 +256,20 @@ async fn inspect_transaction(
             .map_err(state_error)?;
         settled(db, generation)?;
         let native = match state {
-            None if journal_rows || bootstrap_rows => return Err(InspectionError::CorruptState),
+            None if journal_rows || bootstrap_rows => {
+                return Err(NativeStorageInspectionError::CorruptState);
+            }
             None => NativeSyncInspection::Missing,
             Some(state) => {
                 if state.requested_scope.0 != options.expected_journal.requested_scope
                     || state.subscription_revision != options.expected_journal.subscription_revision
                 {
-                    return Err(InspectionError::CorruptState);
+                    return Err(NativeStorageInspectionError::CorruptState);
                 }
                 crate::sync_codec::validate_state_codec(&state)
-                    .map_err(|_| InspectionError::CorruptState)?;
-                let runtime =
-                    ClientRuntime::open(state).map_err(|_| InspectionError::CorruptState)?;
+                    .map_err(|_| NativeStorageInspectionError::CorruptState)?;
+                let runtime = ClientRuntime::open(state)
+                    .map_err(|_| NativeStorageInspectionError::CorruptState)?;
                 let state = runtime.state();
                 NativeSyncInspection::Present {
                     revision: state.revision,
@@ -287,7 +294,7 @@ async fn inspect_transaction(
                         Some("pending_quarantine_required") => {
                             NativeSyncInspectionBarrier::PendingQuarantineRequired
                         }
-                        _ => return Err(InspectionError::CorruptState),
+                        _ => return Err(NativeStorageInspectionError::CorruptState),
                     },
                 }
             }
@@ -439,7 +446,7 @@ mod tests {
         let _legacy = open_sync_client(db.clone(), other).await.unwrap();
         assert!(matches!(
             inspect_storage(&db, options()).await,
-            Err(InspectionError::CorruptState)
+            Err(NativeStorageInspectionError::CorruptState)
         ));
         let mut other = options().expected_journal;
         other.client_id = "third".into();
@@ -463,26 +470,26 @@ mod tests {
         sql(&db, "DEFINE FUNCTION fn::foreign(){RETURN true}").await;
         assert!(matches!(
             inspect_storage(&db, options()).await,
-            Err(InspectionError::UnsupportedLayout)
+            Err(NativeStorageInspectionError::UnsupportedLayout)
         ));
         let db = database(true).await;
         sql(&db, "CREATE foreign:one").await;
         assert!(matches!(
             inspect_storage(&db, options()).await,
-            Err(InspectionError::UnsupportedLayout)
+            Err(NativeStorageInspectionError::UnsupportedLayout)
         ));
         let db = database(false).await;
         let mut o = options();
         o.application_tables = vec!["_sync_client_meta".into()];
         assert!(matches!(
             inspect_storage(&db, o).await,
-            Err(InspectionError::InvalidOptions)
+            Err(NativeStorageInspectionError::InvalidOptions)
         ));
         let mut o = options();
         o.application_tables = vec!["injected;DELETE".into()];
         assert!(matches!(
             inspect_storage(&db, o).await,
-            Err(InspectionError::InvalidOptions)
+            Err(NativeStorageInspectionError::InvalidOptions)
         ));
     }
     #[tokio::test]
@@ -493,13 +500,13 @@ mod tests {
         }
         assert!(matches!(
             inspect_storage(&db, options()).await,
-            Err(InspectionError::MetadataLimit)
+            Err(NativeStorageInspectionError::MetadataLimit)
         ));
         let db = database(true).await;
         sql(&db, &format!("DEFINE TABLE {}", "x".repeat(65))).await;
         assert!(matches!(
             inspect_storage(&db, options()).await,
-            Err(InspectionError::MetadataLimit)
+            Err(NativeStorageInspectionError::MetadataLimit)
         ));
     }
     #[tokio::test]
@@ -515,7 +522,10 @@ mod tests {
         );
         db.session_generation.fetch_add(1, Ordering::AcqRel);
         drop(worker);
-        assert!(matches!(future.await, Err(InspectionError::Unsettled)));
+        assert!(matches!(
+            future.await,
+            Err(NativeStorageInspectionError::Unsettled)
+        ));
     }
     #[tokio::test]
     async fn wrong_selection_or_closed_storage_never_returns_known_state() {
@@ -526,7 +536,7 @@ mod tests {
         db.close().await.unwrap();
         assert!(matches!(
             inspect_storage(&db, options()).await,
-            Err(InspectionError::Unsettled)
+            Err(NativeStorageInspectionError::Unsettled)
         ));
     }
     #[tokio::test]
@@ -535,7 +545,7 @@ mod tests {
         db.sync_runtimes.poison_for_test();
         assert!(matches!(
             inspect_storage(&db, options()).await,
-            Err(InspectionError::Unsettled)
+            Err(NativeStorageInspectionError::Unsettled)
         ));
         let db = database(true).await;
         let worker = db.journal_lifecycle.read().await;
@@ -548,7 +558,10 @@ mod tests {
         );
         db.sync_runtimes.poison_for_test();
         drop(worker);
-        assert!(matches!(future.await, Err(InspectionError::Unsettled)));
+        assert!(matches!(
+            future.await,
+            Err(NativeStorageInspectionError::Unsettled)
+        ));
     }
     #[tokio::test]
     async fn null_none_wrong_owner_and_structured_alias_all_fail_closed() {
@@ -568,13 +581,13 @@ mod tests {
         .await;
         assert!(matches!(
             inspect_storage(&db, options()).await,
-            Err(InspectionError::UnsupportedLayout)
+            Err(NativeStorageInspectionError::UnsupportedLayout)
         ));
         let db = database(true).await;
         sql(&db, "DEFINE NAMESPACE foreign").await;
         assert!(matches!(
             inspect_storage(&db, options()).await,
-            Err(InspectionError::UnsupportedLayout)
+            Err(NativeStorageInspectionError::UnsupportedLayout)
         ));
     }
     #[tokio::test]
@@ -623,5 +636,32 @@ mod tests {
             vec!["owner_marker"]
         );
         db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn hyphenated_storage_names_are_bound_and_inspection_never_initializes() {
+        let db = database(false).await;
+        let mut expected = options();
+        expected.namespace = "household-local".into();
+        expected.database = "household-local".into();
+        assert_eq!(
+            inspect_storage(&db, expected).await.unwrap(),
+            NativeStorageInspection::PristineUnselected
+        );
+        db.use_namespace_database("household-local".into(), "household-local".into())
+            .await
+            .unwrap();
+        let mut expected = options();
+        expected.namespace = "household-local".into();
+        expected.database = "household-local".into();
+        assert!(matches!(
+            inspect_storage(&db, expected).await.unwrap(),
+            NativeStorageInspection::Selected {
+                native: NativeSyncInspection::Missing,
+                ..
+            }
+        ));
+        let result = db.query("INFO FOR DB".into(), None).await.unwrap();
+        let value: serde_json::Value = serde_json::from_str(&result[0].value_json).unwrap();
+        assert!(value["tables"].as_object().unwrap().is_empty());
     }
 }

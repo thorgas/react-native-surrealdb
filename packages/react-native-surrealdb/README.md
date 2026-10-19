@@ -517,3 +517,34 @@ allowlisted own data fields; it never evaluates an error's tag getter or inherit
 tag, and catches proxy inspection failures. Unknown mutating failures remain
 `RecoveryRequired`, unknown read failures remain `Storage`, and raw error causes
 or messages are not retained.
+
+
+### Experimental physical-storage observation
+
+`SurrealClient.inspectExperimentalStorage({ namespace, database, expectedJournal,
+applicationTables }, callOptions)` observes an existing embedded store without
+selecting a namespace, defining schema, initializing a journal or interpreting an
+application owner marker. It distinguishes `pristine_unselected` from `selected`
+with Missing/Present journal counts/barrier and per-configured-table schema/row
+booleans. Missing journal state does not imply physical emptiness. Unknown or
+foreign metadata, other native keys, corrupt/orphan rows and unsettled workers
+fail closed with `ExperimentalStorageInspectionError.code` and no raw native
+message, identity or cause.
+
+Namespace/database names allow 64 ASCII letters/digits/underscore/hyphen and are
+bound or compared only; table names retain the strict SQL identifier rule and
+cannot use the reserved `_sync_` prefix. At most 16 application tables are accepted.
+The facade snapshots validated own data properties and freezes copied output.
+The native engine remains authoritative and UniFFI input allocation precedes Rust
+limits. ROOT metadata uses a reviewed postdecode admission exception; this API
+makes no predecode, engine-scan or RSS guarantee. See
+[`READ_STORAGE_INSPECTION.md`](../../READ_STORAGE_INSPECTION.md) for the precise
+ownership and lifecycle boundary.
+
+Requires regenerated bindings and matching rebuilt native binaries/runtime
+fingerprints. The generated import compatibility gate can reject an old native
+binary before a typed method-level UnsupportedAbi error is possible. Host tests
+and checksum consistency do not establish mobile execution, physical-owner
+creation, application activation or package publication. The caller must keep its
+own quiesced owner fence through later validation/publication; this observation
+is not a future-write lease.

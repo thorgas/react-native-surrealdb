@@ -1,3 +1,8 @@
+import {
+  inspectExperimentalStorage,
+  type ExperimentalStorageInspectionOptions,
+  type ExperimentalStorageInspection,
+} from "./sync-storage-inspection";
 import * as nativeBindings from "./native";
 import {
   LiveAction as NativeLiveAction,
@@ -460,6 +465,16 @@ export class SurrealClient {
     if (!(value.barrier in barriers))
       throw new Error("Invalid sync inspection barrier");
     return { kind: "present", ...value, barrier: barriers[value.barrier] };
+  }
+
+  /** Read-only no-init observation; it neither claims an owner nor initializes storage.
+   * Requires matching rebuilt native ABI and the caller's quiesced owner fence.
+   */
+  async inspectExperimentalStorage(
+    options: ExperimentalStorageInspectionOptions,
+    callOptions?: CallOptions,
+  ): Promise<ExperimentalStorageInspection> {
+    return inspectExperimentalStorage(this.#native, options, callOptions);
   }
 
   use(namespace: string, database: string, options?: CallOptions) {

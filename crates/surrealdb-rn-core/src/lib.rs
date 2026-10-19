@@ -13,6 +13,20 @@ mod sync_http_codec;
 mod sync_read;
 pub mod sync_state;
 mod sync_storage_inspection;
+pub use sync_storage_inspection::{
+    NativeStorageInspection, NativeStorageInspectionError, NativeStorageInspectionOptions,
+    NativeTableOccupancy,
+};
+
+/// Observe existing embedded physical storage without selecting or initializing it.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn inspect_storage(
+    database: std::sync::Arc<SurrealDatabase>,
+    options: NativeStorageInspectionOptions,
+) -> Result<NativeStorageInspection, NativeStorageInspectionError> {
+    sync_storage_inspection::inspect_storage(&database, options).await
+}
+
 mod sync_subscription;
 mod wire;
 

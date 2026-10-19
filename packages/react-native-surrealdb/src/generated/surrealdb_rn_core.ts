@@ -492,6 +492,60 @@ export async function encodeSyncPushRequest(
 }
 
 /**
+ * Observe existing embedded physical storage without selecting or initializing it.
+ */
+export async function inspectStorage(
+  database: SurrealDatabaseLike,
+  options: NativeStorageInspectionOptions,
+  asyncOpts_?: { signal: AbortSignal },
+): Promise<NativeStorageInspection> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_func_inspect_storage(
+          FfiConverterTypeSurrealDatabase.lower(
+            database,
+            nativeModule().rustbuffer_alloc,
+          ),
+          FfiConverterTypeNativeStorageInspectionOptions.lower(
+            options,
+            nativeModule().rustbuffer_alloc,
+          ),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterTypeNativeStorageInspection.lift.bind(
+        FfiConverterTypeNativeStorageInspection,
+      ),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeNativeStorageInspectionError.lift.bind(
+        FfiConverterTypeNativeStorageInspectionError,
+      ),
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
  * Read existing durable state only; never initialize, migrate, or clear a barrier.
  */
 export async function inspectSyncState(
@@ -1400,6 +1454,117 @@ const FfiConverterTypeNativeProfiledQueryResult = (() => {
   return new FFIConverter();
 })();
 
+export type NativeSyncOpenOptions = {
+  partitionId: string;
+  clientId: string;
+  requestedScope: string;
+  subscriptionRevision: bigint;
+};
+
+/**
+ * Generated factory for {@link NativeSyncOpenOptions} record objects.
+ */
+export const NativeSyncOpenOptions = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      NativeSyncOpenOptions,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<NativeSyncOpenOptions>,
+  });
+})();
+
+const FfiConverterTypeNativeSyncOpenOptions = (() => {
+  type TypeName = NativeSyncOpenOptions;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        partitionId: FfiConverterString.read(from),
+        clientId: FfiConverterString.read(from),
+        requestedScope: FfiConverterString.read(from),
+        subscriptionRevision: FfiConverterUInt64.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.partitionId, into);
+      FfiConverterString.write(value.clientId, into);
+      FfiConverterString.write(value.requestedScope, into);
+      FfiConverterUInt64.write(value.subscriptionRevision, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.partitionId) +
+        FfiConverterString.allocationSize(value.clientId) +
+        FfiConverterString.allocationSize(value.requestedScope) +
+        FfiConverterUInt64.allocationSize(value.subscriptionRevision)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type NativeStorageInspectionOptions = {
+  namespace: string;
+  database: string;
+  expectedJournal: NativeSyncOpenOptions;
+  applicationTables: Array<string>;
+};
+
+/**
+ * Generated factory for {@link NativeStorageInspectionOptions} record objects.
+ */
+export const NativeStorageInspectionOptions = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      NativeStorageInspectionOptions,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () =>
+      Object.freeze(defaults()) as Partial<NativeStorageInspectionOptions>,
+  });
+})();
+
+const FfiConverterTypeNativeStorageInspectionOptions = (() => {
+  type TypeName = NativeStorageInspectionOptions;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        namespace: FfiConverterString.read(from),
+        database: FfiConverterString.read(from),
+        expectedJournal: FfiConverterTypeNativeSyncOpenOptions.read(from),
+        applicationTables: FfiConverterSequenceString.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.namespace, into);
+      FfiConverterString.write(value.database, into);
+      FfiConverterTypeNativeSyncOpenOptions.write(value.expectedJournal, into);
+      FfiConverterSequenceString.write(value.applicationTables, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.namespace) +
+        FfiConverterString.allocationSize(value.database) +
+        FfiConverterTypeNativeSyncOpenOptions.allocationSize(
+          value.expectedJournal,
+        ) +
+        FfiConverterSequenceString.allocationSize(value.applicationTables)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
 export type NativeSyncOperationSpan = {
   operationOrdinal: bigint;
   runtimeLockWaitNs: bigint;
@@ -1547,60 +1712,6 @@ const FfiConverterTypeNativeSyncDiagnostics = (() => {
   return new FFIConverter();
 })();
 
-export type NativeSyncOpenOptions = {
-  partitionId: string;
-  clientId: string;
-  requestedScope: string;
-  subscriptionRevision: bigint;
-};
-
-/**
- * Generated factory for {@link NativeSyncOpenOptions} record objects.
- */
-export const NativeSyncOpenOptions = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<
-      NativeSyncOpenOptions,
-      ReturnType<typeof defaults>
-    >(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<NativeSyncOpenOptions>,
-  });
-})();
-
-const FfiConverterTypeNativeSyncOpenOptions = (() => {
-  type TypeName = NativeSyncOpenOptions;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        partitionId: FfiConverterString.read(from),
-        clientId: FfiConverterString.read(from),
-        requestedScope: FfiConverterString.read(from),
-        subscriptionRevision: FfiConverterUInt64.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.partitionId, into);
-      FfiConverterString.write(value.clientId, into);
-      FfiConverterString.write(value.requestedScope, into);
-      FfiConverterUInt64.write(value.subscriptionRevision, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.partitionId) +
-        FfiConverterString.allocationSize(value.clientId) +
-        FfiConverterString.allocationSize(value.requestedScope) +
-        FfiConverterUInt64.allocationSize(value.subscriptionRevision)
-      );
-    }
-  }
-  return new FFIConverter();
-})();
-
 export type NativeSyncStatus = {
   revision: bigint;
   pendingCount: number;
@@ -1656,6 +1767,56 @@ const FfiConverterTypeNativeSyncStatus = (() => {
         FfiConverterUInt32.allocationSize(value.conflictCount) +
         FfiConverterOptionalUInt64.allocationSize(value.cursorEpoch) +
         FfiConverterOptionalUInt64.allocationSize(value.cursorSequence)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type NativeTableOccupancy = {
+  table: string;
+  schemaPresent: boolean;
+  rowsPresent: boolean;
+};
+
+/**
+ * Generated factory for {@link NativeTableOccupancy} record objects.
+ */
+export const NativeTableOccupancy = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      NativeTableOccupancy,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<NativeTableOccupancy>,
+  });
+})();
+
+const FfiConverterTypeNativeTableOccupancy = (() => {
+  type TypeName = NativeTableOccupancy;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        table: FfiConverterString.read(from),
+        schemaPresent: FfiConverterBool.read(from),
+        rowsPresent: FfiConverterBool.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.table, into);
+      FfiConverterBool.write(value.schemaPresent, into);
+      FfiConverterBool.write(value.rowsPresent, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.table) +
+        FfiConverterBool.allocationSize(value.schemaPresent) +
+        FfiConverterBool.allocationSize(value.rowsPresent)
       );
     }
   }
@@ -2320,6 +2481,637 @@ const FfiConverterTypeNativeOutputEncoding = (() => {
   return new FFIConverter();
 })();
 
+/**
+ * Counts remain available when a persisted scope barrier blocks ordinary reads.
+ */
+export enum NativeSyncInspectionBarrier {
+  None,
+  NeedsNewScopeJournal,
+  PendingQuarantineRequired,
+}
+
+const FfiConverterTypeNativeSyncInspectionBarrier = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeSyncInspectionBarrier;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return NativeSyncInspectionBarrier.None;
+        case 2:
+          return NativeSyncInspectionBarrier.NeedsNewScopeJournal;
+        case 3:
+          return NativeSyncInspectionBarrier.PendingQuarantineRequired;
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value) {
+        case NativeSyncInspectionBarrier.None:
+          return ordinalConverter.write(1, into);
+        case NativeSyncInspectionBarrier.NeedsNewScopeJournal:
+          return ordinalConverter.write(2, into);
+        case NativeSyncInspectionBarrier.PendingQuarantineRequired:
+          return ordinalConverter.write(3, into);
+      }
+    }
+    allocationSize(value: TypeName): number {
+      return ordinalConverter.allocationSize(0);
+    }
+  }
+  return new FFIConverter();
+})();
+
+// Enum: NativeSyncInspection
+export enum NativeSyncInspection_Tags {
+  Missing = "Missing",
+  Present = "Present",
+}
+export const NativeSyncInspection = (() => {
+  type Missing__interface = {
+    tag: NativeSyncInspection_Tags.Missing;
+  };
+  class Missing_ extends UniffiEnum implements Missing__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeSyncInspection";
+    readonly tag = NativeSyncInspection_Tags.Missing;
+    constructor() {
+      super("NativeSyncInspection", "Missing");
+    }
+
+    static new(): Missing_ {
+      return new Missing_();
+    }
+
+    static instanceOf(obj: any): obj is Missing_ {
+      return obj.tag === NativeSyncInspection_Tags.Missing;
+    }
+  }
+
+  type Present__interface = {
+    tag: NativeSyncInspection_Tags.Present;
+    inner: Readonly<{
+      revision: bigint;
+      pendingCount: number;
+      outcomeCount: number;
+      conflictCount: number;
+      barrier: NativeSyncInspectionBarrier;
+    }>;
+  };
+  class Present_ extends UniffiEnum implements Present__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeSyncInspection";
+    readonly tag = NativeSyncInspection_Tags.Present;
+    readonly inner: Readonly<{
+      revision: bigint;
+      pendingCount: number;
+      outcomeCount: number;
+      conflictCount: number;
+      barrier: NativeSyncInspectionBarrier;
+    }>;
+    constructor(inner: {
+      revision: bigint;
+      pendingCount: number;
+      outcomeCount: number;
+      conflictCount: number;
+      barrier: NativeSyncInspectionBarrier;
+    }) {
+      super("NativeSyncInspection", "Present");
+
+      this.inner = Object.freeze(inner);
+    }
+    static new(inner: {
+      revision: bigint;
+      pendingCount: number;
+      outcomeCount: number;
+      conflictCount: number;
+      barrier: NativeSyncInspectionBarrier;
+    }): Present_ {
+      return new Present_(inner);
+    }
+
+    static instanceOf(obj: any): obj is Present_ {
+      return obj.tag === NativeSyncInspection_Tags.Present;
+    }
+  }
+
+  function instanceOf(obj: any): obj is NativeSyncInspection {
+    return obj[uniffiTypeNameSymbol] === "NativeSyncInspection";
+  }
+
+  return Object.freeze({
+    instanceOf,
+    Missing: Missing_,
+    Present: Present_,
+  });
+})();
+export type NativeSyncInspection = InstanceType<
+  (typeof NativeSyncInspection)["Missing" | "Present"]
+>;
+
+// FfiConverter for enum NativeSyncInspection
+const FfiConverterTypeNativeSyncInspection = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeSyncInspection;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return new NativeSyncInspection.Missing();
+        case 2:
+          return new NativeSyncInspection.Present({
+            revision: FfiConverterUInt64.read(from),
+            pendingCount: FfiConverterUInt32.read(from),
+            outcomeCount: FfiConverterUInt32.read(from),
+            conflictCount: FfiConverterUInt32.read(from),
+            barrier: FfiConverterTypeNativeSyncInspectionBarrier.read(from),
+          });
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value.tag) {
+        case NativeSyncInspection_Tags.Missing: {
+          ordinalConverter.write(1, into);
+          return;
+        }
+        case NativeSyncInspection_Tags.Present: {
+          ordinalConverter.write(2, into);
+          const inner = value.inner;
+          FfiConverterUInt64.write(inner.revision, into);
+          FfiConverterUInt32.write(inner.pendingCount, into);
+          FfiConverterUInt32.write(inner.outcomeCount, into);
+          FfiConverterUInt32.write(inner.conflictCount, into);
+          FfiConverterTypeNativeSyncInspectionBarrier.write(
+            inner.barrier,
+            into,
+          );
+          return;
+        }
+        default:
+          // Throwing from here means that NativeSyncInspection_Tags hasn't matched an ordinal.
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    allocationSize(value: TypeName): number {
+      switch (value.tag) {
+        case NativeSyncInspection_Tags.Missing: {
+          return ordinalConverter.allocationSize(1);
+        }
+        case NativeSyncInspection_Tags.Present: {
+          const inner = value.inner;
+          let size = ordinalConverter.allocationSize(2);
+          size += FfiConverterUInt64.allocationSize(inner.revision);
+          size += FfiConverterUInt32.allocationSize(inner.pendingCount);
+          size += FfiConverterUInt32.allocationSize(inner.outcomeCount);
+          size += FfiConverterUInt32.allocationSize(inner.conflictCount);
+          size += FfiConverterTypeNativeSyncInspectionBarrier.allocationSize(
+            inner.barrier,
+          );
+          return size;
+        }
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+  }
+  return new FFIConverter();
+})();
+
+// Enum: NativeStorageInspection
+export enum NativeStorageInspection_Tags {
+  PristineUnselected = "PristineUnselected",
+  Selected = "Selected",
+}
+export const NativeStorageInspection = (() => {
+  type PristineUnselected__interface = {
+    tag: NativeStorageInspection_Tags.PristineUnselected;
+  };
+  class PristineUnselected_
+    extends UniffiEnum
+    implements PristineUnselected__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeStorageInspection";
+    readonly tag = NativeStorageInspection_Tags.PristineUnselected;
+    constructor() {
+      super("NativeStorageInspection", "PristineUnselected");
+    }
+
+    static new(): PristineUnselected_ {
+      return new PristineUnselected_();
+    }
+
+    static instanceOf(obj: any): obj is PristineUnselected_ {
+      return obj.tag === NativeStorageInspection_Tags.PristineUnselected;
+    }
+  }
+
+  type Selected__interface = {
+    tag: NativeStorageInspection_Tags.Selected;
+    inner: Readonly<{
+      native: NativeSyncInspection;
+      applicationTables: Array<NativeTableOccupancy>;
+    }>;
+  };
+  class Selected_ extends UniffiEnum implements Selected__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeStorageInspection";
+    readonly tag = NativeStorageInspection_Tags.Selected;
+    readonly inner: Readonly<{
+      native: NativeSyncInspection;
+      applicationTables: Array<NativeTableOccupancy>;
+    }>;
+    constructor(inner: {
+      native: NativeSyncInspection;
+      applicationTables: Array<NativeTableOccupancy>;
+    }) {
+      super("NativeStorageInspection", "Selected");
+
+      this.inner = Object.freeze(inner);
+    }
+    static new(inner: {
+      native: NativeSyncInspection;
+      applicationTables: Array<NativeTableOccupancy>;
+    }): Selected_ {
+      return new Selected_(inner);
+    }
+
+    static instanceOf(obj: any): obj is Selected_ {
+      return obj.tag === NativeStorageInspection_Tags.Selected;
+    }
+  }
+
+  function instanceOf(obj: any): obj is NativeStorageInspection {
+    return obj[uniffiTypeNameSymbol] === "NativeStorageInspection";
+  }
+
+  return Object.freeze({
+    instanceOf,
+    PristineUnselected: PristineUnselected_,
+    Selected: Selected_,
+  });
+})();
+export type NativeStorageInspection = InstanceType<
+  (typeof NativeStorageInspection)["PristineUnselected" | "Selected"]
+>;
+
+// FfiConverter for enum NativeStorageInspection
+const FfiConverterTypeNativeStorageInspection = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeStorageInspection;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return new NativeStorageInspection.PristineUnselected();
+        case 2:
+          return new NativeStorageInspection.Selected({
+            native: FfiConverterTypeNativeSyncInspection.read(from),
+            applicationTables:
+              FfiConverterSequenceTypeNativeTableOccupancy.read(from),
+          });
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value.tag) {
+        case NativeStorageInspection_Tags.PristineUnselected: {
+          ordinalConverter.write(1, into);
+          return;
+        }
+        case NativeStorageInspection_Tags.Selected: {
+          ordinalConverter.write(2, into);
+          const inner = value.inner;
+          FfiConverterTypeNativeSyncInspection.write(inner.native, into);
+          FfiConverterSequenceTypeNativeTableOccupancy.write(
+            inner.applicationTables,
+            into,
+          );
+          return;
+        }
+        default:
+          // Throwing from here means that NativeStorageInspection_Tags hasn't matched an ordinal.
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    allocationSize(value: TypeName): number {
+      switch (value.tag) {
+        case NativeStorageInspection_Tags.PristineUnselected: {
+          return ordinalConverter.allocationSize(1);
+        }
+        case NativeStorageInspection_Tags.Selected: {
+          const inner = value.inner;
+          let size = ordinalConverter.allocationSize(2);
+          size += FfiConverterTypeNativeSyncInspection.allocationSize(
+            inner.native,
+          );
+          size += FfiConverterSequenceTypeNativeTableOccupancy.allocationSize(
+            inner.applicationTables,
+          );
+          return size;
+        }
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+  }
+  return new FFIConverter();
+})();
+
+// Error type: NativeStorageInspectionError
+export enum NativeStorageInspectionError_Tags {
+  InvalidOptions = "InvalidOptions",
+  Unsettled = "Unsettled",
+  UnsupportedLayout = "UnsupportedLayout",
+  MetadataLimit = "MetadataLimit",
+  CorruptState = "CorruptState",
+  Persistence = "Persistence",
+}
+export const NativeStorageInspectionError = (() => {
+  type InvalidOptions__interface = {
+    tag: NativeStorageInspectionError_Tags.InvalidOptions;
+  };
+  class InvalidOptions_
+    extends UniffiError
+    implements InvalidOptions__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeStorageInspectionError";
+    readonly tag = NativeStorageInspectionError_Tags.InvalidOptions;
+    constructor() {
+      super("NativeStorageInspectionError", "InvalidOptions");
+    }
+
+    static new(): InvalidOptions_ {
+      return new InvalidOptions_();
+    }
+
+    static instanceOf(obj: any): obj is InvalidOptions_ {
+      return obj.tag === NativeStorageInspectionError_Tags.InvalidOptions;
+    }
+    static hasInner(obj: any): obj is InvalidOptions_ {
+      return false;
+    }
+  }
+
+  type Unsettled__interface = {
+    tag: NativeStorageInspectionError_Tags.Unsettled;
+  };
+  class Unsettled_ extends UniffiError implements Unsettled__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeStorageInspectionError";
+    readonly tag = NativeStorageInspectionError_Tags.Unsettled;
+    constructor() {
+      super("NativeStorageInspectionError", "Unsettled");
+    }
+
+    static new(): Unsettled_ {
+      return new Unsettled_();
+    }
+
+    static instanceOf(obj: any): obj is Unsettled_ {
+      return obj.tag === NativeStorageInspectionError_Tags.Unsettled;
+    }
+    static hasInner(obj: any): obj is Unsettled_ {
+      return false;
+    }
+  }
+
+  type UnsupportedLayout__interface = {
+    tag: NativeStorageInspectionError_Tags.UnsupportedLayout;
+  };
+  class UnsupportedLayout_
+    extends UniffiError
+    implements UnsupportedLayout__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeStorageInspectionError";
+    readonly tag = NativeStorageInspectionError_Tags.UnsupportedLayout;
+    constructor() {
+      super("NativeStorageInspectionError", "UnsupportedLayout");
+    }
+
+    static new(): UnsupportedLayout_ {
+      return new UnsupportedLayout_();
+    }
+
+    static instanceOf(obj: any): obj is UnsupportedLayout_ {
+      return obj.tag === NativeStorageInspectionError_Tags.UnsupportedLayout;
+    }
+    static hasInner(obj: any): obj is UnsupportedLayout_ {
+      return false;
+    }
+  }
+
+  type MetadataLimit__interface = {
+    tag: NativeStorageInspectionError_Tags.MetadataLimit;
+  };
+  class MetadataLimit_ extends UniffiError implements MetadataLimit__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeStorageInspectionError";
+    readonly tag = NativeStorageInspectionError_Tags.MetadataLimit;
+    constructor() {
+      super("NativeStorageInspectionError", "MetadataLimit");
+    }
+
+    static new(): MetadataLimit_ {
+      return new MetadataLimit_();
+    }
+
+    static instanceOf(obj: any): obj is MetadataLimit_ {
+      return obj.tag === NativeStorageInspectionError_Tags.MetadataLimit;
+    }
+    static hasInner(obj: any): obj is MetadataLimit_ {
+      return false;
+    }
+  }
+
+  type CorruptState__interface = {
+    tag: NativeStorageInspectionError_Tags.CorruptState;
+  };
+  class CorruptState_ extends UniffiError implements CorruptState__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeStorageInspectionError";
+    readonly tag = NativeStorageInspectionError_Tags.CorruptState;
+    constructor() {
+      super("NativeStorageInspectionError", "CorruptState");
+    }
+
+    static new(): CorruptState_ {
+      return new CorruptState_();
+    }
+
+    static instanceOf(obj: any): obj is CorruptState_ {
+      return obj.tag === NativeStorageInspectionError_Tags.CorruptState;
+    }
+    static hasInner(obj: any): obj is CorruptState_ {
+      return false;
+    }
+  }
+
+  type Persistence__interface = {
+    tag: NativeStorageInspectionError_Tags.Persistence;
+  };
+  class Persistence_ extends UniffiError implements Persistence__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeStorageInspectionError";
+    readonly tag = NativeStorageInspectionError_Tags.Persistence;
+    constructor() {
+      super("NativeStorageInspectionError", "Persistence");
+    }
+
+    static new(): Persistence_ {
+      return new Persistence_();
+    }
+
+    static instanceOf(obj: any): obj is Persistence_ {
+      return obj.tag === NativeStorageInspectionError_Tags.Persistence;
+    }
+    static hasInner(obj: any): obj is Persistence_ {
+      return false;
+    }
+  }
+
+  function instanceOf(obj: any): obj is NativeStorageInspectionError {
+    return obj[uniffiTypeNameSymbol] === "NativeStorageInspectionError";
+  }
+
+  return Object.freeze({
+    instanceOf,
+    InvalidOptions: InvalidOptions_,
+    Unsettled: Unsettled_,
+    UnsupportedLayout: UnsupportedLayout_,
+    MetadataLimit: MetadataLimit_,
+    CorruptState: CorruptState_,
+    Persistence: Persistence_,
+  });
+})();
+export type NativeStorageInspectionError = InstanceType<
+  (typeof NativeStorageInspectionError)[
+    | "InvalidOptions"
+    | "Unsettled"
+    | "UnsupportedLayout"
+    | "MetadataLimit"
+    | "CorruptState"
+    | "Persistence"]
+>;
+
+// FfiConverter for enum NativeStorageInspectionError
+const FfiConverterTypeNativeStorageInspectionError = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeStorageInspectionError;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return new NativeStorageInspectionError.InvalidOptions();
+        case 2:
+          return new NativeStorageInspectionError.Unsettled();
+        case 3:
+          return new NativeStorageInspectionError.UnsupportedLayout();
+        case 4:
+          return new NativeStorageInspectionError.MetadataLimit();
+        case 5:
+          return new NativeStorageInspectionError.CorruptState();
+        case 6:
+          return new NativeStorageInspectionError.Persistence();
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value.tag) {
+        case NativeStorageInspectionError_Tags.InvalidOptions: {
+          ordinalConverter.write(1, into);
+          return;
+        }
+        case NativeStorageInspectionError_Tags.Unsettled: {
+          ordinalConverter.write(2, into);
+          return;
+        }
+        case NativeStorageInspectionError_Tags.UnsupportedLayout: {
+          ordinalConverter.write(3, into);
+          return;
+        }
+        case NativeStorageInspectionError_Tags.MetadataLimit: {
+          ordinalConverter.write(4, into);
+          return;
+        }
+        case NativeStorageInspectionError_Tags.CorruptState: {
+          ordinalConverter.write(5, into);
+          return;
+        }
+        case NativeStorageInspectionError_Tags.Persistence: {
+          ordinalConverter.write(6, into);
+          return;
+        }
+        default:
+          // Throwing from here means that NativeStorageInspectionError_Tags hasn't matched an ordinal.
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    allocationSize(value: TypeName): number {
+      switch (value.tag) {
+        case NativeStorageInspectionError_Tags.InvalidOptions: {
+          return ordinalConverter.allocationSize(1);
+        }
+        case NativeStorageInspectionError_Tags.Unsettled: {
+          return ordinalConverter.allocationSize(2);
+        }
+        case NativeStorageInspectionError_Tags.UnsupportedLayout: {
+          return ordinalConverter.allocationSize(3);
+        }
+        case NativeStorageInspectionError_Tags.MetadataLimit: {
+          return ordinalConverter.allocationSize(4);
+        }
+        case NativeStorageInspectionError_Tags.CorruptState: {
+          return ordinalConverter.allocationSize(5);
+        }
+        case NativeStorageInspectionError_Tags.Persistence: {
+          return ordinalConverter.allocationSize(6);
+        }
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+  }
+  return new FFIConverter();
+})();
+
 // Error type: NativeSyncError
 export enum NativeSyncError_Tags {
   Closed = "Closed",
@@ -2832,211 +3624,6 @@ const FfiConverterTypeNativeSyncError = (() => {
         }
         case NativeSyncError_Tags.Internal: {
           return ordinalConverter.allocationSize(12);
-        }
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-  }
-  return new FFIConverter();
-})();
-
-/**
- * Counts remain available when a persisted scope barrier blocks ordinary reads.
- */
-export enum NativeSyncInspectionBarrier {
-  None,
-  NeedsNewScopeJournal,
-  PendingQuarantineRequired,
-}
-
-const FfiConverterTypeNativeSyncInspectionBarrier = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = NativeSyncInspectionBarrier;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return NativeSyncInspectionBarrier.None;
-        case 2:
-          return NativeSyncInspectionBarrier.NeedsNewScopeJournal;
-        case 3:
-          return NativeSyncInspectionBarrier.PendingQuarantineRequired;
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value) {
-        case NativeSyncInspectionBarrier.None:
-          return ordinalConverter.write(1, into);
-        case NativeSyncInspectionBarrier.NeedsNewScopeJournal:
-          return ordinalConverter.write(2, into);
-        case NativeSyncInspectionBarrier.PendingQuarantineRequired:
-          return ordinalConverter.write(3, into);
-      }
-    }
-    allocationSize(value: TypeName): number {
-      return ordinalConverter.allocationSize(0);
-    }
-  }
-  return new FFIConverter();
-})();
-
-// Enum: NativeSyncInspection
-export enum NativeSyncInspection_Tags {
-  Missing = "Missing",
-  Present = "Present",
-}
-export const NativeSyncInspection = (() => {
-  type Missing__interface = {
-    tag: NativeSyncInspection_Tags.Missing;
-  };
-  class Missing_ extends UniffiEnum implements Missing__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "NativeSyncInspection";
-    readonly tag = NativeSyncInspection_Tags.Missing;
-    constructor() {
-      super("NativeSyncInspection", "Missing");
-    }
-
-    static new(): Missing_ {
-      return new Missing_();
-    }
-
-    static instanceOf(obj: any): obj is Missing_ {
-      return obj.tag === NativeSyncInspection_Tags.Missing;
-    }
-  }
-
-  type Present__interface = {
-    tag: NativeSyncInspection_Tags.Present;
-    inner: Readonly<{
-      revision: bigint;
-      pendingCount: number;
-      outcomeCount: number;
-      conflictCount: number;
-      barrier: NativeSyncInspectionBarrier;
-    }>;
-  };
-  class Present_ extends UniffiEnum implements Present__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "NativeSyncInspection";
-    readonly tag = NativeSyncInspection_Tags.Present;
-    readonly inner: Readonly<{
-      revision: bigint;
-      pendingCount: number;
-      outcomeCount: number;
-      conflictCount: number;
-      barrier: NativeSyncInspectionBarrier;
-    }>;
-    constructor(inner: {
-      revision: bigint;
-      pendingCount: number;
-      outcomeCount: number;
-      conflictCount: number;
-      barrier: NativeSyncInspectionBarrier;
-    }) {
-      super("NativeSyncInspection", "Present");
-
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: {
-      revision: bigint;
-      pendingCount: number;
-      outcomeCount: number;
-      conflictCount: number;
-      barrier: NativeSyncInspectionBarrier;
-    }): Present_ {
-      return new Present_(inner);
-    }
-
-    static instanceOf(obj: any): obj is Present_ {
-      return obj.tag === NativeSyncInspection_Tags.Present;
-    }
-  }
-
-  function instanceOf(obj: any): obj is NativeSyncInspection {
-    return obj[uniffiTypeNameSymbol] === "NativeSyncInspection";
-  }
-
-  return Object.freeze({
-    instanceOf,
-    Missing: Missing_,
-    Present: Present_,
-  });
-})();
-export type NativeSyncInspection = InstanceType<
-  (typeof NativeSyncInspection)["Missing" | "Present"]
->;
-
-// FfiConverter for enum NativeSyncInspection
-const FfiConverterTypeNativeSyncInspection = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = NativeSyncInspection;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return new NativeSyncInspection.Missing();
-        case 2:
-          return new NativeSyncInspection.Present({
-            revision: FfiConverterUInt64.read(from),
-            pendingCount: FfiConverterUInt32.read(from),
-            outcomeCount: FfiConverterUInt32.read(from),
-            conflictCount: FfiConverterUInt32.read(from),
-            barrier: FfiConverterTypeNativeSyncInspectionBarrier.read(from),
-          });
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value.tag) {
-        case NativeSyncInspection_Tags.Missing: {
-          ordinalConverter.write(1, into);
-          return;
-        }
-        case NativeSyncInspection_Tags.Present: {
-          ordinalConverter.write(2, into);
-          const inner = value.inner;
-          FfiConverterUInt64.write(inner.revision, into);
-          FfiConverterUInt32.write(inner.pendingCount, into);
-          FfiConverterUInt32.write(inner.outcomeCount, into);
-          FfiConverterUInt32.write(inner.conflictCount, into);
-          FfiConverterTypeNativeSyncInspectionBarrier.write(
-            inner.barrier,
-            into,
-          );
-          return;
-        }
-        default:
-          // Throwing from here means that NativeSyncInspection_Tags hasn't matched an ordinal.
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    allocationSize(value: TypeName): number {
-      switch (value.tag) {
-        case NativeSyncInspection_Tags.Missing: {
-          return ordinalConverter.allocationSize(1);
-        }
-        case NativeSyncInspection_Tags.Present: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(2);
-          size += FfiConverterUInt64.allocationSize(inner.revision);
-          size += FfiConverterUInt32.allocationSize(inner.pendingCount);
-          size += FfiConverterUInt32.allocationSize(inner.outcomeCount);
-          size += FfiConverterUInt32.allocationSize(inner.conflictCount);
-          size += FfiConverterTypeNativeSyncInspectionBarrier.allocationSize(
-            inner.barrier,
-          );
-          return size;
         }
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
@@ -6501,17 +7088,22 @@ const FfiConverterOptionalSequenceUInt64 = new FfiConverterOptional(
 // FfiConverter for bigint | undefined
 const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
+// FfiConverter for Array<string>
+const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
+
 // FfiConverter for NativeSyncOperationSpan | undefined
 const FfiConverterOptionalTypeNativeSyncOperationSpan =
   new FfiConverterOptional(FfiConverterTypeNativeSyncOperationSpan);
+
+// FfiConverter for Array<NativeTableOccupancy>
+const FfiConverterSequenceTypeNativeTableOccupancy = new FfiConverterArray(
+  FfiConverterTypeNativeTableOccupancy,
+);
 
 // FfiConverter for LiveNotification | undefined
 const FfiConverterOptionalTypeLiveNotification = new FfiConverterOptional(
   FfiConverterTypeLiveNotification,
 );
-
-// FfiConverter for Array<string>
-const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
 // FfiConverter for Array<NativeBatchQuery>
 const FfiConverterSequenceTypeNativeBatchQuery = new FfiConverterArray(
@@ -6623,6 +7215,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_func_encode_sync_push_request",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_func_inspect_storage() !==
+    49190
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_func_inspect_storage",
     );
   }
   if (
@@ -7096,6 +7696,9 @@ export default Object.freeze({
     FfiConverterTypeNativeOutputEncoding,
     FfiConverterTypeNativeProfiledQueryResult,
     FfiConverterTypeNativeQueryTiming,
+    FfiConverterTypeNativeStorageInspection,
+    FfiConverterTypeNativeStorageInspectionError,
+    FfiConverterTypeNativeStorageInspectionOptions,
     FfiConverterTypeNativeSyncClient,
     FfiConverterTypeNativeSyncDiagnostics,
     FfiConverterTypeNativeSyncError,
@@ -7104,6 +7707,7 @@ export default Object.freeze({
     FfiConverterTypeNativeSyncOpenOptions,
     FfiConverterTypeNativeSyncOperationSpan,
     FfiConverterTypeNativeSyncStatus,
+    FfiConverterTypeNativeTableOccupancy,
     FfiConverterTypeQueryStatementResult,
     FfiConverterTypeSurrealDatabase,
     FfiConverterTypeSurrealRnError,
