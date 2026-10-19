@@ -147,11 +147,14 @@ async fn exported_factory_binds_independent_context_and_missing_progress_is_read
     ));
     let foreign = wire(&foreign, "foreign", u64::MAX);
     assert!(matches!(
-        session.begin(foreign.start, foreign.manifest).await,
+        session.clone().begin(foreign.start, foreign.manifest).await,
         Err(NativeBootstrapError::ContextMismatch)
     ));
     assert!(matches!(
-        session.begin(vec![0xff], input.manifest.clone()).await,
+        session
+            .clone()
+            .begin(vec![0xff], input.manifest.clone())
+            .await,
         Err(NativeBootstrapError::InvalidFrame)
     ));
     assert!(matches!(
@@ -188,14 +191,17 @@ async fn facade_stages_opaque_bytes_resumes_new_object_and_publishes_only_comple
         .unwrap();
     let input = wire(&expected, "complete", u64::MAX);
     let stage = session
+        .clone()
         .begin(input.start.clone(), input.manifest.clone())
         .await
         .unwrap();
     session
+        .clone()
         .page(stage.clone(), input.page.clone())
         .await
         .unwrap();
     session
+        .clone()
         .page(stage.clone(), input.page.clone())
         .await
         .unwrap();
@@ -215,7 +221,7 @@ async fn facade_stages_opaque_bytes_resumes_new_object_and_publishes_only_comple
     assert_eq!(inventory.received_indices, Some(vec![0]));
     assert!(
         matches!(
-            resumed.page(stage.clone(), input.page).await,
+            resumed.clone().page(stage.clone(), input.page).await,
             Err(NativeBootstrapError::StageMismatch)
         ),
         "foreign factory stage object accepted"
@@ -223,6 +229,7 @@ async fn facade_stages_opaque_bytes_resumes_new_object_and_publishes_only_comple
     let recovered = inventory.stage.unwrap();
     assert_eq!(
         resumed
+            .clone()
             .complete(recovered.clone(), input.receipt.clone())
             .await
             .unwrap(),
@@ -242,12 +249,13 @@ async fn facade_stages_opaque_bytes_resumes_new_object_and_publishes_only_comple
     let revision = client.status().await.unwrap().revision;
     assert_eq!(
         session
+            .clone()
             .complete(stage.clone(), input.receipt)
             .await
             .unwrap(),
         NativeBootstrapCompletion::HistoricalSuccess
     );
-    session.cancel(stage).await.unwrap();
+    session.clone().cancel(stage).await.unwrap();
     let inventory = resumed.progress(input.manifest).await.unwrap();
     assert_eq!(inventory.state, NativeBootstrapStageState::Consumed);
     assert_eq!(inventory.successful_revision, Some(revision));
@@ -267,12 +275,21 @@ async fn native_clock_rejects_expired_install_without_extending_fixed_expiry() {
         .unwrap();
     let input = wire(&expected, "expired", 1);
     let stage = session
+        .clone()
         .begin(input.start, input.manifest.clone())
         .await
         .unwrap();
-    session.page(stage.clone(), input.page).await.unwrap();
+    session
+        .clone()
+        .page(stage.clone(), input.page)
+        .await
+        .unwrap();
     assert_eq!(
-        session.complete(stage, input.receipt).await.unwrap_err(),
+        session
+            .clone()
+            .complete(stage, input.receipt)
+            .await
+            .unwrap_err(),
         NativeBootstrapError::Expired
     );
     assert_eq!(
@@ -307,6 +324,7 @@ async fn unknown_begin_page_cancel_ack_invalidates_every_sibling_until_read_only
         if operation != "begin" {
             stage = Some(
                 session
+                    .clone()
                     .begin(input.start.clone(), input.manifest.clone())
                     .await
                     .unwrap(),
@@ -314,6 +332,7 @@ async fn unknown_begin_page_cancel_ack_invalidates_every_sibling_until_read_only
         }
         if operation == "cancel" {
             session
+                .clone()
                 .page(stage.clone().unwrap(), input.page.clone())
                 .await
                 .unwrap();
@@ -321,11 +340,12 @@ async fn unknown_begin_page_cancel_ack_invalidates_every_sibling_until_read_only
         client.lose_next_bootstrap_ack_for_test();
         let result = match operation {
             "begin" => session
+                .clone()
                 .begin(input.start.clone(), input.manifest.clone())
                 .await
                 .map(|_| ()),
-            "page" => session.page(stage.unwrap(), input.page).await,
-            _ => session.cancel(stage.unwrap()).await,
+            "page" => session.clone().page(stage.unwrap(), input.page).await,
+            _ => session.clone().cancel(stage.unwrap()).await,
         };
         assert_eq!(result.unwrap_err(), NativeBootstrapError::RecoveryRequired);
         assert!(matches!(
@@ -360,14 +380,15 @@ async fn unknown_begin_page_cancel_ack_invalidates_every_sibling_until_read_only
             Some(if operation == "page" { vec![0] } else { vec![] })
         );
         let old = inventory.stage.unwrap();
-        recovered.cancel(old.clone()).await.unwrap();
+        recovered.clone().cancel(old.clone()).await.unwrap();
         let next = wire(&expected, "next", u64::MAX);
         recovered
+            .clone()
             .begin(next.start, next.manifest.clone())
             .await
             .unwrap();
         assert_eq!(
-            recovered.cancel(old).await.unwrap_err(),
+            recovered.clone().cancel(old).await.unwrap_err(),
             NativeBootstrapError::StageMismatch
         );
         assert_eq!(
@@ -396,23 +417,29 @@ async fn closed_or_changed_parent_cannot_mutate_through_retained_stage() {
         .unwrap();
     let input = wire(&expected, "close", u64::MAX);
     let stage = session
+        .clone()
         .begin(input.start, input.manifest.clone())
         .await
         .unwrap();
     client.close().await;
     assert_eq!(
-        session.cancel(stage.clone()).await.unwrap_err(),
+        session.clone().cancel(stage.clone()).await.unwrap_err(),
         NativeBootstrapError::Closed
     );
     assert_eq!(
         session
+            .clone()
             .page(stage.clone(), input.page.clone())
             .await
             .unwrap_err(),
         NativeBootstrapError::Closed
     );
     assert_eq!(
-        session.complete(stage, input.receipt).await.unwrap_err(),
+        session
+            .clone()
+            .complete(stage, input.receipt)
+            .await
+            .unwrap_err(),
         NativeBootstrapError::Closed
     );
     let resumed = other
@@ -421,12 +448,16 @@ async fn closed_or_changed_parent_cannot_mutate_through_retained_stage() {
         .unwrap()
         .stage
         .unwrap();
-    other.page(resumed.clone(), input.page).await.unwrap();
+    other
+        .clone()
+        .page(resumed.clone(), input.page)
+        .await
+        .unwrap();
     db.use_namespace_database("other".into(), "other".into())
         .await
         .unwrap();
     assert_eq!(
-        other.cancel(resumed).await.unwrap_err(),
+        other.clone().cancel(resumed).await.unwrap_err(),
         NativeBootstrapError::RecoveryRequired
     );
     assert_eq!(
@@ -457,10 +488,15 @@ async fn persisted_stage_resume_and_terminal_owner_binding_survive_surrealkv_res
         .await
         .unwrap();
     let stage = session
+        .clone()
         .begin(input.start.clone(), input.manifest.clone())
         .await
         .unwrap();
-    session.page(stage, input.page.clone()).await.unwrap();
+    session
+        .clone()
+        .page(stage, input.page.clone())
+        .await
+        .unwrap();
     drop(session);
     db.close().await.unwrap();
     drop(db);
@@ -474,7 +510,7 @@ async fn persisted_stage_resume_and_terminal_owner_binding_survive_surrealkv_res
     let progress = session.progress(input.manifest.clone()).await.unwrap();
     assert_eq!(progress.received_indices, Some(vec![0]));
     let stage = progress.stage.unwrap();
-    session.cancel(stage).await.unwrap();
+    session.clone().cancel(stage).await.unwrap();
     drop(session);
     db.close().await.unwrap();
     drop(db);
@@ -515,6 +551,7 @@ async fn resume_partial_schema_and_orphans_fail_closed_without_recreating_tables
         .unwrap();
     let input = wire(&expected, "orphan", u64::MAX);
     session
+        .clone()
         .begin(input.start, input.manifest.clone())
         .await
         .unwrap();
@@ -542,15 +579,18 @@ async fn scope_barrier_blocks_new_mutations_but_allows_cancel_and_historical_ide
         .unwrap();
     let input = wire(&expected, "barrier", u64::MAX);
     let stage = session
+        .clone()
         .begin(input.start.clone(), input.manifest.clone())
         .await
         .unwrap();
     session
+        .clone()
         .page(stage.clone(), input.page.clone())
         .await
         .unwrap();
     assert_eq!(
         session
+            .clone()
             .complete(stage.clone(), input.receipt.clone())
             .await
             .unwrap(),
@@ -573,6 +613,7 @@ async fn scope_barrier_blocks_new_mutations_but_allows_cancel_and_historical_ide
         .unwrap();
     assert_eq!(
         session
+            .clone()
             .begin(input.start, input.manifest.clone())
             .await
             .err()
@@ -580,17 +621,22 @@ async fn scope_barrier_blocks_new_mutations_but_allows_cancel_and_historical_ide
         NativeBootstrapError::PendingQuarantineRequired
     );
     assert_eq!(
-        session.page(stage.clone(), input.page).await.unwrap_err(),
+        session
+            .clone()
+            .page(stage.clone(), input.page)
+            .await
+            .unwrap_err(),
         NativeBootstrapError::PendingQuarantineRequired
     );
     assert_eq!(
         session
+            .clone()
             .complete(stage.clone(), input.receipt)
             .await
             .unwrap(),
         NativeBootstrapCompletion::HistoricalSuccess
     );
-    session.cancel(stage).await.unwrap();
+    session.clone().cancel(stage).await.unwrap();
     assert_eq!(
         session.progress(input.manifest).await.unwrap().state,
         NativeBootstrapStageState::Consumed
@@ -648,11 +694,16 @@ async fn missing_namespace_and_fence_only_inventory_never_initialize_or_zero_cor
             .await
             .unwrap();
         let stage = session
+            .clone()
             .begin(input.start.clone(), input.manifest.clone())
             .await
             .unwrap();
         if corruption == "orphan-page" {
-            session.page(stage, input.page.clone()).await.unwrap();
+            session
+                .clone()
+                .page(stage, input.page.clone())
+                .await
+                .unwrap();
             db.query("DELETE _sync_bootstrap_header".into(), None)
                 .await
                 .unwrap();
@@ -689,11 +740,17 @@ async fn clean_authorization_advance_invalidates_old_sessions_and_survives_reope
         .unwrap();
     let input5 = wire(&old, "auth-five", u64::MAX);
     let stage5 = session5
+        .clone()
         .begin(input5.start, input5.manifest.clone())
         .await
         .unwrap();
-    session5.page(stage5.clone(), input5.page).await.unwrap();
     session5
+        .clone()
+        .page(stage5.clone(), input5.page)
+        .await
+        .unwrap();
+    session5
+        .clone()
         .complete(stage5.clone(), input5.receipt.clone())
         .await
         .unwrap();
@@ -703,9 +760,16 @@ async fn clean_authorization_advance_invalidates_old_sessions_and_survives_reope
         .await
         .unwrap();
     assert!(session5.progress(input5.manifest).await.is_err());
-    assert!(session5.complete(stage5, input5.receipt).await.is_err());
+    assert!(
+        session5
+            .clone()
+            .complete(stage5, input5.receipt)
+            .await
+            .is_err()
+    );
     let input6 = wire(&next, "auth-six", u64::MAX);
     let stage6 = session6
+        .clone()
         .begin(input6.start, input6.manifest.clone())
         .await
         .unwrap();
@@ -724,13 +788,25 @@ async fn clean_authorization_advance_invalidates_old_sessions_and_survives_reope
     let progress = resumed.progress(input6.manifest).await.unwrap();
     assert_eq!(progress.state, NativeBootstrapStageState::Staging);
     assert!(
-        resumed.page(stage6, input6.page.clone()).await.is_err(),
+        resumed
+            .clone()
+            .page(stage6, input6.page.clone())
+            .await
+            .is_err(),
         "old object is never adopted"
     );
     let stage = progress.stage.unwrap();
-    resumed.page(stage.clone(), input6.page).await.unwrap();
+    resumed
+        .clone()
+        .page(stage.clone(), input6.page)
+        .await
+        .unwrap();
     assert_eq!(
-        resumed.complete(stage, input6.receipt).await.unwrap(),
+        resumed
+            .clone()
+            .complete(stage, input6.receipt)
+            .await
+            .unwrap(),
         NativeBootstrapCompletion::Applied
     );
     assert_eq!(reopened.status().await.unwrap().cursor_sequence, Some(1));
@@ -749,6 +825,7 @@ async fn active_context_cannot_advance_but_cancelled_context_can_and_unknown_beg
         .unwrap();
     let input = wire(&old, "active-old", u64::MAX);
     let stage = session
+        .clone()
         .begin(input.start, input.manifest.clone())
         .await
         .unwrap();
@@ -760,15 +837,16 @@ async fn active_context_cannot_advance_but_cancelled_context_can_and_unknown_beg
         session.progress(input.manifest).await.unwrap().state,
         NativeBootstrapStageState::Staging
     );
-    session.cancel(stage.clone()).await.unwrap();
+    session.clone().cancel(stage.clone()).await.unwrap();
     let newer = bind_bootstrap_session(client.clone(), next.clone())
         .await
         .unwrap();
-    assert!(session.cancel(stage).await.is_err());
+    assert!(session.clone().cancel(stage).await.is_err());
     let input = wire(&next, "newer-unknown-ack", u64::MAX);
     client.lose_next_bootstrap_ack_for_test();
     assert_eq!(
         newer
+            .clone()
             .begin(input.start, input.manifest.clone())
             .await
             .err()
@@ -867,10 +945,22 @@ async fn authorization_advance_complete_keeps_canonical_pending_outcome_and_subs
             .await
             .unwrap();
         let input = wire(&next, case, u64::MAX);
-        let stage = session.begin(input.start, input.manifest).await.unwrap();
-        session.page(stage.clone(), input.page).await.unwrap();
+        let stage = session
+            .clone()
+            .begin(input.start, input.manifest)
+            .await
+            .unwrap();
+        session
+            .clone()
+            .page(stage.clone(), input.page)
+            .await
+            .unwrap();
         let before = client.status().await.unwrap();
-        let error = session.complete(stage, input.receipt).await.unwrap_err();
+        let error = session
+            .clone()
+            .complete(stage, input.receipt)
+            .await
+            .unwrap_err();
         let expected = if case == "pending" || case == "conflict" {
             NativeBootstrapError::PendingQuarantineRequired
         } else {
@@ -923,21 +1013,26 @@ async fn newer_durable_stage_and_checkpoint_authorization_floors_survive_physica
             .await
             .unwrap();
         let input = wire(&old, "initial-terminal", u64::MAX);
-        let stage = session.begin(input.start, input.manifest).await.unwrap();
-        session.cancel(stage).await.unwrap();
+        let stage = session
+            .clone()
+            .begin(input.start, input.manifest)
+            .await
+            .unwrap();
+        session.clone().cancel(stage).await.unwrap();
         let next = bind_bootstrap_session(client.clone(), newer.clone())
             .await
             .unwrap();
         let input = wire(&newer, "durable-six", u64::MAX);
         let stage = next
+            .clone()
             .begin(input.start, input.manifest.clone())
             .await
             .unwrap();
         match terminal {
-            "cancelled" => next.cancel(stage).await.unwrap(),
+            "cancelled" => next.clone().cancel(stage).await.unwrap(),
             "consumed" => {
-                next.page(stage.clone(), input.page).await.unwrap();
-                next.complete(stage, input.receipt).await.unwrap();
+                next.clone().page(stage.clone(), input.page).await.unwrap();
+                next.clone().complete(stage, input.receipt).await.unwrap();
             }
             _ => (),
         }

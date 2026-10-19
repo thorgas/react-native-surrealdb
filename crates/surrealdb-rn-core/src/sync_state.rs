@@ -254,9 +254,19 @@ struct NormalizedRows {
     components: BTreeMap<ComponentAddress, Vec<u8>>,
 }
 
+#[cfg(test)]
+pub(crate) struct PersistencePause {
+    pub after_dispatch: bool,
+    pub arrived: std::sync::Arc<tokio::sync::Notify>,
+    pub release: std::sync::Arc<tokio::sync::Notify>,
+    pub first_poll_pending: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
 pub struct SyncStateStore<'a> {
     database: &'a SurrealDatabase,
     diagnostics: Option<&'a crate::sync_diagnostics::SyncDiagnostics>,
+    #[cfg(test)]
+    pause: Option<PersistencePause>,
     session_generation: Option<u64>,
 }
 
@@ -265,10 +275,17 @@ impl<'a> SyncStateStore<'a> {
         Self {
             database,
             diagnostics: None,
+            #[cfg(test)]
+            pause: None,
             session_generation: None,
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_pause(mut self, pause: Option<PersistencePause>) -> Self {
+        self.pause = pause;
+        self
+    }
     pub(crate) fn with_session_generation(mut self, generation: u64) -> Self {
         self.session_generation = Some(generation);
         self
@@ -295,7 +312,41 @@ impl<'a> SyncStateStore<'a> {
             self.check_session()?;
             Ok(value)
         });
-        finish_transaction(transaction, operation).await
+        #[cfg(test)]
+        if let Some(pause) = &self.pause
+            && pause.after_dispatch
+            && operation.is_ok()
+        {
+            use std::future::IntoFuture;
+            let value = operation?;
+            let mut commit = Box::pin(transaction.commit().into_future());
+            let early = futures::future::poll_fn(|cx| {
+                std::task::Poll::Ready(match commit.as_mut().poll(cx) {
+                    std::task::Poll::Pending => None,
+                    std::task::Poll::Ready(result) => Some(result),
+                })
+            })
+            .await;
+            pause
+                .first_poll_pending
+                .store(early.is_none(), std::sync::atomic::Ordering::SeqCst);
+            pause.arrived.notify_one();
+            pause.release.notified().await;
+            let result = match early {
+                Some(result) => result,
+                None => commit.await,
+            };
+            return result.map(|_| value).map_err(SyncStateError::CommitUnknown);
+        }
+        let result = finish_transaction(transaction, operation).await;
+        #[cfg(test)]
+        if let Some(pause) = &self.pause
+            && result.is_ok()
+        {
+            pause.arrived.notify_one();
+            pause.release.notified().await;
+        }
+        result
     }
 
     pub(crate) fn with_diagnostics(

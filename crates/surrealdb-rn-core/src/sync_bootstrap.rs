@@ -263,54 +263,24 @@ impl NativeBootstrapSession {
 #[uniffi::export(async_runtime = "tokio")]
 impl NativeBootstrapSession {
     pub async fn begin(
-        &self,
+        self: Arc<Self>,
         start: Vec<u8>,
         manifest: Vec<u8>,
     ) -> Result<Arc<NativeBootstrapStage>, NativeBootstrapError> {
-        bounded(&start)?;
-        let decoded = self.manifest(&manifest)?;
-        let request =
-            decode_bootstrap_start(&start).map_err(|_| NativeBootstrapError::InvalidFrame)?;
-        validate_bootstrap_manifest_context(&decoded, &request, &self.expected)
-            .map_err(|_| NativeBootstrapError::InvalidFrame)?;
-        let mut access = self
-            .client
-            .bootstrap_access(&self.expected, Some(self.ticket))
-            .await?;
-        access.check_writable().await?;
-        let result = access
-            .store()
-            .begin(&start, &manifest, &self.expected)
-            .await;
-        let incarnation = access.finish(result, true)?;
-        Ok(self.stage(manifest, incarnation))
+        let client = self.client.clone();
+        client
+            .run_mutation(move |_| async move { self.begin_owned(start, manifest).await })
+            .await
     }
     pub async fn page(
-        &self,
+        self: Arc<Self>,
         stage: Arc<NativeBootstrapStage>,
         bytes: Vec<u8>,
     ) -> Result<(), NativeBootstrapError> {
-        self.validate_stage(&stage)?;
-        bounded(&bytes)?;
-        let page = decode_bootstrap_page(&bytes).map_err(|_| NativeBootstrapError::InvalidFrame)?;
-        let manifest = self.manifest(&stage.manifest)?;
-        if page.session_id != manifest.session_id
-            || page.manifest_digest
-                != bootstrap_manifest_digest(&manifest)
-                    .map_err(|_| NativeBootstrapError::InvalidFrame)?
-        {
-            return Err(NativeBootstrapError::StageMismatch);
-        }
-        let mut access = self
-            .client
-            .bootstrap_access(&self.expected, Some(self.ticket))
-            .await?;
-        access.check_writable().await?;
-        let result = access
-            .store()
-            .stage_page(&bytes, &self.expected, stage.incarnation)
-            .await;
-        access.finish(result, true)
+        let client = self.client.clone();
+        client
+            .run_mutation(move |_| async move { self.page_owned(stage, bytes).await })
+            .await
     }
     /// Read-only resume: Missing never invokes Begin or initializes schema/state.
     pub async fn progress(
@@ -351,6 +321,94 @@ impl NativeBootstrapSession {
         })
     }
     pub async fn cancel(
+        self: Arc<Self>,
+        stage: Arc<NativeBootstrapStage>,
+    ) -> Result<(), NativeBootstrapError> {
+        let client = self.client.clone();
+        client
+            .run_mutation(move |_| async move { self.cancel_owned(stage).await })
+            .await
+    }
+    /// New installation requires fresh authenticated transport receipt from trusted caller.
+    /// Clock/deadline are native-owned; consumed historical identity may survive expiry.
+    pub async fn complete(
+        self: Arc<Self>,
+        stage: Arc<NativeBootstrapStage>,
+        receipt: Vec<u8>,
+    ) -> Result<NativeBootstrapCompletion, NativeBootstrapError> {
+        let client = self.client.clone();
+        client
+            .run_mutation(move |_| async move { self.complete_owned(stage, receipt).await })
+            .await
+    }
+}
+
+#[cfg(test)]
+#[path = "sync_bootstrap_tests.rs"]
+mod tests;
+
+impl From<NativeSyncError> for NativeBootstrapError {
+    fn from(error: NativeSyncError) -> Self {
+        Self::from_native(error)
+    }
+}
+
+impl NativeBootstrapSession {
+    async fn begin_owned(
+        &self,
+        start: Vec<u8>,
+        manifest: Vec<u8>,
+    ) -> Result<Arc<NativeBootstrapStage>, NativeBootstrapError> {
+        bounded(&start)?;
+        let decoded = self.manifest(&manifest)?;
+        let request =
+            decode_bootstrap_start(&start).map_err(|_| NativeBootstrapError::InvalidFrame)?;
+        validate_bootstrap_manifest_context(&decoded, &request, &self.expected)
+            .map_err(|_| NativeBootstrapError::InvalidFrame)?;
+        let mut access = self
+            .client
+            .bootstrap_access(&self.expected, Some(self.ticket))
+            .await?;
+        access.check_writable().await?;
+        access.arm_mutation();
+        let result = access
+            .store()
+            .begin(&start, &manifest, &self.expected)
+            .await;
+        let incarnation = access.finish(result, true)?;
+        Ok(self.stage(manifest, incarnation))
+    }
+
+    async fn page_owned(
+        &self,
+        stage: Arc<NativeBootstrapStage>,
+        bytes: Vec<u8>,
+    ) -> Result<(), NativeBootstrapError> {
+        self.validate_stage(&stage)?;
+        bounded(&bytes)?;
+        let page = decode_bootstrap_page(&bytes).map_err(|_| NativeBootstrapError::InvalidFrame)?;
+        let manifest = self.manifest(&stage.manifest)?;
+        if page.session_id != manifest.session_id
+            || page.manifest_digest
+                != bootstrap_manifest_digest(&manifest)
+                    .map_err(|_| NativeBootstrapError::InvalidFrame)?
+        {
+            return Err(NativeBootstrapError::StageMismatch);
+        }
+        let mut access = self
+            .client
+            .bootstrap_access(&self.expected, Some(self.ticket))
+            .await?;
+        access.check_writable().await?;
+        access.arm_mutation();
+        let result = access
+            .store()
+            .stage_page(&bytes, &self.expected, stage.incarnation)
+            .await;
+        access.finish(result, true)
+    }
+
+    async fn cancel_owned(
         &self,
         stage: Arc<NativeBootstrapStage>,
     ) -> Result<(), NativeBootstrapError> {
@@ -359,15 +417,15 @@ impl NativeBootstrapSession {
             .client
             .bootstrap_access(&self.expected, Some(self.ticket))
             .await?;
+        access.arm_mutation();
         let result = access
             .store()
             .cancel(&stage.manifest, &self.expected, stage.incarnation)
             .await;
         access.finish(result, true)
     }
-    /// New installation requires fresh authenticated transport receipt from trusted caller.
-    /// Clock/deadline are native-owned; consumed historical identity may survive expiry.
-    pub async fn complete(
+
+    async fn complete_owned(
         &self,
         stage: Arc<NativeBootstrapStage>,
         receipt: Vec<u8>,
@@ -417,7 +475,3 @@ impl NativeBootstrapSession {
         }
     }
 }
-
-#[cfg(test)]
-#[path = "sync_bootstrap_tests.rs"]
-mod tests;

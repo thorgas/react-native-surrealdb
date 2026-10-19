@@ -24,7 +24,7 @@ use surrealdb_sync_protocol::{
     Fingerprint, Operation, PartitionId, PullResponse, PushResponse, RecordId, RecordState,
     ScopeIdentity,
 };
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, Semaphore};
 
 use crate::SurrealDatabase;
 use crate::sync_codec::{
@@ -87,21 +87,25 @@ pub async fn inspect_sync_state(
     if database.is_closed() {
         return Err(NativeSyncError::Closed);
     }
+    if database.sync_runtimes.is_poisoned() {
+        return Err(NativeSyncError::RecoveryRequired);
+    }
     let session_generation = database.session_generation.load(Ordering::Acquire);
     if options.requested_scope.len() > MAX_IDENTITY_BYTES {
         return Err(NativeSyncError::InvalidInput);
     }
     let partition = PartitionId(options.partition_id);
     let client = ClientId(options.client_id);
-    let (state, barrier) = SyncStateStore::new(&database)
+    let inspected = SyncStateStore::new(&database)
         .inspect(SyncStateKey::new(&partition, &client))
-        .await
-        .map_err(map_persistence_error)?;
-    if database.is_closed()
+        .await;
+    if database.sync_runtimes.is_poisoned()
+        || database.is_closed()
         || database.session_generation.load(Ordering::Acquire) != session_generation
     {
         return Err(NativeSyncError::RecoveryRequired);
     }
+    let (state, barrier) = inspected.map_err(map_persistence_error)?;
     let Some(state) = state else {
         return Ok(NativeSyncInspection::Missing);
     };
@@ -158,7 +162,9 @@ pub enum NativeSyncError {
     #[error("sync persistence operation failed")]
     Persistence,
 
-    #[error("sync persistence outcome is unknown; reopen before continuing")]
+    #[error(
+        "sync persistence requires recovery; unsettled mutations require proven engine retirement before reuse"
+    )]
     RecoveryRequired,
 
     #[error("sync client requires an embedded database")]
@@ -183,10 +189,25 @@ pub enum NativeSyncError {
 
 type RuntimeKey = (u64, String, String);
 #[derive(Default)]
-pub(crate) struct RuntimeRegistry(Mutex<BTreeMap<RuntimeKey, Weak<AsyncMutex<RuntimeState>>>>);
+pub(crate) struct RuntimeRegistry {
+    entries: Mutex<BTreeMap<RuntimeKey, Weak<AsyncMutex<RuntimeState>>>>,
+    // Sticky for the physical database owner, not reset by wrapper or typed session changes.
+    poison_all: AtomicBool,
+    #[cfg(test)]
+    lifecycle_read_arrived: Mutex<Option<Arc<tokio::sync::Notify>>>,
+}
 impl RuntimeRegistry {
+    fn is_poisoned(&self) -> bool {
+        self.poison_all.load(Ordering::Acquire)
+    }
+    fn poison(&self) {
+        self.poison_all.store(true, Ordering::Release);
+    }
     fn acquire(&self, key: RuntimeKey) -> Result<Arc<AsyncMutex<RuntimeState>>, NativeSyncError> {
-        let mut entries = self.0.lock().map_err(|_| NativeSyncError::Internal)?;
+        if self.is_poisoned() {
+            return Err(NativeSyncError::RecoveryRequired);
+        }
+        let mut entries = self.entries.lock().map_err(|_| NativeSyncError::Internal)?;
         entries.retain(|_, value| value.strong_count() > 0);
         if let Some(existing) = entries.get(&key).and_then(Weak::upgrade) {
             return Ok(existing);
@@ -199,6 +220,7 @@ impl RuntimeRegistry {
             scope_blocked: None,
             bootstrap_binding: None,
             bootstrap_binding_ticket: 0,
+            mutation_admission: Arc::new(Semaphore::new(1)),
         }));
         entries.insert(key, Arc::downgrade(&runtime));
         Ok(runtime)
@@ -216,6 +238,8 @@ pub struct NativeSyncClient {
     lose_next_persist_ack: std::sync::atomic::AtomicBool,
     #[cfg(test)]
     completion_pause: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
+    #[cfg(test)]
+    persistence_pause: Mutex<Option<crate::sync_state::PersistencePause>>,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -227,103 +251,142 @@ pub async fn open_sync_client(
         return Err(NativeSyncError::RequiresEmbeddedDatabase);
     }
 
-    let lifecycle = database.journal_lifecycle.read().await;
-    if database.is_closed() {
-        return Err(NativeSyncError::Closed);
-    }
     let session_generation = database.session_generation.load(Ordering::Acquire);
-    let partition_id = PartitionId(options.partition_id);
-    let client_id = ClientId(options.client_id);
-    let requested_scope = ScopeIdentity(options.requested_scope);
-    let key = SyncStateKey::new(&partition_id, &client_id);
-    crate::sync_state::validate_key(key).map_err(map_persistence_error)?;
-    let shared = database.sync_runtimes.acquire((
+    crate::sync_state::validate_key(SyncStateKey::new(
+        &PartitionId(options.partition_id.clone()),
+        &ClientId(options.client_id.clone()),
+    ))
+    .map_err(map_persistence_error)?;
+    let runtime_key = (
         session_generation,
-        partition_id.0.clone(),
-        client_id.0.clone(),
-    ))?;
-    let mut shared_slot = shared.lock().await;
-    let store = SyncStateStore::new(&database).with_session_generation(session_generation);
-    if shared_slot.runtime.is_none() {
-        store.define_schema().await.map_err(map_persistence_error)?;
-
-        let state = match store.load(key).await.map_err(map_persistence_error)? {
-            Some(state) => state,
-            None => {
-                let initial = StoredSyncState::empty(
-                    partition_id.clone(),
-                    client_id.clone(),
-                    requested_scope.clone(),
-                    options.subscription_revision,
-                );
-                match store.save_atomic(None, &initial).await {
-                    Ok(_) => initial,
-                    Err(SyncStateError::RevisionConflict) => store
-                        .load(key)
-                        .await
-                        .map_err(map_persistence_error)?
-                        .ok_or(NativeSyncError::Persistence)?,
-                    Err(error) => return Err(map_persistence_error(error)),
-                }
-            }
-        };
-
-        if state.partition_id != partition_id
-            || state.client_id != client_id
-            || state.requested_scope != requested_scope
-            || state.subscription_revision != options.subscription_revision
-        {
-            return Err(NativeSyncError::Protocol);
-        }
-        validate_state_codec(&state)?;
-        let barrier = store
-            .load_scope_barrier(key)
-            .await
-            .map_err(|_| NativeSyncError::RecoveryRequired)?;
-        let scope_blocked = barrier.map(|value| ScopeBlock::from_reason(&value.reason));
-        let runtime = ClientRuntime::open(state).map_err(map_protocol_error)?;
-        if shared_slot.recovery_required
-            && (shared_slot.journal.rotate().is_err()
-                || shared_slot.subscription_journal.rotate().is_err())
-        {
-            invalidate_runtime(&mut shared_slot);
-            return Err(NativeSyncError::RecoveryRequired);
-        }
-        // Preserve each random prefix/checked counter; recovery never creates Default journals.
-        shared_slot.runtime = Some(runtime);
-        shared_slot.recovery_required = false;
-        shared_slot.scope_blocked = scope_blocked;
-    }
-    let state = shared_slot.client()?.state();
-    if state.requested_scope != requested_scope
-        || state.subscription_revision != options.subscription_revision
-    {
-        return Err(NativeSyncError::Protocol);
-    }
-    if database.session_generation.load(Ordering::Acquire) != session_generation
-        || database.is_closed()
-    {
-        shared_slot.runtime.take();
-        shared_slot.recovery_required = true;
-        return Err(NativeSyncError::RecoveryRequired);
-    }
-    drop(shared_slot);
-    drop(lifecycle);
-    Ok(Arc::new(NativeSyncClient {
+        options.partition_id.clone(),
+        options.client_id.clone(),
+    );
+    let shared = database.sync_runtimes.acquire(runtime_key.clone())?;
+    let client = Arc::new(NativeSyncClient {
         database,
         runtime: shared,
         local_closed: AtomicBool::new(false),
         session_generation,
         diagnostics: SyncDiagnostics::default(),
         #[cfg(test)]
-        lose_next_persist_ack: std::sync::atomic::AtomicBool::new(false),
+        lose_next_persist_ack: AtomicBool::new(false),
         #[cfg(test)]
         completion_pause: Mutex::new(None),
-    }))
+        #[cfg(test)]
+        persistence_pause: Mutex::new(None),
+    });
+    client
+        .clone()
+        .run_mutation(move |owner| async move { owner.initialize_runtime(options).await })
+        .await?;
+    Ok(client)
+}
+
+impl NativeSyncClient {
+    async fn initialize_runtime(
+        &self,
+        options: NativeSyncOpenOptions,
+    ) -> Result<(), NativeSyncError> {
+        let mut shared_slot = self.lock_runtime().await;
+        self.ensure_session()?;
+        let database = &self.database;
+        let session_generation = self.session_generation;
+        let partition_id = PartitionId(options.partition_id);
+        let client_id = ClientId(options.client_id);
+        let requested_scope = ScopeIdentity(options.requested_scope);
+        let key = SyncStateKey::new(&partition_id, &client_id);
+        let store = SyncStateStore::new(database).with_session_generation(session_generation);
+        if shared_slot.runtime.is_none() {
+            shared_slot.arm_mutation();
+            let defined = store.define_schema().await;
+            let schema_uncertain = matches!(defined, Err(SyncStateError::Database(_)));
+            if schema_uncertain {
+                // DDL uses a direct multi-statement query; an error need not prove router settlement.
+                self.database.sync_runtimes.poison();
+            }
+            shared_slot.settled_mutation(&defined);
+            if schema_uncertain {
+                return Err(NativeSyncError::RecoveryRequired);
+            }
+            defined.map_err(map_persistence_error)?;
+
+            let state = match store.load(key).await.map_err(map_persistence_error)? {
+                Some(state) => state,
+                None => {
+                    let initial = StoredSyncState::empty(
+                        partition_id.clone(),
+                        client_id.clone(),
+                        requested_scope.clone(),
+                        options.subscription_revision,
+                    );
+                    shared_slot.arm_mutation();
+                    let saved = store.save_atomic(None, &initial).await;
+                    shared_slot.settled_mutation(&saved);
+                    if self.database.sync_runtimes.is_poisoned() {
+                        return Err(NativeSyncError::RecoveryRequired);
+                    }
+                    match saved {
+                        Ok(_) => initial,
+                        Err(SyncStateError::RevisionConflict) => store
+                            .load(key)
+                            .await
+                            .map_err(map_persistence_error)?
+                            .ok_or(NativeSyncError::Persistence)?,
+                        Err(error) => return Err(map_persistence_error(error)),
+                    }
+                }
+            };
+
+            if state.partition_id != partition_id
+                || state.client_id != client_id
+                || state.requested_scope != requested_scope
+                || state.subscription_revision != options.subscription_revision
+            {
+                return Err(NativeSyncError::Protocol);
+            }
+            validate_state_codec(&state)?;
+            let barrier = store
+                .load_scope_barrier(key)
+                .await
+                .map_err(|_| NativeSyncError::RecoveryRequired)?;
+            let scope_blocked = barrier.map(|value| ScopeBlock::from_reason(&value.reason));
+            let runtime = ClientRuntime::open(state).map_err(map_protocol_error)?;
+            if shared_slot.recovery_required
+                && (shared_slot.journal.rotate().is_err()
+                    || shared_slot.subscription_journal.rotate().is_err())
+            {
+                invalidate_runtime(&mut shared_slot);
+                return Err(NativeSyncError::RecoveryRequired);
+            }
+            // Preserve each random prefix/checked counter; recovery never creates Default journals.
+            shared_slot.runtime = Some(runtime);
+            shared_slot.recovery_required = false;
+            shared_slot.scope_blocked = scope_blocked;
+        }
+        let state = shared_slot.client()?.state();
+        if state.requested_scope != requested_scope
+            || state.subscription_revision != options.subscription_revision
+        {
+            return Err(NativeSyncError::Protocol);
+        }
+        if database.session_generation.load(Ordering::Acquire) != session_generation
+            || database.is_closed()
+        {
+            shared_slot.runtime.take();
+            shared_slot.recovery_required = true;
+            return Err(NativeSyncError::RecoveryRequired);
+        }
+        shared_slot.disarm_mutation();
+        Ok(())
+    }
 }
 
 impl NativeSyncClient {
     fn ensure_session(&self) -> Result<(), NativeSyncError> {
+        if self.database.sync_runtimes.is_poisoned() {
+            return Err(NativeSyncError::RecoveryRequired);
+        }
         if self.local_closed.load(Ordering::Acquire) {
             return Err(NativeSyncError::Closed);
         }
@@ -358,20 +421,16 @@ impl NativeSyncClient {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl NativeSyncClient {
-    pub async fn enqueue(&self, commit_json: String) -> Result<NativeSyncStatus, NativeSyncError> {
-        let mut commit = decode_input::<ClientCommit<JsonValue>>(&commit_json)?;
-        let mut slot = self.lock_runtime().await;
-        let runtime = slot.client()?;
-        commit.identity.fingerprint = canonical_fingerprint(runtime.state(), &commit)?;
-        let prepared = slot
-            .client()?
-            .prepare_enqueue(commit)
-            .map_err(map_protocol_error)?;
-        self.persist_and_install(&mut slot, prepared).await
+    pub async fn enqueue(
+        self: Arc<Self>,
+        commit_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.run_mutation(move |owner| async move { owner.enqueue_owned(commit_json).await })
+            .await
     }
 
     pub async fn record_push_response(
-        &self,
+        self: Arc<Self>,
         response_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
         self.record_push_response_with_policy(response_json, NativeConflictPolicy::Manual)
@@ -381,133 +440,64 @@ impl NativeSyncClient {
     /// The caller selects a local policy; the server outcome remains untrusted
     /// and is validated before any durable state is replaced.
     pub async fn record_push_response_with_policy(
-        &self,
+        self: Arc<Self>,
         response_json: String,
         policy: NativeConflictPolicy,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let response = decode_input::<PushResponse<JsonValue>>(&response_json)?;
-        validate_push_response_values(&response.outcome)?;
-        let mut slot = self.lock_runtime().await;
-        let prepared = slot
-            .client()?
-            .prepare_push_response_with_policy(response, policy.into())
-            .map_err(map_protocol_error)?;
-        self.persist_and_install(&mut slot, prepared).await
+        self.run_mutation(move |owner| async move {
+            owner
+                .record_push_response_with_policy_owned(response_json, policy)
+                .await
+        })
+        .await
     }
 
     pub async fn apply_pull_response(
-        &self,
+        self: Arc<Self>,
         response_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let response = decode_input::<PullResponse<JsonValue>>(&response_json)?;
-        validate_pull_response_values(&response)?;
-        let mut slot = self.lock_runtime().await;
-        let required_scope = match &response {
-            PullResponse::Reset(snapshot) => Some(snapshot.checkpoint.scope.clone()),
-            PullResponse::Batch(batch) => batch.frames.iter().find_map(|frame| match frame {
-                surrealdb_sync_protocol::PullFrame::End { checkpoint } => {
-                    Some(checkpoint.scope.clone())
-                }
-                _ => None,
-            }),
-        };
-        let prepared = match slot.client()?.prepare_pull_response(response) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                match error {
-                    ClientError::PendingQuarantineRequired => {
-                        slot.scope_blocked = Some(ScopeBlock::PendingQuarantine)
-                    }
-                    ClientError::NeedsNewScopeJournal => {
-                        slot.scope_blocked = Some(ScopeBlock::NewJournal)
-                    }
-                    _ => {}
-                }
-                if let (Some(block), Some(scope)) = (slot.scope_blocked, required_scope) {
-                    let state = slot.client()?.state();
-                    let result = SyncStateStore::new(&self.database)
-                        .with_session_generation(self.session_generation)
-                        .save_scope_barrier(
-                            SyncStateKey::new(&state.partition_id, &state.client_id),
-                            ScopeBarrier {
-                                reason: block.reason().into(),
-                                required_scope: scope.identity.0,
-                                required_subscription_revision: scope
-                                    .subscription_revision
-                                    .to_string(),
-                                required_authorization_revision: scope
-                                    .authorization_revision
-                                    .to_string(),
-                            },
-                        )
-                        .await;
-                    if result.is_err() {
-                        slot.runtime.take();
-                        slot.recovery_required = true;
-                        return Err(NativeSyncError::RecoveryRequired);
-                    }
-                }
-                return Err(map_protocol_error(error));
-            }
-        };
-        self.persist_and_install(&mut slot, prepared).await
+        self.run_mutation(move |owner| async move {
+            owner.apply_pull_response_owned(response_json).await
+        })
+        .await
     }
 
     pub async fn resolve_conflict_keep_server(
-        &self,
+        self: Arc<Self>,
         conflicted_commit_id: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let mut slot = self.lock_runtime().await;
-        let prepared = slot
-            .client()?
-            .prepare_resolve_conflict(
-                &ClientCommitId(conflicted_commit_id),
-                ConflictResolutionRequest::KeepServer,
-            )
-            .map_err(map_protocol_error)?;
-        self.persist_and_install(&mut slot, prepared).await
+        self.run_mutation(move |owner| async move {
+            owner
+                .resolve_conflict_keep_server_owned(conflicted_commit_id)
+                .await
+        })
+        .await
     }
 
     pub async fn resolve_conflict_keep_local(
-        &self,
+        self: Arc<Self>,
         conflicted_commit_id: String,
         replacement_commit_id: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let mut slot = self.lock_runtime().await;
-        let runtime = slot.client()?;
-        let conflict_id = ClientCommitId(conflicted_commit_id);
-        let (mut replacement, record_id, authoritative) = conflict_context(runtime, &conflict_id)?;
-        replacement.identity = CommitIdentity {
-            client_commit_id: ClientCommitId(replacement_commit_id),
-            fingerprint: Fingerprint(String::new()),
-        };
-        rebase_conflict_operation(&mut replacement, &record_id, &authoritative)?;
-        replacement.identity.fingerprint = canonical_fingerprint(runtime.state(), &replacement)?;
-        let prepared = runtime
-            .prepare_resolve_conflict(
-                &conflict_id,
-                ConflictResolutionRequest::KeepLocal { replacement },
-            )
-            .map_err(map_protocol_error)?;
-        self.persist_and_install(&mut slot, prepared).await
+        self.run_mutation(move |owner| async move {
+            owner
+                .resolve_conflict_keep_local_owned(conflicted_commit_id, replacement_commit_id)
+                .await
+        })
+        .await
     }
 
     pub async fn resolve_conflict_merge(
-        &self,
+        self: Arc<Self>,
         conflicted_commit_id: String,
         replacement_commit_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let mut replacement = decode_input::<ClientCommit<JsonValue>>(&replacement_commit_json)?;
-        let mut slot = self.lock_runtime().await;
-        let runtime = slot.client()?;
-        replacement.identity.fingerprint = canonical_fingerprint(runtime.state(), &replacement)?;
-        let prepared = runtime
-            .prepare_resolve_conflict(
-                &ClientCommitId(conflicted_commit_id),
-                ConflictResolutionRequest::Merge { replacement },
-            )
-            .map_err(map_protocol_error)?;
-        self.persist_and_install(&mut slot, prepared).await
+        self.run_mutation(move |owner| async move {
+            owner
+                .resolve_conflict_merge_owned(conflicted_commit_id, replacement_commit_json)
+                .await
+        })
+        .await
     }
 
     pub async fn pending_json(&self) -> Result<Vec<String>, NativeSyncError> {
@@ -551,8 +541,8 @@ impl NativeSyncClient {
     }
 
     pub async fn close(&self) {
-        let _slot = self.lock_runtime().await;
         self.local_closed.store(true, Ordering::Release);
+        let _slot = self.lock_runtime().await;
     }
 
     pub fn subscription_capabilities_json(&self) -> String {
@@ -560,88 +550,38 @@ impl NativeSyncClient {
     }
 
     pub async fn start_subscription_json(
-        &self,
+        self: Arc<Self>,
         request_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let request = crate::sync_subscription::parse_request(&request_json)?;
-        let mut slot = self.lock_runtime().await;
-        self.refresh_scope_barrier(&mut slot).await?;
-        let prepared = slot
-            .read_client()?
-            .prepare_start_subscription(request)
-            .map_err(map_protocol_error)?;
-        self.persist_and_install(&mut slot, prepared).await
+        self.run_mutation(move |owner| async move {
+            owner.start_subscription_json_owned(request_json).await
+        })
+        .await
     }
 
     pub async fn cancel_subscription(
-        &self,
+        self: Arc<Self>,
         subscription_id: String,
         generation: u64,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let mut slot = self.lock_runtime().await;
-        self.refresh_scope_barrier(&mut slot).await?;
-        // Local cancellation remains available after quarantine and never exposes old rows.
-        let prepared = slot
-            .client()?
-            .prepare_cancel_subscription(&subscription_id, generation)
-            .map_err(map_protocol_error)?;
-        self.persist_and_install(&mut slot, prepared).await
+        self.run_mutation(move |owner| async move {
+            owner
+                .cancel_subscription_owned(subscription_id, generation)
+                .await
+        })
+        .await
     }
 
     pub async fn apply_subscription_response_json(
-        &self,
+        self: Arc<Self>,
         response_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let response = crate::sync_subscription::parse_response(&response_json)?;
-        let required_scope = response.scope.clone();
-        let subscription_id = response.subscription_id.clone();
-        let generation = response.generation;
-        let mut slot = self.lock_runtime().await;
-        self.refresh_scope_barrier(&mut slot).await?;
-        let prepared = match slot.read_client()?.prepare_subscription_response(response) {
-            Ok(prepared) => prepared,
-            Err(
-                error
-                @ (ClientError::PendingQuarantineRequired | ClientError::NeedsNewScopeJournal),
-            ) => {
-                let block = if error == ClientError::PendingQuarantineRequired {
-                    ScopeBlock::PendingQuarantine
-                } else {
-                    ScopeBlock::NewJournal
-                };
-                slot.scope_blocked = Some(block);
-                let state = slot.client()?.state();
-                let persisted = SyncStateStore::new(&self.database)
-                    .with_session_generation(self.session_generation)
-                    .save_scope_barrier(
-                        SyncStateKey::new(&state.partition_id, &state.client_id),
-                        ScopeBarrier {
-                            reason: block.reason().into(),
-                            required_scope: required_scope.identity.0,
-                            required_subscription_revision: required_scope
-                                .subscription_revision
-                                .to_string(),
-                            required_authorization_revision: required_scope
-                                .authorization_revision
-                                .to_string(),
-                        },
-                    )
-                    .await;
-                if persisted.is_err() {
-                    slot.runtime.take();
-                    slot.recovery_required = true;
-                    return Err(NativeSyncError::RecoveryRequired);
-                }
-                let cancel = slot
-                    .client()?
-                    .prepare_cancel_subscription(&subscription_id, generation)
-                    .map_err(map_protocol_error)?;
-                self.persist_and_install(&mut slot, cancel).await?;
-                return Err(map_protocol_error(error));
-            }
-            Err(error) => return Err(map_protocol_error(error)),
-        };
-        self.persist_and_install(&mut slot, prepared).await
+        self.run_mutation(move |owner| async move {
+            owner
+                .apply_subscription_response_json_owned(response_json)
+                .await
+        })
+        .await
     }
 
     pub async fn subscription_request_json(
@@ -783,6 +723,7 @@ struct RuntimeState {
     bootstrap_binding: Option<surrealdb_sync_protocol::bootstrap::BootstrapContext>,
     // Never reset on shared-cell recovery: old Session objects remain stale.
     bootstrap_binding_ticket: u64,
+    mutation_admission: Arc<Semaphore>,
 }
 impl RuntimeState {
     fn read_client(&self) -> Result<&ClientRuntime<JsonValue>, NativeSyncError> {
@@ -850,12 +791,18 @@ impl BootstrapAccess<'_> {
             .map_err(crate::sync_bootstrap::NativeBootstrapError::from_native)?;
         Ok(())
     }
+    pub(crate) fn arm_mutation(&mut self) {
+        self.slot.arm_mutation();
+    }
     pub(crate) fn finish<T>(
         &mut self,
         result: Result<T, SyncStateError>,
         mutating: bool,
     ) -> Result<T, crate::sync_bootstrap::NativeBootstrapError> {
         use crate::sync_bootstrap::NativeBootstrapError;
+        if mutating {
+            self.slot.settled_mutation(&result);
+        }
         if matches!(
             &result,
             Err(SyncStateError::CommitUnknown(_) | SyncStateError::RollbackFailed { .. })
@@ -878,8 +825,16 @@ impl BootstrapAccess<'_> {
         }
         #[cfg(not(test))]
         let _ = mutating;
+        self.slot.disarm_mutation();
         result.map_err(NativeBootstrapError::from_store)
     }
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum MutationPhase {
+    Clean,
+    InFlight,
+    Settled,
 }
 
 struct RuntimeGuard<'a> {
@@ -890,8 +845,30 @@ struct RuntimeGuard<'a> {
     started: Instant,
     ordinal: u64,
     wait_ns: u64,
+    mutation_phase: MutationPhase,
 }
 impl RuntimeGuard<'_> {
+    fn arm_mutation(&mut self) {
+        self.mutation_phase = MutationPhase::InFlight;
+    }
+    fn arm_with_state(&mut self) -> Result<&StoredSyncState, NativeSyncError> {
+        self.client()?;
+        self.arm_mutation();
+        self.guard.client().map(ClientRuntime::state)
+    }
+    fn settled_mutation<T>(&mut self, result: &Result<T, SyncStateError>) {
+        if matches!(
+            result,
+            Err(SyncStateError::CommitUnknown(_) | SyncStateError::RollbackFailed { .. })
+        ) {
+            self.owner.database.sync_runtimes.poison();
+        }
+        self.mutation_phase = MutationPhase::Settled;
+    }
+    fn disarm_mutation(&mut self) {
+        self.mutation_phase = MutationPhase::Clean;
+    }
+
     fn client(&self) -> Result<&ClientRuntime<JsonValue>, NativeSyncError> {
         self.owner.ensure_session()?;
         self.guard.client()
@@ -914,6 +891,12 @@ impl DerefMut for RuntimeGuard<'_> {
 }
 impl Drop for RuntimeGuard<'_> {
     fn drop(&mut self) {
+        if self.mutation_phase != MutationPhase::Clean {
+            if self.mutation_phase == MutationPhase::InFlight {
+                self.owner.database.sync_runtimes.poison();
+            }
+            invalidate_runtime(&mut self.guard);
+        }
         self.diagnostics
             .complete_operation(self.ordinal, self.wait_ns, self.started);
         self.diagnostics.runtime_hold.record(self.started);
@@ -921,7 +904,282 @@ impl Drop for RuntimeGuard<'_> {
 }
 
 impl NativeSyncClient {
+    async fn enqueue_owned(
+        &self,
+        commit_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let mut commit = decode_input::<ClientCommit<JsonValue>>(&commit_json)?;
+        let mut slot = self.lock_runtime().await;
+        let runtime = slot.client()?;
+        commit.identity.fingerprint = canonical_fingerprint(runtime.state(), &commit)?;
+        let prepared = slot
+            .client()?
+            .prepare_enqueue(commit)
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    async fn record_push_response_with_policy_owned(
+        &self,
+        response_json: String,
+        policy: NativeConflictPolicy,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let response = decode_input::<PushResponse<JsonValue>>(&response_json)?;
+        validate_push_response_values(&response.outcome)?;
+        let mut slot = self.lock_runtime().await;
+        let prepared = slot
+            .client()?
+            .prepare_push_response_with_policy(response, policy.into())
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    async fn apply_pull_response_owned(
+        &self,
+        response_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let response = decode_input::<PullResponse<JsonValue>>(&response_json)?;
+        validate_pull_response_values(&response)?;
+        let mut slot = self.lock_runtime().await;
+        let required_scope = match &response {
+            PullResponse::Reset(snapshot) => Some(snapshot.checkpoint.scope.clone()),
+            PullResponse::Batch(batch) => batch.frames.iter().find_map(|frame| match frame {
+                surrealdb_sync_protocol::PullFrame::End { checkpoint } => {
+                    Some(checkpoint.scope.clone())
+                }
+                _ => None,
+            }),
+        };
+        let prepared = match slot.client()?.prepare_pull_response(response) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                match error {
+                    ClientError::PendingQuarantineRequired => {
+                        slot.scope_blocked = Some(ScopeBlock::PendingQuarantine)
+                    }
+                    ClientError::NeedsNewScopeJournal => {
+                        slot.scope_blocked = Some(ScopeBlock::NewJournal)
+                    }
+                    _ => {}
+                }
+                if let (Some(block), Some(scope)) = (slot.scope_blocked, required_scope) {
+                    let state = slot.client()?.state();
+                    let partition_id = state.partition_id.clone();
+                    let client_id = state.client_id.clone();
+                    slot.arm_mutation();
+                    let result = SyncStateStore::new(&self.database)
+                        .with_session_generation(self.session_generation)
+                        .save_scope_barrier(
+                            SyncStateKey::new(&partition_id, &client_id),
+                            ScopeBarrier {
+                                reason: block.reason().into(),
+                                required_scope: scope.identity.0,
+                                required_subscription_revision: scope
+                                    .subscription_revision
+                                    .to_string(),
+                                required_authorization_revision: scope
+                                    .authorization_revision
+                                    .to_string(),
+                            },
+                        )
+                        .await;
+                    slot.settled_mutation(&result);
+                    if result.is_err() {
+                        slot.runtime.take();
+                        slot.recovery_required = true;
+                        return Err(NativeSyncError::RecoveryRequired);
+                    }
+                    slot.disarm_mutation();
+                }
+                return Err(map_protocol_error(error));
+            }
+        };
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    async fn resolve_conflict_keep_server_owned(
+        &self,
+        conflicted_commit_id: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        let prepared = slot
+            .client()?
+            .prepare_resolve_conflict(
+                &ClientCommitId(conflicted_commit_id),
+                ConflictResolutionRequest::KeepServer,
+            )
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    async fn resolve_conflict_keep_local_owned(
+        &self,
+        conflicted_commit_id: String,
+        replacement_commit_id: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        let runtime = slot.client()?;
+        let conflict_id = ClientCommitId(conflicted_commit_id);
+        let (mut replacement, record_id, authoritative) = conflict_context(runtime, &conflict_id)?;
+        replacement.identity = CommitIdentity {
+            client_commit_id: ClientCommitId(replacement_commit_id),
+            fingerprint: Fingerprint(String::new()),
+        };
+        rebase_conflict_operation(&mut replacement, &record_id, &authoritative)?;
+        replacement.identity.fingerprint = canonical_fingerprint(runtime.state(), &replacement)?;
+        let prepared = runtime
+            .prepare_resolve_conflict(
+                &conflict_id,
+                ConflictResolutionRequest::KeepLocal { replacement },
+            )
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    async fn resolve_conflict_merge_owned(
+        &self,
+        conflicted_commit_id: String,
+        replacement_commit_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let mut replacement = decode_input::<ClientCommit<JsonValue>>(&replacement_commit_json)?;
+        let mut slot = self.lock_runtime().await;
+        let runtime = slot.client()?;
+        replacement.identity.fingerprint = canonical_fingerprint(runtime.state(), &replacement)?;
+        let prepared = runtime
+            .prepare_resolve_conflict(
+                &ClientCommitId(conflicted_commit_id),
+                ConflictResolutionRequest::Merge { replacement },
+            )
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    async fn start_subscription_json_owned(
+        &self,
+        request_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let request = crate::sync_subscription::parse_request(&request_json)?;
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        let prepared = slot
+            .read_client()?
+            .prepare_start_subscription(request)
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    async fn cancel_subscription_owned(
+        &self,
+        subscription_id: String,
+        generation: u64,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        // Local cancellation remains available after quarantine and never exposes old rows.
+        let prepared = slot
+            .client()?
+            .prepare_cancel_subscription(&subscription_id, generation)
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    async fn apply_subscription_response_json_owned(
+        &self,
+        response_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let response = crate::sync_subscription::parse_response(&response_json)?;
+        let required_scope = response.scope.clone();
+        let subscription_id = response.subscription_id.clone();
+        let generation = response.generation;
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        let prepared = match slot.read_client()?.prepare_subscription_response(response) {
+            Ok(prepared) => prepared,
+            Err(
+                error
+                @ (ClientError::PendingQuarantineRequired | ClientError::NeedsNewScopeJournal),
+            ) => {
+                let block = if error == ClientError::PendingQuarantineRequired {
+                    ScopeBlock::PendingQuarantine
+                } else {
+                    ScopeBlock::NewJournal
+                };
+                slot.scope_blocked = Some(block);
+                let state = slot.client()?.state();
+                let partition_id = state.partition_id.clone();
+                let client_id = state.client_id.clone();
+                slot.arm_mutation();
+                let persisted = SyncStateStore::new(&self.database)
+                    .with_session_generation(self.session_generation)
+                    .save_scope_barrier(
+                        SyncStateKey::new(&partition_id, &client_id),
+                        ScopeBarrier {
+                            reason: block.reason().into(),
+                            required_scope: required_scope.identity.0,
+                            required_subscription_revision: required_scope
+                                .subscription_revision
+                                .to_string(),
+                            required_authorization_revision: required_scope
+                                .authorization_revision
+                                .to_string(),
+                        },
+                    )
+                    .await;
+                slot.settled_mutation(&persisted);
+                if persisted.is_err() {
+                    slot.runtime.take();
+                    slot.recovery_required = true;
+                    return Err(NativeSyncError::RecoveryRequired);
+                }
+                let cancel = slot
+                    .client()?
+                    .prepare_cancel_subscription(&subscription_id, generation)
+                    .map_err(map_protocol_error)?;
+                self.persist_and_install(&mut slot, cancel).await?;
+                return Err(map_protocol_error(error));
+            }
+            Err(error) => return Err(map_protocol_error(error)),
+        };
+        self.persist_and_install(&mut slot, prepared).await
+    }
+}
+
+impl NativeSyncClient {
+    pub(crate) async fn run_mutation<T, E, F, Fut>(self: Arc<Self>, work: F) -> Result<T, E>
+    where
+        T: Send + 'static,
+        E: From<NativeSyncError> + Send + 'static,
+        F: FnOnce(Arc<Self>) -> Fut + Send + 'static,
+        Fut: std::future::Future<Output = Result<T, E>> + Send + 'static,
+    {
+        // No worker exists while admission waits. Release this brief mutex before waiting.
+        let admission = self.runtime.lock().await.mutation_admission.clone();
+        let permit = admission
+            .acquire_owned()
+            .await
+            .map_err(|_| E::from(NativeSyncError::RecoveryRequired))?;
+        self.ensure_session().map_err(E::from)?;
+        // No await between admission and ownership transfer. Dropping the public waiter detaches.
+        tokio::spawn(async move {
+            let _permit = permit;
+            work(self).await
+        })
+        .await
+        .map_err(|_| E::from(NativeSyncError::RecoveryRequired))?
+    }
     async fn lock_runtime(&self) -> RuntimeGuard<'_> {
+        #[cfg(test)]
+        if let Some(arrived) = self
+            .database
+            .sync_runtimes
+            .lifecycle_read_arrived
+            .lock()
+            .unwrap()
+            .take()
+        {
+            // No await/yield before polling read below: observer resumes after it queues.
+            arrived.notify_one();
+        }
         let lifecycle = self.database.journal_lifecycle.read().await;
         let started = Instant::now();
         let guard = self.runtime.lock().await;
@@ -936,6 +1194,7 @@ impl NativeSyncClient {
             started: Instant::now(),
             ordinal,
             wait_ns,
+            mutation_phase: MutationPhase::Clean,
         }
     }
 
@@ -1023,10 +1282,12 @@ impl NativeSyncClient {
             utc_seconds: &checked_clock,
             deadline: clock.deadline,
         };
+        slot.arm_mutation();
         let result = crate::sync_bootstrap_store::BootstrapStore::new(&self.database)
             .with_session_generation(self.session_generation)
             .complete(receipt, expected, incarnation, &clock)
             .await;
+        slot.settled_mutation(&result);
         #[cfg(test)]
         {
             let pause = self.completion_pause.lock().unwrap().take();
@@ -1046,6 +1307,7 @@ impl NativeSyncClient {
         let result = match result {
             Ok(result) => result,
             Err(error) => {
+                slot.disarm_mutation();
                 self.refresh_scope_barrier(&mut slot).await?;
                 match slot.scope_blocked {
                     Some(ScopeBlock::NewJournal) => {
@@ -1094,6 +1356,7 @@ impl NativeSyncClient {
                 if let Some(barrier) = barrier {
                     slot.scope_blocked = Some(ScopeBlock::from_reason(&barrier.reason));
                 }
+                slot.disarm_mutation();
                 Ok(false)
             }
             crate::sync_bootstrap_store::Completion::Applied(applied) => {
@@ -1111,6 +1374,7 @@ impl NativeSyncClient {
                 }
                 slot.runtime = Some(runtime);
                 slot.recovery_required = false;
+                slot.disarm_mutation();
                 Ok(true)
             }
         }
@@ -1118,20 +1382,22 @@ impl NativeSyncClient {
 
     async fn persist_and_install(
         &self,
-        slot: &mut RuntimeState,
+        slot: &mut RuntimeGuard<'_>,
         prepared: PreparedTransition<JsonValue>,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
         self.ensure_session()?;
-        let current = slot.client()?.state();
-        let before_revision = current.revision;
+        let before_revision = slot.client()?.state().revision;
         let next = prepared.state();
         validate_state_codec(next)?;
         let storage_started = Instant::now();
-        let persisted = SyncStateStore::new(&self.database)
+        let store = SyncStateStore::new(&self.database)
             .with_session_generation(self.session_generation)
-            .with_diagnostics(&self.diagnostics)
-            .apply_transition_atomic(current, next)
-            .await;
+            .with_diagnostics(&self.diagnostics);
+        #[cfg(test)]
+        let store = store.with_pause(self.persistence_pause.lock().unwrap().take());
+        let current = slot.arm_with_state()?;
+        let persisted = store.apply_transition_atomic(current, next).await;
+        slot.settled_mutation(&persisted);
         self.diagnostics.storage.record(storage_started);
         if persisted.is_err() {
             self.diagnostics
@@ -1163,7 +1429,10 @@ impl NativeSyncClient {
             invalidate_runtime(slot);
             return Err(NativeSyncError::RecoveryRequired);
         }
-        persisted.map_err(map_persistence_error)?;
+        if let Err(error) = persisted {
+            slot.disarm_mutation();
+            return Err(map_persistence_error(error));
+        }
         let Some(runtime) = slot.as_mut() else {
             invalidate_runtime(slot);
             return Err(NativeSyncError::RecoveryRequired);
@@ -1188,12 +1457,13 @@ impl NativeSyncClient {
             runtime,
             subscription_journal,
             ..
-        } = slot;
+        } = &mut **slot;
         let Some(runtime) = runtime.as_ref() else {
             invalidate_runtime(slot);
             return Err(NativeSyncError::RecoveryRequired);
         };
         subscription_journal.record(runtime, before_revision);
+        slot.disarm_mutation();
         Ok(status)
     }
 }
@@ -1413,12 +1683,14 @@ mod tests {
             .await
             .unwrap();
         client
+            .clone()
             .enqueue(serde_json::to_string(&commit()).unwrap())
             .await
             .unwrap();
         let pending: ClientCommit<JsonValue> =
             serde_json::from_str(&client.pending_json().await.unwrap()[0]).unwrap();
         client
+            .clone()
             .record_push_response(
                 serde_json::to_string(&PushResponse::<JsonValue> {
                     schema_version: SchemaVersion::V1,
@@ -1447,6 +1719,7 @@ mod tests {
             }
         ));
         client
+            .clone()
             .resolve_conflict_keep_local("commit-1".into(), "commit-2".into())
             .await
             .unwrap();
@@ -1535,6 +1808,7 @@ mod tests {
         let db = surrealkv_database(directory.path()).await;
         let client = open_sync_client(db.clone(), options("all")).await.unwrap();
         client
+            .clone()
             .enqueue(serde_json::to_string(&commit()).unwrap())
             .await
             .unwrap();
@@ -1555,10 +1829,12 @@ mod tests {
         let v1_cursor: JsonValue =
             serde_json::from_str(&client.read_snapshot_json().await.unwrap()).unwrap();
         client
+            .clone()
             .start_subscription_json(crate::sync_subscription::test_request().to_string())
             .await
             .unwrap();
         client
+            .clone()
             .apply_subscription_response_json(crate::sync_subscription::test_response().to_string())
             .await
             .unwrap();
@@ -1624,15 +1900,20 @@ mod tests {
         assert_eq!(recovered["snapshot"], installed["snapshot"]);
         let delayed = crate::sync_subscription::test_response().to_string();
         let (response, cancel) = tokio::join!(
-            client.apply_subscription_response_json(delayed.clone()),
-            client.cancel_subscription("window".into(), 1)
+            client
+                .clone()
+                .apply_subscription_response_json(delayed.clone()),
+            client.clone().cancel_subscription("window".into(), 1)
         );
         assert!(
             response.is_ok() || matches!(response, Err(NativeSyncError::SubscriptionCancelled))
         );
         cancel.unwrap();
         assert!(matches!(
-            client.apply_subscription_response_json(delayed).await,
+            client
+                .clone()
+                .apply_subscription_response_json(delayed)
+                .await,
             Err(NativeSyncError::SubscriptionCancelled)
         ));
         client.close().await;
@@ -1655,12 +1936,14 @@ mod tests {
         let mut next = crate::sync_subscription::test_request();
         next["command"]["generation"] = json!("2");
         client
+            .clone()
             .start_subscription_json(next.to_string())
             .await
             .unwrap();
         let mut response = crate::sync_subscription::test_response();
         response["generation"] = json!("2");
         client
+            .clone()
             .apply_subscription_response_json(response.to_string())
             .await
             .unwrap();
@@ -1669,6 +1952,7 @@ mod tests {
         response["viewRevision"] = json!("2");
         assert!(matches!(
             client
+                .clone()
                 .apply_subscription_response_json(response.to_string())
                 .await,
             Err(NativeSyncError::PendingQuarantineRequired)
@@ -1692,10 +1976,12 @@ mod tests {
         let db = database().await;
         let client = open_sync_client(db.clone(), options("all")).await.unwrap();
         client
+            .clone()
             .start_subscription_json(crate::sync_subscription::test_request().to_string())
             .await
             .unwrap();
         client
+            .clone()
             .apply_subscription_response_json(crate::sync_subscription::test_response().to_string())
             .await
             .unwrap();
@@ -1710,7 +1996,7 @@ mod tests {
             .lose_next_persist_ack
             .store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(matches!(
-            client.cancel_subscription("window".into(), 1).await,
+            client.clone().cancel_subscription("window".into(), 1).await,
             Err(NativeSyncError::RecoveryRequired)
         ));
         assert!(matches!(
@@ -1758,6 +2044,7 @@ mod tests {
             .store(true, std::sync::atomic::Ordering::SeqCst);
         assert!(matches!(
             client
+                .clone()
                 .enqueue(serde_json::to_string(&commit()).unwrap())
                 .await,
             Err(NativeSyncError::RecoveryRequired)
@@ -1803,7 +2090,8 @@ mod tests {
         }
         multi.operations.push(other);
         let encoded = serde_json::to_string(&multi).unwrap();
-        let (snapshot, queued) = tokio::join!(client.read_snapshot_json(), client.enqueue(encoded));
+        let (snapshot, queued) =
+            tokio::join!(client.read_snapshot_json(), client.clone().enqueue(encoded));
         queued.unwrap();
         let snapshot: JsonValue = serde_json::from_str(&snapshot.unwrap()).unwrap();
         let row_count = snapshot["snapshot"]["rows"].as_object().unwrap().len();
@@ -1829,6 +2117,7 @@ mod tests {
         db.close().await.unwrap();
         assert!(
             client
+                .clone()
                 .enqueue(serde_json::to_string(&next).unwrap())
                 .await
                 .is_err()
@@ -1895,8 +2184,8 @@ mod tests {
         one.identity.client_commit_id = ClientCommitId("read-one".into());
         two.identity.client_commit_id = ClientCommitId("read-two".into());
         let (a, b) = tokio::join!(
-            client.enqueue(serde_json::to_string(&one).unwrap()),
-            client.enqueue(serde_json::to_string(&two).unwrap())
+            client.clone().enqueue(serde_json::to_string(&one).unwrap()),
+            client.clone().enqueue(serde_json::to_string(&two).unwrap())
         );
         a.unwrap();
         b.unwrap();
@@ -1923,6 +2212,7 @@ mod tests {
         }
         assert!(matches!(
             client
+                .clone()
                 .enqueue(serde_json::to_string(&invalid_projection).unwrap())
                 .await,
             Err(NativeSyncError::InvalidInput)
@@ -1936,7 +2226,13 @@ mod tests {
         )
         .unwrap();
         assert!(unchanged["batches"].as_array().unwrap().is_empty());
-        assert!(client.apply_pull_response("{}".into()).await.is_err());
+        assert!(
+            client
+                .clone()
+                .apply_pull_response("{}".into())
+                .await
+                .is_err()
+        );
         assert_eq!(client.read_snapshot_json().await.unwrap(), before);
         assert_eq!(
             client
@@ -1953,6 +2249,7 @@ mod tests {
             },
         );
         client
+            .clone()
             .apply_pull_response(serde_json::to_string(&reset).unwrap())
             .await
             .unwrap();
@@ -1960,6 +2257,7 @@ mod tests {
         let reset_snapshot: JsonValue =
             serde_json::from_str(&client.read_snapshot_json().await.unwrap()).unwrap();
         client
+            .clone()
             .apply_pull_response(serde_json::to_string(&reset).unwrap())
             .await
             .unwrap();
@@ -2006,6 +2304,7 @@ mod tests {
         failing_db.close().await.unwrap();
         assert!(matches!(
             failing
+                .clone()
                 .apply_pull_response(serde_json::to_string(&blocked_reset).unwrap())
                 .await,
             Err(NativeSyncError::RecoveryRequired)
@@ -2016,6 +2315,7 @@ mod tests {
         ));
         assert!(matches!(
             client
+                .clone()
                 .apply_pull_response(serde_json::to_string(&blocked_reset).unwrap())
                 .await,
             Err(NativeSyncError::PendingQuarantineRequired)
@@ -2086,10 +2386,11 @@ mod tests {
         )
         .await
         .unwrap();
+        let initial_acquisitions = client.diagnostics().runtime_lock_acquisitions;
         let guard = client.lock_runtime().await;
         let snapshot = client.diagnostics();
         assert_eq!(snapshot.schema_version, 1);
-        assert_eq!(snapshot.runtime_lock_acquisitions, 1);
+        assert_eq!(snapshot.runtime_lock_acquisitions, initial_acquisitions + 1);
         assert_eq!(snapshot.storage_attempts, 0);
         let debug = format!("{snapshot:?}");
         assert!(!debug.contains("private"));
@@ -2125,6 +2426,7 @@ mod tests {
 
         let commit = commit();
         let status = client
+            .clone()
             .enqueue(serde_json::to_string(&commit).unwrap())
             .await
             .unwrap();
@@ -2178,6 +2480,7 @@ mod tests {
             },
         };
         let status = reopened
+            .clone()
             .record_push_response(serde_json::to_string(&response).unwrap())
             .await
             .unwrap();
@@ -2207,6 +2510,7 @@ mod tests {
         };
         *base_version = BaseVersion::Exact(1);
         client
+            .clone()
             .enqueue(serde_json::to_string(&local).unwrap())
             .await
             .unwrap();
@@ -2228,6 +2532,7 @@ mod tests {
         };
         let response = serde_json::to_string(&conflict).unwrap();
         let status = client
+            .clone()
             .record_push_response_with_policy(
                 response.clone(),
                 NativeConflictPolicy::PreferServerV1,
@@ -2241,7 +2546,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(reopened.status().await.unwrap().conflict_count, 0);
-        let duplicate = reopened.record_push_response(response).await.unwrap();
+        let duplicate = reopened
+            .clone()
+            .record_push_response(response)
+            .await
+            .unwrap();
         assert_eq!(duplicate.outcome_count, 1);
         assert_eq!(duplicate.conflict_count, 0);
     }
@@ -2269,6 +2578,7 @@ mod tests {
             }],
         };
         client
+            .clone()
             .enqueue(serde_json::to_string(&commit).unwrap())
             .await
             .unwrap();
@@ -2298,6 +2608,7 @@ mod tests {
             .unwrap();
         let original = commit();
         client
+            .clone()
             .enqueue(serde_json::to_string(&original).unwrap())
             .await
             .unwrap();
@@ -2314,11 +2625,13 @@ mod tests {
             },
         };
         client
+            .clone()
             .record_push_response(serde_json::to_string(&response).unwrap())
             .await
             .unwrap();
 
         let status = client
+            .clone()
             .resolve_conflict_keep_local("commit-1".into(), "commit-2".into())
             .await
             .unwrap();
@@ -2328,6 +2641,7 @@ mod tests {
         assert!(client.conflicts_json().await.unwrap().is_empty());
 
         let retry = client
+            .clone()
             .resolve_conflict_keep_local("commit-1".into(), "commit-2".into())
             .await
             .unwrap();
@@ -2358,12 +2672,14 @@ mod tests {
                 .await
                 .unwrap();
             client
+                .clone()
                 .enqueue(serde_json::to_string(&commit()).unwrap())
                 .await
                 .unwrap();
             let pending: ClientCommit<JsonValue> =
                 serde_json::from_str(&client.pending_json().await.unwrap()[0]).unwrap();
             client
+                .clone()
                 .record_push_response(
                     serde_json::to_string(&PushResponse::<JsonValue> {
                         schema_version: SchemaVersion::V1,
@@ -2384,12 +2700,14 @@ mod tests {
 
         let keep_server = conflicted_client().await;
         let status = keep_server
+            .clone()
             .resolve_conflict_keep_server("commit-1".into())
             .await
             .unwrap();
         assert_eq!(status.pending_count, 0);
         assert_eq!(status.conflict_count, 0);
         keep_server
+            .clone()
             .resolve_conflict_keep_server("commit-1".into())
             .await
             .expect("an identical keep-server retry is idempotent");
@@ -2401,6 +2719,7 @@ mod tests {
             *value = json!({"name": "merged"});
         }
         let status = merge
+            .clone()
             .resolve_conflict_merge(
                 "commit-1".into(),
                 serde_json::to_string(&replacement).unwrap(),
@@ -2436,6 +2755,7 @@ mod tests {
             .await
             .unwrap();
         client
+            .clone()
             .enqueue(serde_json::to_string(&fractional).unwrap())
             .await
             .unwrap();
@@ -2482,6 +2802,7 @@ mod tests {
         *record_id = RecordId("temp:ada".into());
 
         client
+            .clone()
             .enqueue(serde_json::to_string(&local).unwrap())
             .await
             .unwrap();
@@ -2502,6 +2823,7 @@ mod tests {
         };
 
         let status = client
+            .clone()
             .record_push_response(serde_json::to_string(&response).unwrap())
             .await
             .unwrap();
@@ -2553,6 +2875,7 @@ mod tests {
             }],
         };
         client
+            .clone()
             .enqueue(serde_json::to_string(&commit).unwrap())
             .await
             .unwrap();
@@ -2567,7 +2890,7 @@ mod tests {
             crate::sync_http_codec::decode_sync_push_response(decode_hex(ACCEPTED_RESPONSE))
                 .await
                 .unwrap();
-        let status = client.record_push_response(response).await.unwrap();
+        let status = client.clone().record_push_response(response).await.unwrap();
         assert_eq!(status.pending_count, 0);
         assert_eq!(status.outcome_count, 1);
         client.close().await;
@@ -2597,7 +2920,7 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(
-            client.enqueue("{not-json".into()).await,
+            client.clone().enqueue("{not-json".into()).await,
             Err(NativeSyncError::InvalidInput)
         ));
         assert_eq!(client.status().await.unwrap().revision, 0);
@@ -2608,6 +2931,7 @@ mod tests {
         }
         assert!(matches!(
             client
+                .clone()
                 .enqueue(serde_json::to_string(&unsupported).unwrap())
                 .await,
             Err(NativeSyncError::InvalidInput)
@@ -2630,6 +2954,7 @@ mod tests {
         };
         assert!(matches!(
             client
+                .clone()
                 .record_push_response(serde_json::to_string(&hostile_push).unwrap())
                 .await,
             Err(NativeSyncError::InvalidInput)
@@ -2661,6 +2986,7 @@ mod tests {
         });
         assert!(matches!(
             client
+                .clone()
                 .apply_pull_response(serde_json::to_string(&hostile_pull).unwrap())
                 .await,
             Err(NativeSyncError::InvalidInput)
@@ -2705,6 +3031,7 @@ mod tests {
         });
 
         let status = client
+            .clone()
             .apply_pull_response(serde_json::to_string(&response).unwrap())
             .await
             .unwrap();
@@ -2756,6 +3083,7 @@ mod tests {
             ],
         });
         client
+            .clone()
             .apply_pull_response(serde_json::to_string(&first).unwrap())
             .await
             .unwrap();
@@ -2773,6 +3101,7 @@ mod tests {
             ],
         });
         let status = client
+            .clone()
             .apply_pull_response(serde_json::to_string(&empty).unwrap())
             .await
             .unwrap();
@@ -2817,6 +3146,7 @@ mod tests {
             ],
         });
         let status = reopened
+            .clone()
             .apply_pull_response(serde_json::to_string(&second).unwrap())
             .await
             .unwrap();
@@ -2844,7 +3174,11 @@ mod tests {
         let batch_json = crate::sync_http_codec::decode_sync_pull_response(decode_hex(BATCH))
             .await
             .unwrap();
-        let status = client.apply_pull_response(batch_json).await.unwrap();
+        let status = client
+            .clone()
+            .apply_pull_response(batch_json)
+            .await
+            .unwrap();
         assert_eq!(status.cursor_epoch, Some(1));
         assert_eq!(status.cursor_sequence, Some(1));
         assert_eq!(
@@ -2883,11 +3217,15 @@ mod tests {
             .await
             .unwrap();
         let pending = serde_json::to_string(&commit()).unwrap();
-        reset_client.enqueue(pending).await.unwrap();
+        reset_client.clone().enqueue(pending).await.unwrap();
         let reset_json = crate::sync_http_codec::decode_sync_pull_response(decode_hex(RESET))
             .await
             .unwrap();
-        let reset_status = reset_client.apply_pull_response(reset_json).await.unwrap();
+        let reset_status = reset_client
+            .clone()
+            .apply_pull_response(reset_json)
+            .await
+            .unwrap();
         assert_eq!(reset_status.cursor_sequence, Some(1));
         assert_eq!(reset_client.pending_json().await.unwrap().len(), 1);
         reset_client.close().await;
@@ -2925,7 +3263,8 @@ mod tests {
         let a = open_sync_client(db.clone(), options("all")).await.unwrap();
         let b = open_sync_client(db.clone(), options("all")).await.unwrap();
         assert!(Arc::ptr_eq(&a.runtime, &b.runtime));
-        a.enqueue(serde_json::to_string(&commit()).unwrap())
+        a.clone()
+            .enqueue(serde_json::to_string(&commit()).unwrap())
             .await
             .unwrap();
         assert_eq!(b.status().await.unwrap().pending_count, 1);
@@ -2958,7 +3297,7 @@ mod tests {
         drop(c);
         let next = open_sync_client(db.clone(), options("all")).await.unwrap();
         assert_eq!(
-            db.sync_runtimes.0.lock().unwrap().len(),
+            db.sync_runtimes.entries.lock().unwrap().len(),
             1,
             "dead weak entries retained"
         );
@@ -3203,7 +3542,8 @@ mod tests {
             changes["cursor"]["processEpoch"],
             subscription["cursor"]["processEpoch"]
         );
-        b.enqueue(serde_json::to_string(&commit()).unwrap())
+        b.clone()
+            .enqueue(serde_json::to_string(&commit()).unwrap())
             .await
             .unwrap();
         let latest = b.read_snapshot_json().await.unwrap();
@@ -3248,6 +3588,7 @@ mod tests {
         let reopened = open_sync_client(db.clone(), options("all")).await.unwrap();
         assert_eq!(reopened.status().await.unwrap().cursor_sequence, Some(1));
         reopened
+            .clone()
             .enqueue(serde_json::to_string(&commit()).unwrap())
             .await
             .unwrap();
@@ -3408,6 +3749,7 @@ mod tests {
             ));
             assert!(matches!(
                 client
+                    .clone()
                     .enqueue(serde_json::to_string(&commit()).unwrap())
                     .await,
                 Err(NativeSyncError::RecoveryRequired)
@@ -3463,24 +3805,25 @@ mod tests {
         let a = db.use_namespace_database("a".into(), "a".into());
         tokio::pin!(a);
         assert!(futures::poll!(a.as_mut()).is_pending()); // A owns lifecycle write and pauses before session side effects.
-        let open = open_sync_client(db.clone(), options("all"));
-        tokio::pin!(open);
-        assert!(futures::poll!(open.as_mut()).is_pending()); // Read is now queued behind A.
+        let read_arrived = Arc::new(tokio::sync::Notify::new());
+        *db.sync_runtimes.lifecycle_read_arrived.lock().unwrap() = Some(read_arrived.clone());
+        let opening_db = db.clone();
+        let open = tokio::spawn(async move { open_sync_client(opening_db, options("all")).await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), read_arrived.notified())
+            .await
+            .unwrap();
+        // Owned initialization's actual lifecycle reader is queued behind A before B reserves intent.
         let b = db.use_namespace_database("b".into(), "b".into());
         tokio::pin!(b);
         assert!(futures::poll!(b.as_mut()).is_pending()); // B reserves intent, then queues behind open.
         release.notify_one();
         let (a, opened, b) = tokio::join!(a, open, b);
+        let opened = opened.unwrap();
         a.unwrap();
         b.unwrap();
-        let opened = opened.unwrap();
-        assert!(opened.session_generation < db.session_generation.load(Ordering::Acquire));
         assert!(
-            matches!(
-                opened.status().await,
-                Err(NativeSyncError::RecoveryRequired)
-            ),
-            "open adopted B's pending intent generation as if B had already mutated session"
+            matches!(opened, Err(NativeSyncError::RecoveryRequired)),
+            "open must reject a session intent changed before owned initialization"
         );
         let fresh = open_sync_client(db.clone(), options("all")).await.unwrap();
         assert!(fresh.status().await.is_ok());
@@ -3568,7 +3911,9 @@ mod tests {
             local.identity.client_commit_id = ClientCommitId(format!("recovery-{round}"));
             a.lose_next_persist_ack.store(true, Ordering::SeqCst);
             assert!(matches!(
-                a.enqueue(serde_json::to_string(&local).unwrap()).await,
+                a.clone()
+                    .enqueue(serde_json::to_string(&local).unwrap())
+                    .await,
                 Err(NativeSyncError::RecoveryRequired)
             ));
             let recovered = open_sync_client(db.clone(), options("all")).await.unwrap();
@@ -3679,5 +4024,297 @@ mod tests {
         );
         assert_eq!(access.slot.bootstrap_binding.as_ref(), Some(&context));
         assert_eq!(access.slot.bootstrap_binding_ticket, u64::MAX);
+    }
+
+    async fn assert_completion_cancellation_is_shielded(ffi: bool) {
+        extern "C" fn continuation(_: u64, _: uniffi::RustFuturePoll) {}
+        let db = database().await;
+        let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let (receipt, context, incarnation) =
+            staged_native_completion(&db, "owned-completion").await;
+        let retained_context = context.clone();
+        let key = SyncStateKey::new(&retained_context.partition_id, &retained_context.client_id);
+        let arrived = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        *a.completion_pause.lock().unwrap() = Some((arrived.clone(), release.clone()));
+        let operation = a.run_mutation(move |owner| async move {
+            let clock = crate::sync_bootstrap_store::CompletionClock {
+                utc_seconds: &|| Ok(1),
+                deadline: Instant::now() + std::time::Duration::from_secs(10),
+            };
+            owner
+                .complete_bootstrap(&receipt, &context, incarnation, &clock)
+                .await
+        });
+        if ffi {
+            let handle = uniffi::rust_future_new::<_, bool, crate::UniFfiTag>(
+                async move {
+                    let value = uniffi::deps::async_compat::Compat::new(operation)
+                        .await
+                        .unwrap();
+                    Ok::<bool, uniffi::LiftArgsError>(value)
+                },
+                crate::UniFfiTag,
+            );
+            tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                loop {
+                    // SAFETY: live exclusively-owned handle; bool lowers to i8.
+                    unsafe {
+                        uniffi::rust_future_poll::<i8>(handle.clone(), continuation, 0);
+                    }
+                    tokio::select! {
+                        _ = arrived.notified() => break,
+                        _ = tokio::time::sleep(std::time::Duration::from_millis(1)) => {}
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            let mut status = uniffi::RustCallStatus::default();
+            // SAFETY: original return type and exactly one free after complete.
+            unsafe {
+                uniffi::rust_future_cancel::<i8>(handle.clone());
+                uniffi::rust_future_complete::<i8>(handle.clone(), &mut status);
+                uniffi::rust_future_free::<i8>(handle);
+            }
+            assert_eq!(status.code, uniffi::RustCallStatusCode::Cancelled);
+        } else {
+            let task = tokio::spawn(operation);
+            tokio::time::timeout(std::time::Duration::from_secs(5), arrived.notified())
+                .await
+                .unwrap();
+            task.abort();
+            assert!(task.await.unwrap_err().is_cancelled());
+        }
+        let durable = SyncStateStore::new(&db).load(key).await.unwrap().unwrap();
+        assert_eq!(durable.checkpoint.as_ref().unwrap().cursor.sequence, 1);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), b.status())
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(20),
+                open_sync_client(db.clone(), options("all"))
+            )
+            .await
+            .is_err()
+        );
+        release.notify_one();
+        let status = tokio::time::timeout(std::time::Duration::from_secs(5), b.status())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(status.cursor_sequence, Some(1));
+        let reopened = open_sync_client(db.clone(), options("all")).await.unwrap();
+        assert_eq!(reopened.status().await.unwrap().cursor_sequence, Some(1));
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn aborted_caller_does_not_drop_committed_completion_worker() {
+        assert_completion_cancellation_is_shielded(false).await;
+    }
+
+    #[tokio::test]
+    async fn uniffi_cancel_complete_free_does_not_drop_completion_worker() {
+        assert_completion_cancellation_is_shielded(true).await;
+    }
+    #[tokio::test]
+    async fn cancelled_enqueue_settles_before_sibling_and_cancelled_admission_never_runs() {
+        for after_dispatch in [false, true] {
+            let db = database().await;
+            let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+            let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+            let arrived = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            let first_poll_pending = Arc::new(AtomicBool::new(false));
+            *a.persistence_pause.lock().unwrap() = Some(crate::sync_state::PersistencePause {
+                after_dispatch,
+                arrived: arrived.clone(),
+                release: release.clone(),
+                first_poll_pending: first_poll_pending.clone(),
+            });
+            let first = tokio::spawn(a.clone().enqueue(serde_json::to_string(&commit()).unwrap()));
+            tokio::time::timeout(std::time::Duration::from_secs(5), arrived.notified())
+                .await
+                .unwrap();
+            if after_dispatch {
+                assert!(first_poll_pending.load(Ordering::Acquire));
+            }
+            first.abort();
+            assert!(first.await.unwrap_err().is_cancelled());
+            let entered = Arc::new(AtomicBool::new(false));
+            let entered_worker = entered.clone();
+            let second = tokio::spawn(b.clone().run_mutation(move |_| async move {
+                entered_worker.store(true, Ordering::Release);
+                Ok::<(), NativeSyncError>(())
+            }));
+            tokio::task::yield_now().await;
+            second.abort();
+            assert!(second.await.unwrap_err().is_cancelled());
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(20), b.status())
+                    .await
+                    .is_err()
+            );
+            release.notify_one();
+            let status = tokio::time::timeout(std::time::Duration::from_secs(5), b.status())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(status.pending_count, 1);
+            assert!(!entered.load(Ordering::Acquire));
+            assert!(!db.sync_runtimes.is_poisoned());
+            db.close().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn ambiguous_worker_panic_poison_survives_wrapper_drop_and_blocks_other_keys() {
+        let db = database().await;
+        let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let result: Result<(), NativeSyncError> = client
+            .clone()
+            .run_mutation(|owner| async move {
+                let mut slot = owner.lock_runtime().await;
+                slot.arm_mutation();
+                panic!("synthetic unsettled-worker panic");
+            })
+            .await;
+        assert!(matches!(result, Err(NativeSyncError::RecoveryRequired)));
+        drop(client);
+        db.use_namespace_database("poison-other".into(), "poison-other".into())
+            .await
+            .unwrap();
+        assert!(db.sync_runtimes.is_poisoned());
+        assert!(matches!(
+            inspect_sync_state(db.clone(), options("all")).await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        assert!(matches!(
+            open_sync_client(db.clone(), options("other")).await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        assert!(matches!(
+            open_sync_client(db.clone(), options("all")).await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn physical_close_waits_for_cancelled_callers_owned_commit() {
+        let db = database().await;
+        let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let arrived = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        *client.persistence_pause.lock().unwrap() = Some(crate::sync_state::PersistencePause {
+            after_dispatch: true,
+            arrived: arrived.clone(),
+            release: release.clone(),
+            first_poll_pending: Arc::new(AtomicBool::new(false)),
+        });
+        let task = tokio::spawn(
+            client
+                .clone()
+                .enqueue(serde_json::to_string(&commit()).unwrap()),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(5), arrived.notified())
+            .await
+            .unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        let closing_client = client.clone();
+        let close_handle = tokio::spawn(async move { closing_client.close().await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !client.local_closed.load(Ordering::Acquire) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(!close_handle.is_finished());
+        let closing_db = db.clone();
+        let mut closing = tokio::spawn(async move { closing_db.close().await });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut closing)
+                .await
+                .is_err()
+        );
+        release.notify_one();
+        tokio::time::timeout(std::time::Duration::from_secs(5), closing)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        close_handle.await.unwrap();
+        assert!(client.status().await.is_err());
+    }
+    #[tokio::test]
+    async fn cancelled_open_worker_finishes_initialization_before_lifecycle_release() {
+        let db = database().await;
+        let held = db.journal_lifecycle.write().await;
+        let arrived = Arc::new(tokio::sync::Notify::new());
+        *db.sync_runtimes.lifecycle_read_arrived.lock().unwrap() = Some(arrived.clone());
+        let opening_db = db.clone();
+        let task = tokio::spawn(async move { open_sync_client(opening_db, options("all")).await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), arrived.notified())
+            .await
+            .unwrap();
+        task.abort();
+        assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+        drop(held);
+        let settled = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            db.journal_lifecycle.write(),
+        )
+        .await
+        .unwrap();
+        drop(settled);
+        assert!(matches!(
+            inspect_sync_state(db.clone(), options("all"))
+                .await
+                .unwrap(),
+            NativeSyncInspection::Present {
+                revision: 0,
+                pending_count: 0,
+                ..
+            }
+        ));
+        let reopened = open_sync_client(db.clone(), options("all")).await.unwrap();
+        assert_eq!(reopened.status().await.unwrap().revision, 0);
+        db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn returned_commit_or_rollback_uncertainty_poison_database_lifetime() {
+        for rollback in [false, true] {
+            let db = database().await;
+            let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+            let mut guard = client.lock_runtime().await;
+            guard.arm_mutation();
+            let error = surrealdb::Error::internal("synthetic unavailable commit response".into());
+            let result: Result<(), SyncStateError> = Err(if rollback {
+                SyncStateError::RollbackFailed {
+                    operation: Box::new(SyncStateError::RevisionConflict),
+                    rollback: error,
+                }
+            } else {
+                SyncStateError::CommitUnknown(error)
+            });
+            guard.settled_mutation(&result);
+            drop(guard);
+            assert!(db.sync_runtimes.is_poisoned());
+            assert!(matches!(
+                inspect_sync_state(db.clone(), options("all")).await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            assert!(matches!(
+                open_sync_client(db.clone(), options("other")).await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            db.close().await.unwrap();
+        }
     }
 }
