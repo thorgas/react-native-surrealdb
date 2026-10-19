@@ -309,3 +309,17 @@ The initial sandboxed HTTP test failed on listen EPERM; the identical suite pass
 with loopback permission. No pnpm install/module purge was accepted; installed
 binaries were used directly after pnpm's automatic preflight attempted a network
 metadata check. No SDK remote push, platform build or app activation is claimed.
+
+## Private native candidate identity (2026-10-19)
+
+Package/crate/Cargo.lock own version is0.1.0-alpha.4.haus.20261019.1, distinct from
+published alpha.3. This is local private distribution only: no public tag, npm
+publication, SDK remote push, visibility change or release creation. Existing
+package allowlist and full-artifact size gate remain required before packing.
+No dependency versions changed. Exact pnpm11.5 root lockfile-only policy check
+passed1287entries; pnpm-lock unchanged. Locked Cargo metadata confirms matching
+package/crate version. An offline attempt could not satisfy registry policy
+metadata and was stopped; registry-enabled lockfile-only retry passed without
+module install/scripts. Native platform artifacts will be rebuilt from this
+candidate before consuming it in Hauswirtschaft. Host functional147/134 gates
+precede this metadata-only version change; mobile acceptance remains pending.

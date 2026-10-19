@@ -2,6 +2,15 @@
 
 All notable changes to this package are documented here.
 
+## 0.1.0-alpha.4.haus.20261019.1
+
+- Private Hauswirtschaft native candidate; no public tag or npm publication.
+- Add bounded paged bootstrap staging and whole-storage ownership inspection.
+- Keep admitted native mutations owned through cancellation and database settlement;
+  fail closed after ambiguous or unexpectedly dropped writes.
+- Requires matching rebuilt iOS/Android binaries; host verification alone does not
+  establish mobile acceptance or production sync readiness.
+
 ## 0.1.0-alpha.3
 
 - Register the iOS `Surrealdb` TurboModule provider explicitly so a clean Expo
