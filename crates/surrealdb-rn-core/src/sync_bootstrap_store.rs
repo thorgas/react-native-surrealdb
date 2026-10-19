@@ -115,13 +115,6 @@ impl CompletionClock<'_> {
     }
 }
 #[derive(Debug)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "Dormant private completion until reviewed runtime publication"
-    )
-)]
 pub(crate) enum Completion {
     Applied(Box<crate::sync_state::StoredSyncState>),
     /// Historical success identity ONLY: never publish a prepared historical runtime.
@@ -133,13 +126,6 @@ pub(crate) struct BootstrapStore<'a> {
 }
 
 impl<'a> BootstrapStore<'a> {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Dormant private staging until reviewed native composition"
-        )
-    )]
     pub(crate) fn new(database: &'a SurrealDatabase) -> Self {
         Self { database }
     }
@@ -326,13 +312,6 @@ impl<'a> BootstrapStore<'a> {
 
     /// Trusted context/clock are independent of the decoded receipt. No authorization is
     /// inferred from wire bytes. Fresh authenticated completion is required after restart.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Dormant private staging until reviewed native composition"
-        )
-    )]
     pub(crate) async fn complete(
         &self,
         receipt_bytes: &[u8],

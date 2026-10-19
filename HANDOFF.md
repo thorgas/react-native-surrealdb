@@ -103,3 +103,38 @@ FFI/ABI, bindings, platform builds or activation is included. Read-only next des
 `/private/tmp/haus-native-bootstrap-runtime-publication-design.md`. Core evidence:
 `/private/tmp/sdk-bootstrap-final-install-core.log`. Public SDK publication remains
 paused; do not push this local branch.
+
+### Local-only shared native runtime and lifecycle ownership
+
+Reviewed six-file snapshot `/private/tmp/sdk-shared-runtime-review/sha256.json`
+on c9cb1ec. Runtime and both read journals now share ownership per embedded DB,
+session generation and journal key. Sibling wrappers observe the same state;
+closing one wrapper leaves siblings usable. Typed session mutation invalidates
+at intent and again under the serialized lifecycle write lock, preventing a
+queued open from adopting another mutation's pending generation ticket. Registry
+locks never span await and helper calls never retain the connection read lock.
+
+Private bootstrap completion holds shared ownership through commit/readback and
+publishes once. Every ambiguous or failed postcommit publication invalidates the
+shared cache. Both reader epochs rotate; exact historical receipt retry publishes
+nothing and preserves later durable changes/barriers. Permanent regressions cover
+queued mutation/open ordering, postcommit account/close intent, mismatched durable
+readback, lost ACK recovery, physical same-path/alias/process exclusion, sibling
+close and independent keys. Arbitrary trusted raw SQL session/private-table writes
+remain outside supported ownership semantics.
+
+Full core: 109 passed / 1 existing ignored; strict all-target Clippy, format and
+diff checks passed. Logs `/private/tmp/sdk-shared-runtime-{core,clippy}.log`;
+participation catalogue `/private/tmp/sdk-shared-runtime-review/participation.md`.
+No ABI/TypeScript/options/dependency/platform artifact changes or activation.
+Host timing uncertainty and before/after device measurements remain open.
+This local branch has no tracking remote; public publication remains paused.
+
+Final shared-runtime freeze supersedes the 109-test snapshot above:
+`/private/tmp/sdk-shared-runtime-review-v2/sha256.json`. Full core111 passed /
+1 existing ignored; strict Clippy/fmt/diff checks green. Both journals retain
+an immutable random cell/process prefix plus checked monotonic epoch counter;
+recovery preserves/increments them rather than constructing fresh Default journals.
+Repeated recovery and counter-exhaustion tests prove old cursor rejection within
+the shared cell. Cross-process prefix uniqueness remains probabilistic. No public
+push, ABI activation or device/performance acceptance is implied.

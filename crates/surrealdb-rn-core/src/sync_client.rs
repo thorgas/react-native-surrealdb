@@ -2,10 +2,15 @@
 //!
 //! The facade performs no networking. Callers provide serialized protocol
 //! messages and remain responsible for transport, authentication, and retry.
+//! Runtime ownership is per database/session/key, shared across wrapper handles.
+//! Lock order is database lifecycle -> shared runtime -> DB transaction. Registry
+//! locks never span await. Raw SQL session/private-journal writes are trusted misuse.
 
 use crate::sync_diagnostics::{NativeSyncDiagnostics, SyncDiagnostics};
+use std::collections::BTreeMap;
 use std::ops::{Deref, DerefMut};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::Instant;
 
 use serde::de::DeserializeOwned;
@@ -78,6 +83,11 @@ pub async fn inspect_sync_state(
     if !database.embedded {
         return Err(NativeSyncError::RequiresEmbeddedDatabase);
     }
+    let _lifecycle = database.journal_lifecycle.read().await;
+    if database.is_closed() {
+        return Err(NativeSyncError::Closed);
+    }
+    let session_generation = database.session_generation.load(Ordering::Acquire);
     if options.requested_scope.len() > MAX_IDENTITY_BYTES {
         return Err(NativeSyncError::InvalidInput);
     }
@@ -87,6 +97,11 @@ pub async fn inspect_sync_state(
         .inspect(SyncStateKey::new(&partition, &client))
         .await
         .map_err(map_persistence_error)?;
+    if database.is_closed()
+        || database.session_generation.load(Ordering::Acquire) != session_generation
+    {
+        return Err(NativeSyncError::RecoveryRequired);
+    }
     let Some(state) = state else {
         return Ok(NativeSyncInspection::Missing);
     };
@@ -166,13 +181,39 @@ pub enum NativeSyncError {
     Internal,
 }
 
+type RuntimeKey = (u64, String, String);
+#[derive(Default)]
+pub(crate) struct RuntimeRegistry(Mutex<BTreeMap<RuntimeKey, Weak<AsyncMutex<RuntimeState>>>>);
+impl RuntimeRegistry {
+    fn acquire(&self, key: RuntimeKey) -> Result<Arc<AsyncMutex<RuntimeState>>, NativeSyncError> {
+        let mut entries = self.0.lock().map_err(|_| NativeSyncError::Internal)?;
+        entries.retain(|_, value| value.strong_count() > 0);
+        if let Some(existing) = entries.get(&key).and_then(Weak::upgrade) {
+            return Ok(existing);
+        }
+        let runtime = Arc::new(AsyncMutex::new(RuntimeState {
+            runtime: None,
+            journal: Default::default(),
+            subscription_journal: Default::default(),
+            recovery_required: false,
+            scope_blocked: None,
+        }));
+        entries.insert(key, Arc::downgrade(&runtime));
+        Ok(runtime)
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct NativeSyncClient {
     database: Arc<SurrealDatabase>,
-    runtime: AsyncMutex<RuntimeState>,
+    runtime: Arc<AsyncMutex<RuntimeState>>,
+    local_closed: AtomicBool,
+    session_generation: u64,
     diagnostics: SyncDiagnostics,
     #[cfg(test)]
     lose_next_persist_ack: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    completion_pause: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -184,67 +225,118 @@ pub async fn open_sync_client(
         return Err(NativeSyncError::RequiresEmbeddedDatabase);
     }
 
+    let lifecycle = database.journal_lifecycle.read().await;
+    if database.is_closed() {
+        return Err(NativeSyncError::Closed);
+    }
+    let session_generation = database.session_generation.load(Ordering::Acquire);
     let partition_id = PartitionId(options.partition_id);
     let client_id = ClientId(options.client_id);
     let requested_scope = ScopeIdentity(options.requested_scope);
     let key = SyncStateKey::new(&partition_id, &client_id);
-    let store = SyncStateStore::new(&database);
-    store.define_schema().await.map_err(map_persistence_error)?;
+    crate::sync_state::validate_key(key).map_err(map_persistence_error)?;
+    let shared = database.sync_runtimes.acquire((
+        session_generation,
+        partition_id.0.clone(),
+        client_id.0.clone(),
+    ))?;
+    let mut shared_slot = shared.lock().await;
+    let store = SyncStateStore::new(&database).with_session_generation(session_generation);
+    if shared_slot.runtime.is_none() {
+        store.define_schema().await.map_err(map_persistence_error)?;
 
-    let state = match store.load(key).await.map_err(map_persistence_error)? {
-        Some(state) => state,
-        None => {
-            let initial = StoredSyncState::empty(
-                partition_id.clone(),
-                client_id.clone(),
-                requested_scope.clone(),
-                options.subscription_revision,
-            );
-            match store.save_atomic(None, &initial).await {
-                Ok(_) => initial,
-                Err(SyncStateError::RevisionConflict) => store
-                    .load(key)
-                    .await
-                    .map_err(map_persistence_error)?
-                    .ok_or(NativeSyncError::Persistence)?,
-                Err(error) => return Err(map_persistence_error(error)),
+        let state = match store.load(key).await.map_err(map_persistence_error)? {
+            Some(state) => state,
+            None => {
+                let initial = StoredSyncState::empty(
+                    partition_id.clone(),
+                    client_id.clone(),
+                    requested_scope.clone(),
+                    options.subscription_revision,
+                );
+                match store.save_atomic(None, &initial).await {
+                    Ok(_) => initial,
+                    Err(SyncStateError::RevisionConflict) => store
+                        .load(key)
+                        .await
+                        .map_err(map_persistence_error)?
+                        .ok_or(NativeSyncError::Persistence)?,
+                    Err(error) => return Err(map_persistence_error(error)),
+                }
             }
-        }
-    };
+        };
 
-    if state.partition_id != partition_id
-        || state.client_id != client_id
-        || state.requested_scope != requested_scope
+        if state.partition_id != partition_id
+            || state.client_id != client_id
+            || state.requested_scope != requested_scope
+            || state.subscription_revision != options.subscription_revision
+        {
+            return Err(NativeSyncError::Protocol);
+        }
+        validate_state_codec(&state)?;
+        let barrier = store
+            .load_scope_barrier(key)
+            .await
+            .map_err(|_| NativeSyncError::RecoveryRequired)?;
+        let scope_blocked = barrier.map(|value| ScopeBlock::from_reason(&value.reason));
+        let runtime = ClientRuntime::open(state).map_err(map_protocol_error)?;
+        if shared_slot.recovery_required
+            && (shared_slot.journal.rotate().is_err()
+                || shared_slot.subscription_journal.rotate().is_err())
+        {
+            invalidate_runtime(&mut shared_slot);
+            return Err(NativeSyncError::RecoveryRequired);
+        }
+        // Preserve each random prefix/checked counter; recovery never creates Default journals.
+        shared_slot.runtime = Some(runtime);
+        shared_slot.recovery_required = false;
+        shared_slot.scope_blocked = scope_blocked;
+    }
+    let state = shared_slot.client()?.state();
+    if state.requested_scope != requested_scope
         || state.subscription_revision != options.subscription_revision
     {
         return Err(NativeSyncError::Protocol);
     }
-    validate_state_codec(&state)?;
-    let barrier = store
-        .load_scope_barrier(key)
-        .await
-        .map_err(|_| NativeSyncError::RecoveryRequired)?;
-    let scope_blocked = barrier.map(|value| ScopeBlock::from_reason(&value.reason));
-    let runtime = ClientRuntime::open(state).map_err(map_protocol_error)?;
+    if database.session_generation.load(Ordering::Acquire) != session_generation
+        || database.is_closed()
+    {
+        shared_slot.runtime.take();
+        shared_slot.recovery_required = true;
+        return Err(NativeSyncError::RecoveryRequired);
+    }
+    drop(shared_slot);
+    drop(lifecycle);
     Ok(Arc::new(NativeSyncClient {
         database,
-        runtime: AsyncMutex::new(RuntimeState {
-            runtime: Some(runtime),
-            journal: Default::default(),
-            subscription_journal: Default::default(),
-            recovery_required: false,
-            scope_blocked,
-        }),
+        runtime: shared,
+        local_closed: AtomicBool::new(false),
+        session_generation,
         diagnostics: SyncDiagnostics::default(),
         #[cfg(test)]
         lose_next_persist_ack: std::sync::atomic::AtomicBool::new(false),
+        #[cfg(test)]
+        completion_pause: Mutex::new(None),
     }))
 }
 
 impl NativeSyncClient {
+    fn ensure_session(&self) -> Result<(), NativeSyncError> {
+        if self.local_closed.load(Ordering::Acquire) {
+            return Err(NativeSyncError::Closed);
+        }
+        if self.database.is_closed()
+            || self.database.session_generation.load(Ordering::Acquire) != self.session_generation
+        {
+            return Err(NativeSyncError::RecoveryRequired);
+        }
+        Ok(())
+    }
     async fn refresh_scope_barrier(&self, slot: &mut RuntimeState) -> Result<(), NativeSyncError> {
+        self.ensure_session()?;
         let state = slot.client()?.state();
         match SyncStateStore::new(&self.database)
+            .with_session_generation(self.session_generation)
             .load_scope_barrier(SyncStateKey::new(&state.partition_id, &state.client_id))
             .await
         {
@@ -332,6 +424,7 @@ impl NativeSyncClient {
                 if let (Some(block), Some(scope)) = (slot.scope_blocked, required_scope) {
                     let state = slot.client()?.state();
                     let result = SyncStateStore::new(&self.database)
+                        .with_session_generation(self.session_generation)
                         .save_scope_barrier(
                             SyncStateKey::new(&state.partition_id, &state.client_id),
                             ScopeBarrier {
@@ -456,9 +549,8 @@ impl NativeSyncClient {
     }
 
     pub async fn close(&self) {
-        let mut slot = self.lock_runtime().await;
-        slot.runtime.take();
-        slot.recovery_required = false;
+        let _slot = self.lock_runtime().await;
+        self.local_closed.store(true, Ordering::Release);
     }
 
     pub fn subscription_capabilities_json(&self) -> String {
@@ -518,6 +610,7 @@ impl NativeSyncClient {
                 slot.scope_blocked = Some(block);
                 let state = slot.client()?.state();
                 let persisted = SyncStateStore::new(&self.database)
+                    .with_session_generation(self.session_generation)
                     .save_scope_barrier(
                         SyncStateKey::new(&state.partition_id, &state.client_id),
                         ScopeBarrier {
@@ -644,7 +737,9 @@ impl NativeSyncClient {
     }
 
     pub fn is_closed(&self) -> bool {
-        self.runtime.try_lock().is_ok_and(|slot| slot.is_none())
+        self.local_closed.load(Ordering::Acquire)
+            || self.ensure_session().is_err()
+            || self.runtime.try_lock().is_ok_and(|slot| slot.is_none())
     }
 }
 
@@ -668,6 +763,13 @@ impl ScopeBlock {
             Self::NewJournal
         }
     }
+}
+
+fn invalidate_runtime(slot: &mut RuntimeState) {
+    slot.runtime.take();
+    slot.recovery_required = true;
+    slot.journal.rotate().ok();
+    slot.subscription_journal.rotate().ok();
 }
 
 struct RuntimeState {
@@ -708,11 +810,23 @@ impl DerefMut for RuntimeState {
 }
 
 struct RuntimeGuard<'a> {
+    owner: &'a NativeSyncClient,
+    _lifecycle: tokio::sync::RwLockReadGuard<'a, ()>,
     guard: tokio::sync::MutexGuard<'a, RuntimeState>,
     diagnostics: &'a SyncDiagnostics,
     started: Instant,
     ordinal: u64,
     wait_ns: u64,
+}
+impl RuntimeGuard<'_> {
+    fn client(&self) -> Result<&ClientRuntime<JsonValue>, NativeSyncError> {
+        self.owner.ensure_session()?;
+        self.guard.client()
+    }
+    fn read_client(&self) -> Result<&ClientRuntime<JsonValue>, NativeSyncError> {
+        self.owner.ensure_session()?;
+        self.guard.read_client()
+    }
 }
 impl Deref for RuntimeGuard<'_> {
     type Target = RuntimeState;
@@ -735,12 +849,15 @@ impl Drop for RuntimeGuard<'_> {
 
 impl NativeSyncClient {
     async fn lock_runtime(&self) -> RuntimeGuard<'_> {
+        let lifecycle = self.database.journal_lifecycle.read().await;
         let started = Instant::now();
         let guard = self.runtime.lock().await;
         let wait_ns = u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX);
         self.diagnostics.runtime_wait.record(started);
         let ordinal = self.diagnostics.begin_operation();
         RuntimeGuard {
+            owner: self,
+            _lifecycle: lifecycle,
             guard,
             diagnostics: &self.diagnostics,
             started: Instant::now(),
@@ -749,17 +866,126 @@ impl NativeSyncClient {
         }
     }
 
+    /// Private composition only. Shared slot is held from latest durable prepare
+    /// through commit/readback/publication; the lifecycle lease fences typed session changes.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "Dormant private completion pending ABI review")
+    )]
+    pub(crate) async fn complete_bootstrap(
+        &self,
+        receipt: &[u8],
+        expected: &surrealdb_sync_protocol::bootstrap::BootstrapContext,
+        incarnation: u64,
+        clock: &crate::sync_bootstrap_store::CompletionClock<'_>,
+    ) -> Result<bool, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        let state = slot.client()?.state();
+        if state.partition_id != expected.partition_id
+            || state.client_id != expected.client_id
+            || state.requested_scope != expected.scope.identity
+            || state.subscription_revision != expected.scope.subscription_revision
+        {
+            return Err(NativeSyncError::Protocol);
+        }
+        let checked_clock = || {
+            self.ensure_session()
+                .map_err(|_| SyncStateError::RevisionConflict)?;
+            let now = (clock.utc_seconds)()?;
+            self.ensure_session()
+                .map_err(|_| SyncStateError::RevisionConflict)?;
+            Ok(now)
+        };
+        let clock = crate::sync_bootstrap_store::CompletionClock {
+            utc_seconds: &checked_clock,
+            deadline: clock.deadline,
+        };
+        let result = crate::sync_bootstrap_store::BootstrapStore::new(&self.database)
+            .complete(receipt, expected, incarnation, &clock)
+            .await;
+        #[cfg(test)]
+        {
+            let pause = self.completion_pause.lock().unwrap().take();
+            if let Some((arrived, release)) = pause {
+                arrived.notify_one();
+                release.notified().await;
+            }
+        }
+        if matches!(
+            &result,
+            Err(SyncStateError::CommitUnknown(_) | SyncStateError::RollbackFailed { .. })
+        ) || self.ensure_session().is_err()
+        {
+            invalidate_runtime(&mut slot);
+            return Err(NativeSyncError::RecoveryRequired);
+        }
+        let result = result.map_err(map_persistence_error)?;
+        #[cfg(test)]
+        if self.lose_next_persist_ack.swap(false, Ordering::SeqCst) {
+            invalidate_runtime(&mut slot);
+            return Err(NativeSyncError::RecoveryRequired);
+        }
+        let key = SyncStateKey::new(&expected.partition_id, &expected.client_id);
+        let inspected = SyncStateStore::new(&self.database)
+            .with_session_generation(self.session_generation)
+            .inspect(key)
+            .await;
+        let Ok((Some(latest), barrier)) = inspected else {
+            invalidate_runtime(&mut slot);
+            return Err(NativeSyncError::RecoveryRequired);
+        };
+        if self.ensure_session().is_err() {
+            invalidate_runtime(&mut slot);
+            return Err(NativeSyncError::RecoveryRequired);
+        }
+        match result {
+            crate::sync_bootstrap_store::Completion::HistoricalSuccess => {
+                if !slot
+                    .runtime
+                    .as_ref()
+                    .is_some_and(|runtime| runtime.state() == &latest)
+                {
+                    invalidate_runtime(&mut slot);
+                    return Err(NativeSyncError::RecoveryRequired);
+                }
+                if let Some(barrier) = barrier {
+                    slot.scope_blocked = Some(ScopeBlock::from_reason(&barrier.reason));
+                }
+                Ok(false)
+            }
+            crate::sync_bootstrap_store::Completion::Applied(applied) => {
+                if latest != *applied || barrier.is_some() {
+                    invalidate_runtime(&mut slot);
+                    return Err(NativeSyncError::RecoveryRequired);
+                }
+                let Ok(runtime) = ClientRuntime::open(latest) else {
+                    invalidate_runtime(&mut slot);
+                    return Err(NativeSyncError::RecoveryRequired);
+                };
+                if slot.journal.rotate().is_err() || slot.subscription_journal.rotate().is_err() {
+                    invalidate_runtime(&mut slot);
+                    return Err(NativeSyncError::RecoveryRequired);
+                }
+                slot.runtime = Some(runtime);
+                slot.recovery_required = false;
+                Ok(true)
+            }
+        }
+    }
+
     async fn persist_and_install(
         &self,
         slot: &mut RuntimeState,
         prepared: PreparedTransition<JsonValue>,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.ensure_session()?;
         let current = slot.client()?.state();
         let before_revision = current.revision;
         let next = prepared.state();
         validate_state_codec(next)?;
         let storage_started = Instant::now();
         let persisted = SyncStateStore::new(&self.database)
+            .with_session_generation(self.session_generation)
             .with_diagnostics(&self.diagnostics)
             .apply_transition_atomic(current, next)
             .await;
@@ -780,21 +1006,39 @@ impl NativeSyncClient {
                 .lose_next_persist_ack
                 .swap(false, std::sync::atomic::Ordering::SeqCst)
         {
-            slot.runtime.take();
-            slot.recovery_required = true;
+            invalidate_runtime(slot);
             return Err(NativeSyncError::RecoveryRequired);
         }
-        if matches!(&persisted, Err(SyncStateError::CommitUnknown(_))) {
-            slot.runtime.take();
-            slot.recovery_required = true;
+        if matches!(
+            &persisted,
+            Err(SyncStateError::CommitUnknown(_) | SyncStateError::RollbackFailed { .. })
+        ) {
+            invalidate_runtime(slot);
+            return Err(NativeSyncError::RecoveryRequired);
+        }
+        if self.ensure_session().is_err() {
+            invalidate_runtime(slot);
             return Err(NativeSyncError::RecoveryRequired);
         }
         persisted.map_err(map_persistence_error)?;
-        let runtime = slot.as_mut().ok_or(NativeSyncError::Closed)?;
-        let batch = runtime
-            .install_with_read_batch(prepared)
-            .map_err(map_protocol_error)?;
-        let status = status(runtime)?;
+        let Some(runtime) = slot.as_mut() else {
+            invalidate_runtime(slot);
+            return Err(NativeSyncError::RecoveryRequired);
+        };
+        let batch = match runtime.install_with_read_batch(prepared) {
+            Ok(batch) => batch,
+            Err(_) => {
+                invalidate_runtime(slot);
+                return Err(NativeSyncError::RecoveryRequired);
+            }
+        };
+        let status = match status(runtime) {
+            Ok(status) => status,
+            Err(_) => {
+                invalidate_runtime(slot);
+                return Err(NativeSyncError::RecoveryRequired);
+            }
+        };
         slot.journal.record(batch);
         // Query replay is installed only after the same durable transaction and runtime install.
         let RuntimeState {
@@ -802,10 +1046,11 @@ impl NativeSyncClient {
             subscription_journal,
             ..
         } = slot;
-        subscription_journal.record(
-            runtime.as_ref().ok_or(NativeSyncError::Closed)?,
-            before_revision,
-        );
+        let Some(runtime) = runtime.as_ref() else {
+            invalidate_runtime(slot);
+            return Err(NativeSyncError::RecoveryRequired);
+        };
+        subscription_journal.record(runtime, before_revision);
         Ok(status)
     }
 }
@@ -1345,7 +1590,7 @@ mod tests {
             .subscription_journal
             .changes(&recovered, "window", &before["cursor"].to_string(), 128)
             .unwrap();
-        assert!(replay["batches"].as_array().unwrap().is_empty());
+        assert_eq!(replay["kind"], "reset_required");
         drop(slot);
         let reopened = open_sync_client(db, options("all")).await.unwrap();
         let frame: JsonValue = serde_json::from_str(
@@ -1448,7 +1693,11 @@ mod tests {
         let slot = client.lock_runtime().await;
         let after = slot
             .journal
-            .changes(slot.client().unwrap(), &changes["cursor"].to_string(), 128)
+            .changes(
+                slot.guard.client().unwrap(),
+                &changes["cursor"].to_string(),
+                128,
+            )
             .unwrap();
         assert!(after["batches"].as_array().unwrap().is_empty());
         assert_eq!(after["cursor"], changes["cursor"]);
@@ -1590,7 +1839,8 @@ mod tests {
         let cross_handle: JsonValue =
             serde_json::from_str(&second.read_changes_json(cursor.clone(), 128).await.unwrap())
                 .unwrap();
-        assert_eq!(cross_handle["kind"], "reset_required");
+        assert!(Arc::ptr_eq(&client.runtime, &second.runtime));
+        assert_eq!(cross_handle["kind"], "batches");
         let pending_before = client.pending_json().await.unwrap();
         let mut blocked_reset = reset.clone();
         if let surrealdb_sync_protocol::PullResponse::Reset(snapshot) = &mut blocked_reset {
@@ -2525,5 +2775,744 @@ mod tests {
         drop(database_client);
         final_client.close().await;
         final_database.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn shared_runtime_siblings_see_commits_local_close_and_independent_keys() {
+        let db = database().await;
+        let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+        assert!(Arc::ptr_eq(&a.runtime, &b.runtime));
+        a.enqueue(serde_json::to_string(&commit()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(b.status().await.unwrap().pending_count, 1);
+        assert_eq!(
+            a.read_snapshot_json().await.unwrap(),
+            b.read_snapshot_json().await.unwrap()
+        );
+        a.close().await;
+        assert!(matches!(a.status().await, Err(NativeSyncError::Closed)));
+        assert_eq!(b.pending_json().await.unwrap().len(), 1);
+        let mut other = options("all");
+        other.client_id = "other".into();
+        let c = open_sync_client(db.clone(), other).await.unwrap();
+        let hold = b.lock_runtime().await;
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(200), c.status())
+                .await
+                .unwrap()
+                .is_ok()
+        );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(30), a.status())
+                .await
+                .is_err(),
+            "same-key operation bypassed shared slot"
+        );
+        drop(hold);
+        drop(a);
+        drop(b);
+        drop(c);
+        let next = open_sync_client(db.clone(), options("all")).await.unwrap();
+        assert_eq!(
+            db.sync_runtimes.0.lock().unwrap().len(),
+            1,
+            "dead weak entries retained"
+        );
+        assert_eq!(next.status().await.unwrap().pending_count, 1);
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn lifecycle_intent_fences_helpers_without_inner_reader_deadlock_and_never_revives_old_handles()
+     {
+        let db = database().await;
+        let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let hold = a.lock_runtime().await;
+        let generation = a.session_generation;
+        let change = tokio::spawn({
+            let db = db.clone();
+            async move {
+                db.use_namespace_database("other".into(), "other".into())
+                    .await
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while db.session_generation.load(Ordering::Acquire) == generation {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert!(matches!(
+            hold.client(),
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        // Writer queues on lifecycle BEFORE inner.write; helper's short client read cannot recurse-deadlock.
+        let state = hold.guard.client().unwrap().state().clone();
+        let store = SyncStateStore::new(&db);
+        let loaded = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            store.load(SyncStateKey::new(&state.partition_id, &state.client_id)),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(loaded, Some(state.clone()));
+        let prepared = ClientRuntime::open(state.clone())
+            .unwrap()
+            .prepare_enqueue(commit())
+            .unwrap()
+            .into_state();
+        assert!(matches!(
+            store
+                .with_session_generation(generation)
+                .apply_transition_atomic(&state, &prepared)
+                .await,
+            Err(SyncStateError::RevisionConflict)
+        ));
+        drop(hold);
+        change.await.unwrap().unwrap();
+        assert!(matches!(
+            a.status().await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        assert!(matches!(
+            b.read_snapshot_json().await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        db.use_namespace_database("test".into(), "test".into())
+            .await
+            .unwrap();
+        assert!(
+            matches!(a.status().await, Err(NativeSyncError::RecoveryRequired)),
+            "session ABA revived old wrapper"
+        );
+        let fresh = open_sync_client(db.clone(), options("all")).await.unwrap();
+        assert_eq!(fresh.status().await.unwrap().pending_count, 0);
+        assert!(db.authenticate("not-a-token".into()).await.is_err());
+        assert!(
+            matches!(fresh.status().await, Err(NativeSyncError::RecoveryRequired)),
+            "failed auth did not invalidate journal"
+        );
+        let fresh = open_sync_client(db.clone(), options("all")).await.unwrap();
+        db.invalidate().await.unwrap();
+        assert!(matches!(
+            fresh.pending_json().await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        let fresh = open_sync_client(db.clone(), options("all")).await.unwrap();
+        db.close().await.unwrap();
+        assert!(matches!(
+            fresh.status().await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+    }
+
+    async fn staged_native_completion(
+        db: &SurrealDatabase,
+        session: &str,
+    ) -> (
+        Vec<u8>,
+        surrealdb_sync_protocol::bootstrap::BootstrapContext,
+        u64,
+    ) {
+        use surrealdb_sync_protocol::bootstrap::*;
+        use surrealdb_sync_protocol::bootstrap_codec::*;
+        let context = BootstrapContext {
+            authority_id: "authority".into(),
+            principal_id: "principal".into(),
+            partition_id: PartitionId("partition".into()),
+            client_id: ClientId("client".into()),
+            journal_generation: "generation".into(),
+            scope: ScopeSnapshot {
+                identity: ScopeIdentity("all".into()),
+                subscription_revision: 1,
+                authorization_revision: 1,
+            },
+        };
+        let start = BootstrapStartRequest {
+            partition_id: context.partition_id.clone(),
+            client_id: context.client_id.clone(),
+            request_id: session.into(),
+            requested_scope: context.scope.identity.clone(),
+            subscription_revision: 1,
+            journal_generation: context.journal_generation.clone(),
+        };
+        let mut page = BootstrapPage {
+            session_id: session.into(),
+            manifest_digest: BootstrapDigest([0; 32]),
+            index: 0,
+            records: vec![surrealdb_sync_protocol::SnapshotRecord {
+                record_id: RecordId("person:server".into()),
+                state: RecordState::Present {
+                    value: surrealdb_sync_protocol::CanonicalValue::Object(
+                        std::collections::BTreeMap::from([(
+                            "name".into(),
+                            surrealdb_sync_protocol::CanonicalValue::String("server".into()),
+                        )]),
+                    ),
+                    version: 1,
+                    reference: None,
+                },
+            }],
+        };
+        let mut hasher = BootstrapContentHasher::new(session.into()).unwrap();
+        hasher.push(&page).unwrap();
+        let summary = hasher.summary();
+        let manifest = BootstrapManifest {
+            session_id: session.into(),
+            start_request_id: session.into(),
+            start_fingerprint: bootstrap_start_fingerprint(&start).unwrap(),
+            context: context.clone(),
+            cursor: Cursor {
+                epoch: 1,
+                sequence: 1,
+            },
+            limits: BootstrapLimits::default(),
+            page_count: summary.page_count,
+            record_count: summary.record_count,
+            content_bytes: summary.content_bytes,
+            root: summary.root,
+            expires_at: u64::MAX,
+        };
+        page.manifest_digest = bootstrap_manifest_digest(&manifest).unwrap();
+        let store = crate::sync_bootstrap_store::BootstrapStore::new(db);
+        let handle = store
+            .begin(
+                &encode_bootstrap_start(&start).unwrap(),
+                &encode_bootstrap_manifest(&manifest).unwrap(),
+                &context,
+            )
+            .await
+            .unwrap();
+        store
+            .stage_page(&encode_bootstrap_page(&page).unwrap(), &context, handle)
+            .await
+            .unwrap();
+        let receipt = BootstrapReceipt {
+            session_id: session.into(),
+            manifest_digest: page.manifest_digest,
+            checkpoint: Checkpoint {
+                token: OpaqueCheckpoint("complete".into()),
+                cursor: manifest.cursor,
+                scope: context.scope.clone(),
+            },
+            expires_at: manifest.expires_at,
+        };
+        (encode_bootstrap_receipt(&receipt).unwrap(), context, handle)
+    }
+
+    #[tokio::test]
+    async fn private_completion_publishes_once_to_siblings_rotates_both_cursors_and_historical_retry_is_noop()
+     {
+        let db = database().await;
+        let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let before: JsonValue =
+            serde_json::from_str(&a.read_snapshot_json().await.unwrap()).unwrap();
+        let subscription: JsonValue =
+            serde_json::from_str(&b.subscription_snapshot_json("window".into()).await.unwrap())
+                .unwrap();
+        let (receipt, context, handle) = staged_native_completion(&db, "publish").await;
+        let clock = crate::sync_bootstrap_store::CompletionClock {
+            utc_seconds: &|| Ok(1),
+            deadline: Instant::now() + std::time::Duration::from_secs(10),
+        };
+        assert!(
+            a.complete_bootstrap(&receipt, &context, handle, &clock)
+                .await
+                .unwrap()
+        );
+        assert_eq!(b.status().await.unwrap().cursor_sequence, Some(1));
+        let read: JsonValue = serde_json::from_str(
+            &b.read_changes_json(before["cursor"].to_string(), 128)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(read["kind"], "reset_required");
+        assert_ne!(
+            read["cursor"]["processEpoch"],
+            before["cursor"]["processEpoch"]
+        );
+        let mut coincident = before["cursor"].clone();
+        coincident["revision"] = read["cursor"]["revision"].clone();
+        let coincident: JsonValue = serde_json::from_str(
+            &b.read_changes_json(coincident.to_string(), 128)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            coincident["kind"], "reset_required",
+            "old process epoch accepted a coincident numeric revision"
+        );
+        let changes: JsonValue = serde_json::from_str(
+            &b.subscription_changes_json("window".into(), subscription["cursor"].to_string(), 128)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(changes["kind"], "reset_required");
+        assert_ne!(
+            changes["cursor"]["processEpoch"],
+            subscription["cursor"]["processEpoch"]
+        );
+        b.enqueue(serde_json::to_string(&commit()).unwrap())
+            .await
+            .unwrap();
+        let latest = b.read_snapshot_json().await.unwrap();
+        let status = b.status().await.unwrap();
+        assert!(
+            !a.complete_bootstrap(&receipt, &context, handle, &clock)
+                .await
+                .unwrap()
+        );
+        assert_eq!(b.status().await.unwrap(), status);
+        assert_eq!(b.read_snapshot_json().await.unwrap(), latest);
+        a.close().await;
+        assert!(b.status().await.is_ok());
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn private_completion_lost_ack_invalidates_all_siblings_and_reopen_preserves_durable_result()
+     {
+        let db = database().await;
+        let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let (receipt, context, handle) = staged_native_completion(&db, "lost").await;
+        let clock = crate::sync_bootstrap_store::CompletionClock {
+            utc_seconds: &|| Ok(1),
+            deadline: Instant::now() + std::time::Duration::from_secs(10),
+        };
+        a.lose_next_persist_ack.store(true, Ordering::SeqCst);
+        assert!(matches!(
+            a.complete_bootstrap(&receipt, &context, handle, &clock)
+                .await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        assert!(matches!(
+            b.status().await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        assert!(matches!(
+            b.read_snapshot_json().await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        let reopened = open_sync_client(db.clone(), options("all")).await.unwrap();
+        assert_eq!(reopened.status().await.unwrap().cursor_sequence, Some(1));
+        reopened
+            .enqueue(serde_json::to_string(&commit()).unwrap())
+            .await
+            .unwrap();
+        let current = reopened.read_snapshot_json().await.unwrap();
+        assert!(
+            !reopened
+                .complete_bootstrap(&receipt, &context, handle, &clock)
+                .await
+                .unwrap()
+        );
+        assert_eq!(reopened.read_snapshot_json().await.unwrap(), current);
+        db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn completion_postcommit_gate_blocks_sibling_but_not_other_key() {
+        let db = database().await;
+        let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let mut other = options("all");
+        other.client_id = "independent".into();
+        let c = open_sync_client(db.clone(), other).await.unwrap();
+        let (receipt, context, handle) = staged_native_completion(&db, "postcommit").await;
+        let arrived = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        *a.completion_pause.lock().unwrap() = Some((arrived.clone(), release.clone()));
+        let clock = crate::sync_bootstrap_store::CompletionClock {
+            utc_seconds: &|| Ok(1),
+            deadline: Instant::now() + std::time::Duration::from_secs(10),
+        };
+        let complete = a.complete_bootstrap(&receipt, &context, handle, &clock);
+        let competitor = async {
+            arrived.notified().await;
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(30), b.status())
+                    .await
+                    .is_err()
+            );
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(200), c.status())
+                    .await
+                    .unwrap()
+                    .is_ok()
+            );
+            release.notify_one();
+        };
+        let (result, ()) = tokio::join!(complete, competitor);
+        assert!(result.unwrap());
+        assert_eq!(b.status().await.unwrap().cursor_sequence, Some(1));
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn session_or_close_intent_after_commit_never_publishes_old_runtime() {
+        for close in [false, true] {
+            let db = database().await;
+            let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+            let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+            let before: JsonValue =
+                serde_json::from_str(&b.read_snapshot_json().await.unwrap()).unwrap();
+            let old_state = b.lock_runtime().await.client().unwrap().state().clone();
+            let (receipt, context, handle) =
+                staged_native_completion(&db, "session-publication").await;
+            let arrived = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            *a.completion_pause.lock().unwrap() = Some((arrived.clone(), release.clone()));
+            let clock = crate::sync_bootstrap_store::CompletionClock {
+                utc_seconds: &|| Ok(1),
+                deadline: Instant::now() + std::time::Duration::from_secs(10),
+            };
+            let complete = a.complete_bootstrap(&receipt, &context, handle, &clock);
+            let change = async {
+                arrived.notified().await;
+                let writer = tokio::spawn({
+                    let db = db.clone();
+                    async move {
+                        if close {
+                            db.close().await
+                        } else {
+                            db.use_namespace_database("after".into(), "after".into())
+                                .await
+                        }
+                    }
+                });
+                tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                    while db.session_generation.load(Ordering::Acquire) == a.session_generation {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .unwrap();
+                release.notify_one();
+                writer.await.unwrap().unwrap();
+            };
+            let (result, ()) = tokio::join!(complete, change);
+            assert!(matches!(result, Err(NativeSyncError::RecoveryRequired)));
+            assert!(matches!(
+                b.read_snapshot_json().await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            let slot = a.lock_runtime().await;
+            assert!(slot.guard.runtime.is_none());
+            assert!(slot.guard.recovery_required);
+            // No old-epoch read batches can represent the unconfirmed publication.
+            let invalidated = slot
+                .guard
+                .journal
+                .bootstrap(&ClientRuntime::open(old_state).unwrap())
+                .unwrap();
+            assert_ne!(
+                invalidated["cursor"]["processEpoch"],
+                before["cursor"]["processEpoch"]
+            );
+            drop(slot);
+            if !close {
+                db.close().await.unwrap();
+            }
+        }
+    }
+    #[tokio::test]
+    async fn every_typed_session_mutator_invalidates_existing_generation_and_exhaustion_fails_closed()
+     {
+        for mutation in 0..5 {
+            let db = database().await;
+            let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+            let previous = client.session_generation;
+            match mutation {
+                0 => {
+                    db.use_namespace_database("test".into(), "test".into())
+                        .await
+                        .unwrap();
+                }
+                1 => {
+                    assert!(db.authenticate("invalid-token".into()).await.is_err());
+                }
+                2 => {
+                    let _ = db
+                        .sign_in_root("nonexistent".into(), "fixture-only".into())
+                        .await;
+                }
+                3 => {
+                    let _ = db
+                        .sign_in_database(
+                            "test".into(),
+                            "test".into(),
+                            "nonexistent".into(),
+                            "fixture-only".into(),
+                        )
+                        .await;
+                }
+                _ => {
+                    db.invalidate().await.unwrap();
+                }
+            }
+            assert_eq!(db.session_generation.load(Ordering::Acquire), previous + 2);
+            assert!(matches!(
+                client.status().await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            assert!(matches!(
+                client
+                    .enqueue(serde_json::to_string(&commit()).unwrap())
+                    .await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            assert!(matches!(
+                client.pending_json().await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            assert!(matches!(
+                client.conflicts_json().await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            assert!(matches!(
+                client.checkpoint_token().await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            assert!(matches!(
+                client.requires_authorized_reset().await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            assert!(matches!(
+                client.scope_transition_decision("all".into(), 1).await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            assert!(matches!(
+                client.subscription_snapshot_json("window".into()).await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            db.close().await.unwrap();
+        }
+        let db = database().await;
+        db.session_generation.store(u64::MAX, Ordering::Release);
+        let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+        assert!(db.invalidate().await.is_err());
+        assert!(db.is_closed());
+        assert!(matches!(
+            client.status().await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        assert!(db.close().await.is_err());
+        assert!(
+            db.inner.read().await.is_none(),
+            "exhausted close did not drain native client"
+        );
+    }
+    #[tokio::test]
+    async fn queued_open_between_two_reserved_session_mutations_is_invalidated_at_second_boundary()
+    {
+        let db = database().await;
+        let arrived = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        *db.session_pause.lock().unwrap() = Some((arrived, release.clone()));
+        let a = db.use_namespace_database("a".into(), "a".into());
+        tokio::pin!(a);
+        assert!(futures::poll!(a.as_mut()).is_pending()); // A owns lifecycle write and pauses before session side effects.
+        let open = open_sync_client(db.clone(), options("all"));
+        tokio::pin!(open);
+        assert!(futures::poll!(open.as_mut()).is_pending()); // Read is now queued behind A.
+        let b = db.use_namespace_database("b".into(), "b".into());
+        tokio::pin!(b);
+        assert!(futures::poll!(b.as_mut()).is_pending()); // B reserves intent, then queues behind open.
+        release.notify_one();
+        let (a, opened, b) = tokio::join!(a, open, b);
+        a.unwrap();
+        b.unwrap();
+        let opened = opened.unwrap();
+        assert!(opened.session_generation < db.session_generation.load(Ordering::Acquire));
+        assert!(
+            matches!(
+                opened.status().await,
+                Err(NativeSyncError::RecoveryRequired)
+            ),
+            "open adopted B's pending intent generation as if B had already mutated session"
+        );
+        let fresh = open_sync_client(db.clone(), options("all")).await.unwrap();
+        assert!(fresh.status().await.is_ok());
+        db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn unexpected_durable_write_in_postcommit_gap_invalidates_instead_of_publishing_stale_state()
+     {
+        let db = database().await;
+        let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let (receipt, context, handle) = staged_native_completion(&db, "readback-mismatch").await;
+        let arrived = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        *a.completion_pause.lock().unwrap() = Some((arrived.clone(), release.clone()));
+        let clock = crate::sync_bootstrap_store::CompletionClock {
+            utc_seconds: &|| Ok(1),
+            deadline: Instant::now() + std::time::Duration::from_secs(10),
+        };
+        let complete = a.complete_bootstrap(&receipt, &context, handle, &clock);
+        let bypass = async {
+            arrived.notified().await;
+            // Deliberately bypass supported shared ownership through a PRIVATE store helper.
+            // This tests mismatch recovery, not general raw-writer coherence after readback.
+            let key = SyncStateKey::new(&context.partition_id, &context.client_id);
+            let store = SyncStateStore::new(&db);
+            let latest = store.load(key).await.unwrap().unwrap();
+            let mut local = commit();
+            local.identity.fingerprint = canonical_fingerprint(&latest, &local).unwrap();
+            let next = ClientRuntime::open(latest.clone())
+                .unwrap()
+                .prepare_enqueue(local)
+                .unwrap()
+                .into_state();
+            store.apply_transition_atomic(&latest, &next).await.unwrap();
+            release.notify_one();
+            next
+        };
+        let (result, later) = tokio::join!(complete, bypass);
+        assert!(matches!(result, Err(NativeSyncError::RecoveryRequired)));
+        assert!(matches!(
+            b.status().await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        let recovered = open_sync_client(db.clone(), options("all")).await.unwrap();
+        assert_eq!(recovered.status().await.unwrap().pending_count, 1);
+        assert_eq!(
+            recovered.lock_runtime().await.client().unwrap().state(),
+            &later
+        );
+        assert!(
+            !recovered
+                .complete_bootstrap(&receipt, &context, handle, &clock)
+                .await
+                .unwrap()
+        );
+        db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn repeated_recovery_preserves_prefix_and_rejects_every_old_epoch_even_at_equal_revision()
+    {
+        let db = database().await;
+        let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let mut read_cursors = Vec::new();
+        let mut subscription_cursors = Vec::new();
+        let mut prefix = None;
+        let mut subscription_prefix = None;
+        let mut last_generation = 0;
+        for round in 0..4 {
+            let before: JsonValue =
+                serde_json::from_str(&b.read_snapshot_json().await.unwrap()).unwrap();
+            read_cursors.push(before["cursor"].clone());
+            let subscription: JsonValue =
+                serde_json::from_str(&b.subscription_snapshot_json("window".into()).await.unwrap())
+                    .unwrap();
+            subscription_cursors.push(subscription["cursor"].clone());
+            let epoch = before["cursor"]["processEpoch"].as_str().unwrap();
+            let (current_prefix, _) = epoch.rsplit_once(':').unwrap();
+            assert_eq!(
+                prefix.get_or_insert_with(|| current_prefix.to_owned()),
+                current_prefix
+            );
+            let mut local = commit();
+            local.identity.client_commit_id = ClientCommitId(format!("recovery-{round}"));
+            a.lose_next_persist_ack.store(true, Ordering::SeqCst);
+            assert!(matches!(
+                a.enqueue(serde_json::to_string(&local).unwrap()).await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            let recovered = open_sync_client(db.clone(), options("all")).await.unwrap();
+            assert!(Arc::ptr_eq(&a.runtime, &recovered.runtime));
+            let after: JsonValue =
+                serde_json::from_str(&recovered.read_snapshot_json().await.unwrap()).unwrap();
+            let epoch = after["cursor"]["processEpoch"].as_str().unwrap();
+            let (current_prefix, generation) = epoch.rsplit_once(':').unwrap();
+            assert_eq!(prefix.as_deref(), Some(current_prefix));
+            let generation = generation.parse::<u64>().unwrap();
+            assert!(generation > last_generation);
+            last_generation = generation;
+            for old in &read_cursors {
+                let mut coincident = old.clone();
+                coincident["revision"] = after["cursor"]["revision"].clone();
+                let changes: JsonValue = serde_json::from_str(
+                    &b.read_changes_json(coincident.to_string(), 128)
+                        .await
+                        .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(changes["kind"], "reset_required");
+            }
+            for old in &subscription_cursors {
+                let changes: JsonValue = serde_json::from_str(
+                    &b.subscription_changes_json("window".into(), old.to_string(), 128)
+                        .await
+                        .unwrap(),
+                )
+                .unwrap();
+                assert_eq!(changes["kind"], "reset_required");
+                let epoch = changes["cursor"]["processEpoch"].as_str().unwrap();
+                let (current_prefix, _) = epoch.rsplit_once(':').unwrap();
+                assert_eq!(
+                    subscription_prefix.get_or_insert_with(|| current_prefix.to_owned()),
+                    current_prefix
+                );
+            }
+        }
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn reader_generation_exhaustion_never_defaults_or_revives_a_recovery_cell() {
+        for subscription in [false, true] {
+            let db = database().await;
+            let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+            let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+            let mut slot = a.lock_runtime().await;
+            let state = slot.client().unwrap().state().clone();
+            if subscription {
+                slot.subscription_journal.exhaust_epoch_for_test();
+            } else {
+                slot.journal.exhaust_epoch_for_test();
+            }
+            let runtime = ClientRuntime::open(state).unwrap();
+            let cursor = if subscription {
+                slot.subscription_journal
+                    .bootstrap(&runtime, "window")
+                    .unwrap()["cursor"]
+                    .clone()
+            } else {
+                slot.journal.bootstrap(&runtime).unwrap()["cursor"].clone()
+            };
+            invalidate_runtime(&mut slot);
+            drop(slot);
+            assert!(matches!(
+                open_sync_client(db.clone(), options("all")).await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            assert!(matches!(
+                b.status().await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            let slot = a.lock_runtime().await;
+            let after = if subscription {
+                slot.subscription_journal
+                    .bootstrap(&runtime, "window")
+                    .unwrap()["cursor"]
+                    .clone()
+            } else {
+                slot.journal.bootstrap(&runtime).unwrap()["cursor"].clone()
+            };
+            assert_eq!(after, cursor, "exhausted counter/prefix was silently reset");
+            assert!(slot.guard.runtime.is_none());
+            drop(slot);
+            db.close().await.unwrap();
+        }
     }
 }

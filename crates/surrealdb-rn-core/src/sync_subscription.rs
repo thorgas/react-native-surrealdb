@@ -177,18 +177,12 @@ struct History {
     batches: VecDeque<Batch>,
     bytes: usize,
 }
+#[derive(Default)]
 pub(crate) struct SubscriptionJournal {
-    epoch: String,
+    epoch: crate::sync_read::JournalEpoch,
     histories: BTreeMap<String, History>,
 }
-impl Default for SubscriptionJournal {
-    fn default() -> Self {
-        Self {
-            epoch: surrealdb::types::Uuid::new_v4().to_string(),
-            histories: BTreeMap::new(),
-        }
-    }
-}
+
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Cursor {
@@ -197,8 +191,18 @@ struct Cursor {
     revision: String,
 }
 impl SubscriptionJournal {
+    pub(crate) fn rotate(&mut self) -> Result<(), NativeSyncError> {
+        self.epoch.advance()?;
+        self.histories.clear();
+        Ok(())
+    }
+    #[cfg(test)]
+    pub(crate) fn exhaust_epoch_for_test(&mut self) {
+        // Test-only access to the same checked counter, without a production reset path.
+        self.epoch.exhaust_for_test();
+    }
     fn cursor(&self, id: &str, revision: u64) -> Value {
-        json!({"processEpoch":self.epoch,"subscriptionId":id,"revision":revision.to_string()})
+        json!({"processEpoch":self.epoch.value(),"subscriptionId":id,"revision":revision.to_string()})
     }
     pub(crate) fn bootstrap(
         &self,
@@ -297,7 +301,7 @@ impl SubscriptionJournal {
         }
         let current = runtime.state().revision;
         let history = self.histories.get(id);
-        if cursor.process_epoch != self.epoch
+        if cursor.process_epoch != self.epoch.value()
             || revision > current
             || (revision < current
                 && history

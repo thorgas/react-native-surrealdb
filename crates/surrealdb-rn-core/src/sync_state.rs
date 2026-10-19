@@ -257,6 +257,7 @@ struct NormalizedRows {
 pub struct SyncStateStore<'a> {
     database: &'a SurrealDatabase,
     diagnostics: Option<&'a crate::sync_diagnostics::SyncDiagnostics>,
+    session_generation: Option<u64>,
 }
 
 impl<'a> SyncStateStore<'a> {
@@ -264,7 +265,37 @@ impl<'a> SyncStateStore<'a> {
         Self {
             database,
             diagnostics: None,
+            session_generation: None,
         }
+    }
+
+    pub(crate) fn with_session_generation(mut self, generation: u64) -> Self {
+        self.session_generation = Some(generation);
+        self
+    }
+    fn check_session(&self) -> Result<(), SyncStateError> {
+        if self.session_generation.is_some_and(|generation| {
+            self.database.is_closed()
+                || self
+                    .database
+                    .session_generation
+                    .load(std::sync::atomic::Ordering::Acquire)
+                    != generation
+        }) {
+            return Err(SyncStateError::RevisionConflict);
+        }
+        Ok(())
+    }
+    async fn finish<T>(
+        &self,
+        transaction: Transaction<Any>,
+        operation: Result<T, SyncStateError>,
+    ) -> Result<T, SyncStateError> {
+        let operation = operation.and_then(|value| {
+            self.check_session()?;
+            Ok(value)
+        });
+        finish_transaction(transaction, operation).await
     }
 
     pub(crate) fn with_diagnostics(
@@ -280,6 +311,7 @@ impl<'a> SyncStateStore<'a> {
     /// Applications should call this once while opening the embedded database,
     /// before loading or persisting sync state.
     pub async fn define_schema(&self) -> Result<(), SyncStateError> {
+        self.check_session()?;
         let client = self.database.client().await.map_err(SyncStateError::Core)?;
         client
             .query(DEFINE_SCHEMA)
@@ -323,7 +355,7 @@ impl<'a> SyncStateStore<'a> {
             .await.map_err(SyncStateError::Database)?.check().map_err(SyncStateError::Database)?;
         Ok(())
         }.await;
-        finish_transaction(transaction, operation).await
+        self.finish(transaction, operation).await
     }
 
     /// Inspect a journal without installing schema, initializing, or migrating it.
@@ -457,7 +489,7 @@ impl<'a> SyncStateStore<'a> {
             replace_v2_in_transaction(&transaction, key, expected_revision, None, state, &rows)
                 .await;
 
-        finish_transaction(transaction, operation).await
+        self.finish(transaction, operation).await
     }
 
     /// Apply a prepared optimistic projection and its durable state together.
@@ -509,7 +541,7 @@ impl<'a> SyncStateStore<'a> {
         }
         .await;
 
-        finish_transaction(transaction, operation).await
+        self.finish(transaction, operation).await
     }
 
     async fn migrate_v1(
@@ -556,7 +588,7 @@ impl<'a> SyncStateStore<'a> {
             Ok(SyncStateWrite::Applied)
         }
         .await;
-        finish_transaction(transaction, operation).await.map(|_| ())
+        self.finish(transaction, operation).await.map(|_| ())
     }
 }
 

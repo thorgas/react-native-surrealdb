@@ -21,8 +21,9 @@ struct Batch {
     revision: u64,
     json: String,
 }
+#[derive(Default)]
 pub(crate) struct ReadJournal {
-    epoch: String,
+    epoch: JournalEpoch,
     batches: VecDeque<Batch>,
     bytes: usize,
 }
@@ -30,18 +31,50 @@ pub(crate) struct ReadJournal {
 pub(crate) fn capabilities() -> String {
     json!({"protocolVersion":1,"maxJournalBatches":MAX_BATCHES,"maxJournalBytes":MAX_JOURNAL_BYTES,"maxOutputBytes":MAX_OUTPUT_BYTES,"requiresMatchingNativeAbi":true,"predicateSubscriptions":false}).to_string()
 }
-impl Default for ReadJournal {
+
+/// Random prefix identifies a fresh cell/process; a checked counter guarantees
+/// no epoch reuse within the lifetime of this journal, including recovery.
+pub(crate) struct JournalEpoch {
+    prefix: String,
+    generation: u64,
+}
+impl Default for JournalEpoch {
     fn default() -> Self {
         Self {
-            epoch: surrealdb::types::Uuid::new_v4().to_string(),
-            batches: VecDeque::new(),
-            bytes: 0,
+            prefix: surrealdb::types::Uuid::new_v4().to_string(),
+            generation: 0,
         }
     }
 }
+impl JournalEpoch {
+    pub(crate) fn value(&self) -> String {
+        format!("{}:{}", self.prefix, self.generation)
+    }
+    #[cfg(test)]
+    pub(crate) fn exhaust_for_test(&mut self) {
+        self.generation = u64::MAX;
+    }
+    pub(crate) fn advance(&mut self) -> Result<(), NativeSyncError> {
+        self.generation = self
+            .generation
+            .checked_add(1)
+            .ok_or(NativeSyncError::RecoveryRequired)?;
+        Ok(())
+    }
+}
 impl ReadJournal {
+    pub(crate) fn rotate(&mut self) -> Result<(), NativeSyncError> {
+        self.epoch.advance()?;
+        self.batches.clear();
+        self.bytes = 0;
+        Ok(())
+    }
+    #[cfg(test)]
+    pub(crate) fn exhaust_epoch_for_test(&mut self) {
+        self.epoch.generation = u64::MAX;
+    }
     fn cursor(&self, revision: u64) -> Value {
-        json!({"processEpoch":self.epoch,"revision":revision.to_string()})
+        json!({"processEpoch":self.epoch.value(),"revision":revision.to_string()})
     }
     pub fn bootstrap(&self, runtime: &ClientRuntime<Value>) -> Result<Value, NativeSyncError> {
         let mut snapshot =
@@ -105,7 +138,7 @@ impl ReadJournal {
             .batches
             .iter()
             .position(|batch| batch.before == revision);
-        if cursor.process_epoch != self.epoch
+        if cursor.process_epoch != self.epoch.value()
             || revision > current
             || (revision < current && first.is_none())
         {

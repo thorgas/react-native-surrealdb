@@ -14,7 +14,7 @@ pub mod sync_state;
 mod sync_subscription;
 mod wire;
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -126,6 +126,14 @@ pub struct SurrealDatabase {
     // Session mutations use the write side across their await point, preventing
     // concurrent sign-in/use calls from silently overwriting one another.
     inner: AsyncRwLock<Option<Surreal<Any>>>,
+    // Native journal ownership. Never retain inner.read across helper calls.
+    // Typed session mutations participate; raw SurrealQL session/private-table
+    // mutations are trusted misuse outside the native journal ownership contract.
+    journal_lifecycle: AsyncRwLock<()>,
+    session_generation: AtomicU64,
+    sync_runtimes: sync_client::RuntimeRegistry,
+    #[cfg(test)]
+    session_pause: Mutex<Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>>,
     live_queries: Mutex<Vec<Weak<LiveQuery>>>,
     transactions: Mutex<Vec<Weak<SurrealTransaction>>>,
     embedded: bool,
@@ -207,6 +215,37 @@ impl Drop for LiveQuery {
 }
 
 impl SurrealDatabase {
+    fn reserve_session_change(&self) -> Result<(), SurrealRnError> {
+        self.session_generation
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |value| {
+                value.checked_add(1)
+            })
+            .map(|_| ())
+            .map_err(|_| {
+                self.closed.store(true, Ordering::Release);
+                SurrealRnError::Internal {
+                    message: "session generation exhausted".into(),
+                }
+            })
+    }
+    async fn begin_session_change(
+        &self,
+    ) -> Result<tokio::sync::RwLockWriteGuard<'_, ()>, SurrealRnError> {
+        // Intent invalidates in-flight publication immediately; the second advance
+        // invalidates opens admitted between independently queued mutation tickets.
+        self.reserve_session_change()?;
+        let guard = self.journal_lifecycle.write().await;
+        self.reserve_session_change()?;
+        #[cfg(test)]
+        {
+            let pause = self.session_pause.lock().unwrap().take();
+            if let Some((arrived, release)) = pause {
+                arrived.notify_one();
+                release.notified().await;
+            }
+        }
+        Ok(guard)
+    }
     async fn client(&self) -> Result<Surreal<Any>, SurrealRnError> {
         if self.closed.load(Ordering::Acquire) {
             return Err(SurrealRnError::Closed);
@@ -244,6 +283,11 @@ pub async fn connect(options: ConnectOptions) -> Result<Arc<SurrealDatabase>, Su
 
     Ok(Arc::new(SurrealDatabase {
         inner: AsyncRwLock::new(Some(client)),
+        journal_lifecycle: AsyncRwLock::new(()),
+        session_generation: AtomicU64::new(0),
+        sync_runtimes: Default::default(),
+        #[cfg(test)]
+        session_pause: Mutex::new(None),
         live_queries: Mutex::new(Vec::new()),
         transactions: Mutex::new(Vec::new()),
         embedded: is_embedded_endpoint(&options.endpoint),
@@ -471,6 +515,7 @@ impl SurrealDatabase {
         namespace: String,
         database: String,
     ) -> Result<(), SurrealRnError> {
+        let _lifecycle = self.begin_session_change().await?;
         let mut slot = self.inner.write().await;
         let client = slot.clone().ok_or(SurrealRnError::Closed)?;
         client.use_ns(namespace).use_db(database).await?;
@@ -561,6 +606,7 @@ impl SurrealDatabase {
     }
 
     pub async fn authenticate(&self, access_token: String) -> Result<(), SurrealRnError> {
+        let _lifecycle = self.begin_session_change().await?;
         let mut slot = self.inner.write().await;
         let client = slot.clone().ok_or(SurrealRnError::Closed)?;
         client.authenticate(Token::from(access_token)).await?;
@@ -573,6 +619,7 @@ impl SurrealDatabase {
         username: String,
         password: String,
     ) -> Result<String, SurrealRnError> {
+        let _lifecycle = self.begin_session_change().await?;
         let mut slot = self.inner.write().await;
         let client = slot.clone().ok_or(SurrealRnError::Closed)?;
         let token = client.signin(Root { username, password }).await?;
@@ -589,6 +636,7 @@ impl SurrealDatabase {
         username: String,
         password: String,
     ) -> Result<String, SurrealRnError> {
+        let _lifecycle = self.begin_session_change().await?;
         let mut slot = self.inner.write().await;
         let client = slot.clone().ok_or(SurrealRnError::Closed)?;
         let token = client
@@ -606,6 +654,7 @@ impl SurrealDatabase {
     }
 
     pub async fn invalidate(&self) -> Result<(), SurrealRnError> {
+        let _lifecycle = self.begin_session_change().await?;
         let mut slot = self.inner.write().await;
         let client = slot.clone().ok_or(SurrealRnError::Closed)?;
         client.invalidate().await?;
@@ -615,7 +664,10 @@ impl SurrealDatabase {
 
     /// Idempotently prevent new operations and release this handle's client.
     pub async fn close(&self) -> Result<(), SurrealRnError> {
+        let session_result = self.reserve_session_change();
         self.closed.store(true, Ordering::Release);
+        let _lifecycle = self.journal_lifecycle.write().await;
+        let session_result = session_result.and_then(|_| self.reserve_session_change());
         self.inner.write().await.take();
         let live_queries = {
             let mut subscriptions =
@@ -654,7 +706,7 @@ impl SurrealDatabase {
         // The SDK owns its embedded router task. Dropping the last client closes
         // its route channel; yield so that task can begin datastore shutdown.
         tokio::task::yield_now().await;
-        Ok(())
+        session_result
     }
 
     pub fn is_closed(&self) -> bool {
@@ -1122,5 +1174,80 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result[0].value_json, r#""Ada""#);
+    }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn persistent_bridge_excludes_duplicate_objects_aliases_processes_and_reopens_after_last_client()
+     {
+        const CHILD_PATH: &str = "RN_SYNC_EXCLUSIVITY_CHILD_PATH";
+        let options = |path: &std::path::Path| ConnectOptions {
+            endpoint: format!("surrealkv://{}", path.display()),
+            namespace: Some("ownership".into()),
+            database: Some("ownership".into()),
+        };
+        if let Some(path) = std::env::var_os(CHILD_PATH) {
+            assert!(
+                connect(options(std::path::Path::new(&path))).await.is_err(),
+                "child process acquired live datastore"
+            );
+            return;
+        }
+        let directory = temp_dir::TempDir::new().unwrap();
+        let path = directory.path().join("store");
+        let alias = directory.path().join("alias");
+        let first = connect(options(&path)).await.unwrap();
+        first
+            .query("CREATE witness:one SET value='preserved'".into(), None)
+            .await
+            .unwrap();
+        assert!(
+            connect(options(&path)).await.is_err(),
+            "second DB object acquired same store"
+        );
+        std::os::unix::fs::symlink(&path, &alias).unwrap();
+        assert!(
+            connect(options(&alias)).await.is_err(),
+            "symlink alias acquired same store"
+        );
+        let canonical = std::fs::canonicalize(&path).unwrap();
+        assert!(
+            connect(options(&canonical)).await.is_err(),
+            "canonical alias acquired same store"
+        );
+        let mut child=std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact","tests::persistent_bridge_excludes_duplicate_objects_aliases_processes_and_reopens_after_last_client","--test-threads=1"])
+            .env(CHILD_PATH,&canonical).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).spawn().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(status.success(), "child exclusion proof failed");
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("owned child exceeded bound");
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // A borrowed SDK client keeps its router/store alive even after wrapper.close.
+        let retained = first.client().await.unwrap();
+        first.close().await.unwrap();
+        drop(first);
+        assert!(
+            connect(options(&canonical)).await.is_err(),
+            "store released while retained native client alive"
+        );
+        drop(retained);
+        let reopened = connect(options(&canonical)).await.unwrap();
+        let result = reopened
+            .query(
+                "RETURN (SELECT VALUE value FROM witness:one)[0]".into(),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(result[0].value_json, r#""preserved""#);
+        reopened.close().await.unwrap();
     }
 }
