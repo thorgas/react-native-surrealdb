@@ -441,3 +441,21 @@ subscription vectors remain unchanged. Private models/ADR, authority, server, na
 bindings and artifacts are excluded. No ABI or dependency change is included. Codec verification
 alone grants no authorization or install capability; durable staging, receipt/context/expiry
 verification and atomic native installation remain separate integration gates.
+
+
+## Complete bootstrap client preparation export (2026-10-19)
+
+Selectively exported the new storage-neutral client preparation source and eight permanent
+transition regressions from canonical engine commit
+`defbcf6a918dbf0fd484052b46bbf8ebca78687c` onto SDK base
+`280d0cbbffcc01f488345e004abcd716436847b0`. The reviewed source/test hunks were applied directly;
+the SDK-specific automatic conflict policy and the earlier `c89135e` delayed-reset repair remain
+intact. The client README adds the canonical API/caller-obligation section without replacing the
+SDK documentation. No other client code was copied wholesale.
+
+`prepare_bootstrap_snapshot` shares legacy reset preparation after strict bootstrap row and
+retained-acceptance epoch checks. It grants no authorization, persistence or install capability.
+The adapter must validate the complete root, receipt, trusted context, expiry and storage budgets,
+then persist atomically before serialized install. No protocol, native ABI, binding, schema,
+dependency or artifact change is included in this export. Native storage work and final activation
+remain separately reviewed integration gates.

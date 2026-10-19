@@ -237,6 +237,7 @@ pub enum ClientError {
     CursorWouldMoveBackward,
     CommitSequenceGap,
     DuplicateSnapshotRecord(RecordId),
+    InvalidSnapshotVersion(RecordId),
     AbsentConfirmedRecord(RecordId),
     InvalidIdMapping(IdMapping),
     IdMappingCollision(RecordId),
@@ -271,6 +272,7 @@ impl fmt::Display for ClientError {
             Self::CursorWouldMoveBackward => "pull cursor would move backward",
             Self::CommitSequenceGap => "pull commit sequence is incomplete",
             Self::DuplicateSnapshotRecord(_) => "reset snapshot repeats a record",
+            Self::InvalidSnapshotVersion(_) => "snapshot record version must be positive",
             Self::AbsentConfirmedRecord(_) => "confirmed state contains an absent record",
             Self::InvalidIdMapping(_) => "record ID mapping is invalid",
             Self::IdMappingCollision(_) => "record ID mapping collides with canonical state",
@@ -526,16 +528,64 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         self.prepare(next)
     }
 
+    /// Prepares one complete, externally verified bootstrap snapshot without installing it.
+    ///
+    /// The caller must first validate the complete root, receipt, trusted context and expiry.
+    /// This method grants no authorization or install authority. Persist the prepared state
+    /// atomically before calling `install`, under serialized ownership of this journal.
+    pub fn prepare_bootstrap_snapshot(
+        &self,
+        checkpoint: Checkpoint,
+        records: Vec<surrealdb_sync_protocol::SnapshotRecord<V>>,
+    ) -> Result<PreparedTransition<V>, ClientError> {
+        let same_epoch = self
+            .state
+            .checkpoint
+            .as_ref()
+            .is_some_and(|current| current.cursor.epoch == checkpoint.cursor.epoch);
+        if !same_epoch
+            && self
+                .state
+                .outcomes
+                .iter()
+                .any(|resolved| matches!(resolved.outcome, DurableOutcome::Accepted { .. }))
+        {
+            return Err(ClientError::NeedsNewScopeJournal);
+        }
+        for record in &records {
+            match &record.state {
+                RecordState::Absent => {
+                    return Err(ClientError::AbsentConfirmedRecord(record.record_id.clone()));
+                }
+                RecordState::Present { version: 0, .. } | RecordState::Tombstone { version: 0 } => {
+                    return Err(ClientError::InvalidSnapshotVersion(
+                        record.record_id.clone(),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        self.prepare_snapshot(checkpoint, records)
+    }
+
     fn prepare_reset(
         &self,
         snapshot: ResetSnapshot<V>,
     ) -> Result<PreparedTransition<V>, ClientError> {
-        validate_scope(&self.state, &snapshot.checkpoint)?;
-        subscriptions::guard_subscription_scope(&self.state, &snapshot.checkpoint.scope)?;
+        self.prepare_snapshot(snapshot.checkpoint, snapshot.records)
+    }
+
+    fn prepare_snapshot(
+        &self,
+        checkpoint: Checkpoint,
+        records: Vec<surrealdb_sync_protocol::SnapshotRecord<V>>,
+    ) -> Result<PreparedTransition<V>, ClientError> {
+        validate_scope(&self.state, &checkpoint)?;
+        subscriptions::guard_subscription_scope(&self.state, &checkpoint.scope)?;
         // Reset responses can be delayed/reordered just like incremental pulls.
         // Never replace a newer installed frontier or authorization snapshot.
         if let Some(current) = &self.state.checkpoint {
-            let incoming = &snapshot.checkpoint;
+            let incoming = &checkpoint;
             if incoming.cursor.epoch < current.cursor.epoch
                 || (incoming.cursor.epoch == current.cursor.epoch
                     && incoming.cursor.sequence < current.cursor.sequence)
@@ -561,7 +611,7 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         }
         let mut confirmed = BTreeMap::new();
         let mut record_ids = BTreeSet::new();
-        for record in snapshot.records {
+        for record in records {
             if !record_ids.insert(record.record_id.clone()) {
                 return Err(ClientError::DuplicateSnapshotRecord(record.record_id));
             }
@@ -575,19 +625,19 @@ impl<V: Clone + Eq> ClientRuntime<V> {
             .state
             .checkpoint
             .as_ref()
-            .is_some_and(|current| current.cursor.epoch == snapshot.checkpoint.cursor.epoch);
+            .is_some_and(|current| current.cursor.epoch == checkpoint.cursor.epoch);
         for outcome in &mut next.outcomes {
             if let DurableOutcome::Accepted { sequence, .. } = outcome.outcome
-                && (!same_epoch || sequence <= snapshot.checkpoint.cursor.sequence)
+                && (!same_epoch || sequence <= checkpoint.cursor.sequence)
             {
                 outcome.covered_by_reset = true;
             }
         }
         next.reset_coverage = Some(ResetCoverage {
-            cursor: snapshot.checkpoint.cursor,
-            scope: snapshot.checkpoint.scope.clone(),
+            cursor: checkpoint.cursor,
+            scope: checkpoint.scope.clone(),
         });
-        next.checkpoint = Some(snapshot.checkpoint);
+        next.checkpoint = Some(checkpoint);
         self.prepare(next)
     }
 

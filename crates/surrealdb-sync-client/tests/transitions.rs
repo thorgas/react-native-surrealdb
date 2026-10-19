@@ -1218,3 +1218,276 @@ fn same_epoch_reset_at_or_above_accepted_frontier_covers_accepted_intent() {
         Some(OptimisticRecord::Present { value, .. }) if value == "remote-overwrite"));
     }
 }
+
+fn bootstrap_record(id: &str, state: RecordState<Value>) -> SnapshotRecord<Value> {
+    SnapshotRecord {
+        record_id: record_id(id),
+        state,
+    }
+}
+
+#[test]
+fn bootstrap_preparation_is_unpublished_until_atomic_install_and_rejects_stale_revision() {
+    let mut runtime = ClientRuntime::open(empty_state()).unwrap();
+    let before = runtime.state().clone();
+    let prepared = runtime
+        .prepare_bootstrap_snapshot(checkpoint("complete", 1, 5), vec![])
+        .unwrap();
+    assert_eq!(runtime.state(), &before);
+    assert!(prepared.state().reset_coverage.is_some());
+    let queued = runtime
+        .prepare_enqueue(commit("pending", vec![upsert("a", "local", None)]))
+        .unwrap();
+    install(&mut runtime, queued);
+    assert!(matches!(
+        runtime.install(prepared),
+        Err(ClientError::StaleTransition { .. })
+    ));
+    assert_eq!(runtime.state().outbox.len(), 1);
+    let prepared = runtime
+        .prepare_bootstrap_snapshot(checkpoint("complete", 1, 5), vec![])
+        .unwrap();
+    let durable = install(&mut runtime, prepared);
+    let reopened = ClientRuntime::open(durable).unwrap();
+    assert!(reopened.state().confirmed.is_empty());
+    assert_eq!(reopened.state().outbox.len(), 1);
+    assert!(reopened.optimistic().contains_key(&record_id("a")));
+    assert_eq!(
+        reopened
+            .state()
+            .reset_coverage
+            .as_ref()
+            .unwrap()
+            .cursor
+            .sequence,
+        5
+    );
+}
+
+#[test]
+fn bootstrap_same_epoch_preserves_newer_acceptance_and_covers_equal_or_older_frontier() {
+    for frontier in [1, 2, 3] {
+        let mut runtime = ClientRuntime::open(empty_state()).unwrap();
+        let prepared = runtime
+            .prepare_bootstrap_snapshot(checkpoint("initial", 1, 0), vec![])
+            .unwrap();
+        install(&mut runtime, prepared);
+        let local = commit("accepted", vec![upsert("a", "local", None)]);
+        let prepared = runtime.prepare_enqueue(local.clone()).unwrap();
+        install(&mut runtime, prepared);
+        let prepared = runtime
+            .prepare_push_response(push_response(DurableOutcome::Accepted {
+                identity: local.identity,
+                sequence: 2,
+                id_mappings: vec![],
+            }))
+            .unwrap();
+        install(&mut runtime, prepared);
+        let prepared = runtime
+            .prepare_bootstrap_snapshot(checkpoint("complete", 1, frontier), vec![])
+            .unwrap();
+        let durable = install(&mut runtime, prepared);
+        let reopened = ClientRuntime::open(durable).unwrap();
+        assert_eq!(reopened.state().outcomes[0].covered_by_reset, frontier >= 2);
+        assert_eq!(
+            reopened.optimistic().contains_key(&record_id("a")),
+            frontier < 2
+        );
+    }
+}
+
+#[test]
+fn bootstrap_cross_or_unknown_epoch_with_any_accepted_receipt_requires_new_journal() {
+    for known_epoch in [false, true] {
+        for covered in [false, true] {
+            let mut state = empty_state();
+            if known_epoch {
+                state.checkpoint = Some(checkpoint("initial", 1, 0));
+            }
+            state.outcomes.push(ResolvedCommit {
+                local_commit: commit("accepted", vec![upsert("a", "local", None)]),
+                outcome: DurableOutcome::Accepted {
+                    identity: identity("accepted"),
+                    sequence: 2,
+                    id_mappings: vec![],
+                },
+                resolution: None,
+                covered_by_reset: covered,
+            });
+            let runtime = ClientRuntime::open(state).unwrap();
+            let before = runtime.state().clone();
+            assert!(matches!(
+                runtime.prepare_bootstrap_snapshot(checkpoint("complete", 2, 3), vec![]),
+                Err(ClientError::NeedsNewScopeJournal)
+            ));
+            assert_eq!(runtime.state(), &before);
+        }
+    }
+}
+
+#[test]
+fn bootstrap_rejects_absent_zero_versions_duplicates_and_preserves_state() {
+    let runtime = ClientRuntime::open(empty_state()).unwrap();
+    let cases = [
+        (
+            RecordState::Absent,
+            ClientError::AbsentConfirmedRecord(record_id("a")),
+        ),
+        (
+            RecordState::Tombstone { version: 0 },
+            ClientError::InvalidSnapshotVersion(record_id("a")),
+        ),
+        (
+            RecordState::Present {
+                value: "value".to_owned(),
+                version: 0,
+                reference: None,
+            },
+            ClientError::InvalidSnapshotVersion(record_id("a")),
+        ),
+    ];
+    for (state, expected) in cases {
+        assert_eq!(
+            runtime
+                .prepare_bootstrap_snapshot(
+                    checkpoint("complete", 1, 1),
+                    vec![bootstrap_record("a", state)]
+                )
+                .unwrap_err(),
+            expected
+        );
+    }
+    let row = bootstrap_record("a", RecordState::Tombstone { version: 1 });
+    assert_eq!(
+        runtime
+            .prepare_bootstrap_snapshot(checkpoint("complete", 1, 1), vec![row.clone(), row])
+            .unwrap_err(),
+        ClientError::DuplicateSnapshotRecord(record_id("a"))
+    );
+    assert_eq!(runtime.state(), &empty_state());
+    assert_eq!(
+        ClientError::InvalidSnapshotVersion(record_id("a")).to_string(),
+        "snapshot record version must be positive"
+    );
+}
+
+#[test]
+fn bootstrap_shares_cursor_scope_and_subscription_fences_and_preserves_conflicts() {
+    let local = commit("conflict", vec![upsert("a", "local", None)]);
+    let mut runtime = runtime_with_conflict(local, RecordState::Tombstone { version: 1 });
+    let prepared = runtime
+        .prepare_bootstrap_snapshot(
+            checkpoint("initial", 1, 5),
+            vec![bootstrap_record("b", RecordState::Tombstone { version: 1 })],
+        )
+        .unwrap();
+    let durable = install(&mut runtime, prepared);
+    let runtime = ClientRuntime::open(durable).unwrap();
+    assert!(matches!(
+        runtime.state().outcomes[0].outcome,
+        DurableOutcome::Conflict { .. }
+    ));
+    let before = runtime.state().clone();
+    assert_eq!(
+        runtime
+            .prepare_bootstrap_snapshot(checkpoint("old", 1, 4), vec![])
+            .unwrap_err(),
+        ClientError::CursorWouldMoveBackward
+    );
+    let mut different = checkpoint("foreign", 1, 6);
+    different.scope.identity = ScopeIdentity("other".into());
+    assert_eq!(
+        runtime
+            .prepare_bootstrap_snapshot(different, vec![])
+            .unwrap_err(),
+        ClientError::ScopeMismatch
+    );
+    let mut changed = checkpoint("changed", 1, 6);
+    changed.scope.authorization_revision = 2;
+    assert_eq!(
+        runtime
+            .prepare_bootstrap_snapshot(changed, vec![])
+            .unwrap_err(),
+        ClientError::PendingQuarantineRequired
+    );
+    assert_eq!(runtime.state(), &before);
+}
+
+#[test]
+fn legacy_reset_still_accepts_absent_and_epoch_changes_with_accepted_history() {
+    for known_epoch in [false, true] {
+        let mut state = empty_state();
+        if known_epoch {
+            state.checkpoint = Some(checkpoint("initial", 1, 0));
+        }
+        state.outcomes.push(ResolvedCommit {
+            local_commit: commit("accepted", vec![upsert("a", "local", None)]),
+            outcome: DurableOutcome::Accepted {
+                identity: identity("accepted"),
+                sequence: 2,
+                id_mappings: vec![],
+            },
+            resolution: None,
+            covered_by_reset: false,
+        });
+        let mut runtime = ClientRuntime::open(state).unwrap();
+        let prepared = runtime
+            .prepare_pull_response(PullResponse::Reset(ResetSnapshot {
+                reason: ResetReason::EpochChanged,
+                checkpoint: checkpoint("legacy", 2, 0),
+                records: vec![bootstrap_record("a", RecordState::Absent)],
+            }))
+            .unwrap();
+        let durable = install(&mut runtime, prepared);
+        assert!(durable.confirmed.is_empty());
+        assert!(durable.outcomes[0].covered_by_reset);
+    }
+}
+
+#[test]
+fn bootstrap_without_accepted_history_allows_unknown_or_new_epoch_and_tombstones() {
+    for previous in [None, Some(checkpoint("old", 1, 8))] {
+        let mut state = empty_state();
+        state.checkpoint = previous;
+        let mut runtime = ClientRuntime::open(state).unwrap();
+        let prepared = runtime
+            .prepare_bootstrap_snapshot(
+                checkpoint("complete", 2, 0),
+                vec![bootstrap_record(
+                    "gone",
+                    RecordState::Tombstone { version: u64::MAX },
+                )],
+            )
+            .unwrap();
+        let reopened = ClientRuntime::open(install(&mut runtime, prepared)).unwrap();
+        assert_eq!(
+            reopened.state().confirmed[&record_id("gone")],
+            RecordState::Tombstone { version: u64::MAX }
+        );
+        assert_eq!(
+            reopened.state().checkpoint.as_ref().unwrap().cursor.epoch,
+            2
+        );
+    }
+}
+
+#[test]
+fn bootstrap_respects_subscription_authorization_scope_without_a_checkpoint() {
+    let mut state = empty_state();
+    let subscriptions = surrealdb_sync_client::DurableSubscriptions {
+        authorization_scope: Some(checkpoint("subscription", 1, 0).scope),
+        ..Default::default()
+    };
+    state.subscriptions = Some(subscriptions);
+    let runtime = ClientRuntime::open(state).unwrap();
+    let mut changed = checkpoint("complete", 1, 0);
+    changed.scope.authorization_revision = 2;
+    let before = runtime.state().clone();
+    assert_eq!(
+        runtime
+            .prepare_bootstrap_snapshot(changed, vec![])
+            .unwrap_err(),
+        ClientError::NeedsNewScopeJournal
+    );
+    assert_eq!(runtime.state(), &before);
+}
