@@ -197,6 +197,8 @@ impl RuntimeRegistry {
             subscription_journal: Default::default(),
             recovery_required: false,
             scope_blocked: None,
+            bootstrap_binding: None,
+            bootstrap_binding_ticket: 0,
         }));
         entries.insert(key, Arc::downgrade(&runtime));
         Ok(runtime)
@@ -778,6 +780,9 @@ struct RuntimeState {
     subscription_journal: crate::sync_subscription::SubscriptionJournal,
     recovery_required: bool,
     scope_blocked: Option<ScopeBlock>,
+    bootstrap_binding: Option<surrealdb_sync_protocol::bootstrap::BootstrapContext>,
+    // Never reset on shared-cell recovery: old Session objects remain stale.
+    bootstrap_binding_ticket: u64,
 }
 impl RuntimeState {
     fn read_client(&self) -> Result<&ClientRuntime<JsonValue>, NativeSyncError> {
@@ -806,6 +811,74 @@ impl Deref for RuntimeState {
 impl DerefMut for RuntimeState {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.runtime
+    }
+}
+
+pub(crate) struct BootstrapAccess<'a> {
+    slot: RuntimeGuard<'a>,
+}
+impl BootstrapAccess<'_> {
+    pub(crate) fn store(&self) -> crate::sync_bootstrap_store::BootstrapStore<'_> {
+        crate::sync_bootstrap_store::BootstrapStore::new(&self.slot.owner.database)
+            .with_session_generation(self.slot.owner.session_generation)
+    }
+    pub(crate) fn bind(
+        &mut self,
+        expected: &surrealdb_sync_protocol::bootstrap::BootstrapContext,
+    ) -> Result<u64, crate::sync_bootstrap::NativeBootstrapError> {
+        if self.slot.bootstrap_binding.as_ref() != Some(expected) {
+            let next = self
+                .slot
+                .bootstrap_binding_ticket
+                .checked_add(1)
+                .ok_or(crate::sync_bootstrap::NativeBootstrapError::RecoveryRequired)?;
+            self.slot.bootstrap_binding = Some(expected.clone());
+            self.slot.bootstrap_binding_ticket = next;
+        }
+        Ok(self.slot.bootstrap_binding_ticket)
+    }
+    pub(crate) async fn check_writable(
+        &mut self,
+    ) -> Result<(), crate::sync_bootstrap::NativeBootstrapError> {
+        let owner = self.slot.owner;
+        owner
+            .refresh_scope_barrier(&mut self.slot)
+            .await
+            .map_err(crate::sync_bootstrap::NativeBootstrapError::from_native)?;
+        self.slot
+            .read_client()
+            .map_err(crate::sync_bootstrap::NativeBootstrapError::from_native)?;
+        Ok(())
+    }
+    pub(crate) fn finish<T>(
+        &mut self,
+        result: Result<T, SyncStateError>,
+        mutating: bool,
+    ) -> Result<T, crate::sync_bootstrap::NativeBootstrapError> {
+        use crate::sync_bootstrap::NativeBootstrapError;
+        if matches!(
+            &result,
+            Err(SyncStateError::CommitUnknown(_) | SyncStateError::RollbackFailed { .. })
+        ) || self.slot.owner.ensure_session().is_err()
+        {
+            invalidate_runtime(&mut self.slot);
+            return Err(NativeBootstrapError::RecoveryRequired);
+        }
+        #[cfg(test)]
+        if mutating
+            && result.is_ok()
+            && self
+                .slot
+                .owner
+                .lose_next_persist_ack
+                .swap(false, Ordering::SeqCst)
+        {
+            invalidate_runtime(&mut self.slot);
+            return Err(NativeBootstrapError::RecoveryRequired);
+        }
+        #[cfg(not(test))]
+        let _ = mutating;
+        result.map_err(NativeBootstrapError::from_store)
     }
 }
 
@@ -866,12 +939,45 @@ impl NativeSyncClient {
         }
     }
 
+    pub(crate) async fn bootstrap_access(
+        &self,
+        expected: &surrealdb_sync_protocol::bootstrap::BootstrapContext,
+        ticket: Option<u64>,
+    ) -> Result<BootstrapAccess<'_>, crate::sync_bootstrap::NativeBootstrapError> {
+        use crate::sync_bootstrap::NativeBootstrapError;
+        let slot = self.lock_runtime().await;
+        let state = slot
+            .client()
+            .map_err(NativeBootstrapError::from_native)?
+            .state();
+        if state.partition_id != expected.partition_id
+            || state.client_id != expected.client_id
+            || state.requested_scope != expected.scope.identity
+            || state.subscription_revision != expected.scope.subscription_revision
+        {
+            return Err(NativeBootstrapError::ContextMismatch);
+        }
+        if state.checkpoint.as_ref().is_some_and(|checkpoint| {
+            expected.scope.authorization_revision < checkpoint.scope.authorization_revision
+        }) || slot.bootstrap_binding.as_ref().is_some_and(|bound| {
+            !crate::sync_bootstrap_store::same_owner(bound, expected)
+                || expected.scope.authorization_revision < bound.scope.authorization_revision
+        }) || ticket.is_some_and(|ticket| {
+            ticket != slot.bootstrap_binding_ticket
+                || slot.bootstrap_binding.as_ref() != Some(expected)
+        }) {
+            return Err(NativeBootstrapError::ContextMismatch);
+        }
+        Ok(BootstrapAccess { slot })
+    }
+    #[cfg(test)]
+    pub(crate) fn lose_next_bootstrap_ack_for_test(&self) {
+        self.lose_next_persist_ack.store(true, Ordering::SeqCst);
+    }
+
     /// Private composition only. Shared slot is held from latest durable prepare
     /// through commit/readback/publication; the lifecycle lease fences typed session changes.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "Dormant private completion pending ABI review")
-    )]
+    #[cfg(test)]
     pub(crate) async fn complete_bootstrap(
         &self,
         receipt: &[u8],
@@ -879,7 +985,24 @@ impl NativeSyncClient {
         incarnation: u64,
         clock: &crate::sync_bootstrap_store::CompletionClock<'_>,
     ) -> Result<bool, NativeSyncError> {
+        self.complete_bootstrap_bound(receipt, expected, incarnation, clock, None)
+            .await
+    }
+    pub(crate) async fn complete_bootstrap_bound(
+        &self,
+        receipt: &[u8],
+        expected: &surrealdb_sync_protocol::bootstrap::BootstrapContext,
+        incarnation: u64,
+        clock: &crate::sync_bootstrap_store::CompletionClock<'_>,
+        ticket: Option<u64>,
+    ) -> Result<bool, NativeSyncError> {
         let mut slot = self.lock_runtime().await;
+        if ticket.is_some_and(|ticket| {
+            ticket != slot.bootstrap_binding_ticket
+                || slot.bootstrap_binding.as_ref() != Some(expected)
+        }) {
+            return Err(NativeSyncError::Protocol);
+        }
         let state = slot.client()?.state();
         if state.partition_id != expected.partition_id
             || state.client_id != expected.client_id
@@ -901,6 +1024,7 @@ impl NativeSyncClient {
             deadline: clock.deadline,
         };
         let result = crate::sync_bootstrap_store::BootstrapStore::new(&self.database)
+            .with_session_generation(self.session_generation)
             .complete(receipt, expected, incarnation, &clock)
             .await;
         #[cfg(test)]
@@ -919,7 +1043,26 @@ impl NativeSyncClient {
             invalidate_runtime(&mut slot);
             return Err(NativeSyncError::RecoveryRequired);
         }
-        let result = result.map_err(map_persistence_error)?;
+        let result = match result {
+            Ok(result) => result,
+            Err(error) => {
+                self.refresh_scope_barrier(&mut slot).await?;
+                match slot.scope_blocked {
+                    Some(ScopeBlock::NewJournal) => {
+                        return Err(NativeSyncError::NeedsNewScopeJournal);
+                    }
+                    Some(ScopeBlock::PendingQuarantine) => {
+                        return Err(NativeSyncError::PendingQuarantineRequired);
+                    }
+                    None => {
+                        return Err(match error {
+                            SyncStateError::InvalidState(error) => map_protocol_error(error),
+                            error => map_persistence_error(error),
+                        });
+                    }
+                }
+            }
+        };
         #[cfg(test)]
         if self.lose_next_persist_ack.swap(false, Ordering::SeqCst) {
             invalidate_runtime(&mut slot);
@@ -3514,5 +3657,27 @@ mod tests {
             drop(slot);
             db.close().await.unwrap();
         }
+    }
+    #[tokio::test]
+    async fn bootstrap_binding_ticket_exhaustion_preserves_binding_across_recovery() {
+        let db = database().await;
+        let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let (_, context, _) = staged_native_completion(&db, "ticket").await;
+        {
+            let mut access = client.bootstrap_access(&context, None).await.unwrap();
+            assert_eq!(access.bind(&context).unwrap(), 1);
+            access.slot.bootstrap_binding_ticket = u64::MAX;
+            invalidate_runtime(&mut access.slot);
+        }
+        let reopened = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let mut newer = context.clone();
+        newer.scope.authorization_revision += 1;
+        let mut access = reopened.bootstrap_access(&newer, None).await.unwrap();
+        assert_eq!(
+            access.bind(&newer).unwrap_err(),
+            crate::sync_bootstrap::NativeBootstrapError::RecoveryRequired
+        );
+        assert_eq!(access.slot.bootstrap_binding.as_ref(), Some(&context));
+        assert_eq!(access.slot.bootstrap_binding_ticket, u64::MAX);
     }
 }

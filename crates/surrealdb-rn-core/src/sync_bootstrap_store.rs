@@ -99,7 +99,7 @@ impl InspectedStage<'_> {
 /// Supplied by authenticated composition on EACH completion attempt (including restart).
 /// UTC must be independently trusted; monotonic deadline bounds verification stalls.
 pub(crate) struct CompletionClock<'a> {
-    pub(crate) utc_seconds: &'a dyn Fn() -> Result<u64, SyncStateError>,
+    pub(crate) utc_seconds: &'a (dyn Fn() -> Result<u64, SyncStateError> + Send + Sync),
     pub(crate) deadline: std::time::Instant,
 }
 impl CompletionClock<'_> {
@@ -121,24 +121,165 @@ pub(crate) enum Completion {
     HistoricalSuccess,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum StageState {
+    Staging,
+    Cancelled,
+    Consumed { revision: u64 },
+}
+pub(crate) struct StageInventory {
+    pub(crate) incarnation: u64,
+    pub(crate) state: StageState,
+    pub(crate) indices: Vec<u64>,
+    pub(crate) expected_pages: u64,
+}
 pub(crate) struct BootstrapStore<'a> {
     database: &'a SurrealDatabase,
+    session_generation: Option<u64>,
 }
 
 impl<'a> BootstrapStore<'a> {
     pub(crate) fn new(database: &'a SurrealDatabase) -> Self {
-        Self { database }
+        Self {
+            database,
+            session_generation: None,
+        }
+    }
+
+    pub(crate) fn with_session_generation(mut self, generation: u64) -> Self {
+        self.session_generation = Some(generation);
+        self
+    }
+    async fn finish<T>(
+        &self,
+        transaction: Transaction<Any>,
+        operation: Result<T, SyncStateError>,
+    ) -> Result<T, SyncStateError> {
+        let operation = operation.and_then(|value| {
+            if self.session_generation.is_some_and(|generation| {
+                self.database.is_closed()
+                    || self
+                        .database
+                        .session_generation
+                        .load(std::sync::atomic::Ordering::Acquire)
+                        != generation
+            }) {
+                return Err(SyncStateError::RevisionConflict);
+            }
+            Ok(value)
+        });
+        finish_transaction(transaction, operation).await
+    }
+
+    /// Inspect ONLY. Missing schema/header is never initialized. A surviving fence,
+    /// partial schema or orphan page is corruption, not an empty ready stage.
+    pub(crate) async fn resume(
+        &self,
+        manifest: Option<&[u8]>,
+        expected: &BootstrapContext,
+        incarnation: Option<u64>,
+    ) -> Result<Option<StageInventory>, SyncStateError> {
+        let key = SyncStateKey::new(&expected.partition_id, &expected.client_id);
+        crate::sync_state::validate_key(key)?;
+        if let Some(manifest) = manifest {
+            if manifest.len() > MAX_SYNC_STATE_BYTES {
+                return Err(SyncStateError::StateTooLarge);
+            }
+            let incoming =
+                decode_bootstrap_manifest(manifest).map_err(|_| SyncStateError::CorruptState)?;
+            if incoming.context != *expected {
+                return Err(SyncStateError::CorruptState);
+            }
+        }
+        let transaction = self
+            .database
+            .client()
+            .await
+            .map_err(SyncStateError::Core)?
+            .begin()
+            .await
+            .map_err(SyncStateError::Database)?;
+        let operation = async {
+            let response = transaction
+                .query("INFO FOR DB")
+                .await
+                .map_err(SyncStateError::Database)?;
+            let mut response = match response.check() {
+                Ok(response) => response,
+                Err(error)
+                    if matches!(
+                        error.not_found_details(),
+                        Some(
+                            surrealdb::types::NotFoundError::Namespace { .. }
+                                | surrealdb::types::NotFoundError::Database { .. }
+                        )
+                    ) =>
+                {
+                    return Ok(None);
+                }
+                Err(error) => return Err(SyncStateError::Database(error)),
+            };
+            let schema: Option<Schema> = response.take(0).map_err(SyncStateError::Database)?;
+            let tables = schema.ok_or(SyncStateError::CorruptState)?.tables;
+            if !tables.contains_key(HEADER) && !tables.contains_key(PAGE) {
+                if tables.contains_key("_sync_client_meta")
+                    && read_fence(&transaction, key).await?.is_some()
+                {
+                    return Err(SyncStateError::CorruptState);
+                }
+                return Ok(None);
+            }
+            let mut inspected = inspect_stage(&transaction, key).await?;
+            let Some(stage) = inspected.stage.take() else {
+                return if read_fence(&transaction, key).await?.is_some() {
+                    Err(SyncStateError::CorruptState)
+                } else {
+                    Ok(None)
+                };
+            };
+            let persisted = &stage.manifest.context;
+            // Factory inspection can advance a terminal authorization snapshot;
+            // explicit resume and all stage operations retain exact context.
+            admit_context(
+                persisted,
+                expected,
+                manifest.is_none() && stage.header.cancelled,
+            )?;
+            validate_header(&stage.header.start, &stage.manifest, persisted)?;
+            let current_incarnation = parse_fence(&stage.header.incarnation)?;
+            if manifest.is_some_and(|expected| &stage.header.manifest[..] != expected)
+                || incarnation.is_some_and(|n| n != current_incarnation)
+            {
+                return Err(SyncStateError::RevisionConflict);
+            }
+            let current = inspected.current().await?;
+            check_budget(key, state_budget(&current)?, &stage)?;
+            let state = if let Some(revision) = stage.header.consumed_revision {
+                StageState::Consumed {
+                    revision: parse_fence(&revision)?,
+                }
+            } else if stage.header.cancelled {
+                StageState::Cancelled
+            } else {
+                StageState::Staging
+            };
+            Ok(Some(StageInventory {
+                incarnation: current_incarnation,
+                state,
+                indices: stage.pages.keys().copied().collect(),
+                expected_pages: stage.manifest.page_count,
+            }))
+        }
+        .await;
+        transaction
+            .cancel()
+            .await
+            .map_err(SyncStateError::Database)?;
+        operation
     }
 
     /// Only this explicit entry installs stage schema/the optional metadata fence.
     /// Expected context is independently supplied by authenticated composition, not the body.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Dormant private staging until reviewed native composition"
-        )
-    )]
     pub(crate) async fn begin(
         &self,
         start: &[u8],
@@ -198,7 +339,24 @@ impl<'a> BootstrapStore<'a> {
             {
                 return Err(SyncStateError::CorruptState);
             }
+            if state.checkpoint.as_ref().is_some_and(|checkpoint| {
+                expected.scope.authorization_revision < checkpoint.scope.authorization_revision
+            }) {
+                return Err(SyncStateError::RevisionConflict);
+            }
             if let Some(existing) = existing {
+                // A terminal stage permits a newer authorization snapshot, never
+                // another owner/origin/generation or a downgrade.
+                admit_context(
+                    &existing.manifest.context,
+                    expected,
+                    existing.header.cancelled,
+                )?;
+                validate_header(
+                    &existing.header.start,
+                    &existing.manifest,
+                    &existing.manifest.context,
+                )?;
                 check_budget(key, state_budget(&state)?, &existing)?;
                 if existing.header.cancelled {
                     if &existing.header.manifest[..] == manifest {
@@ -241,16 +399,9 @@ impl<'a> BootstrapStore<'a> {
             Ok(incarnation)
         }
         .await;
-        finish_transaction(transaction, operation).await
+        self.finish(transaction, operation).await
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Dormant private staging until reviewed native composition"
-        )
-    )]
     pub(crate) async fn stage_page(
         &self,
         raw: &[u8],
@@ -307,7 +458,7 @@ impl<'a> BootstrapStore<'a> {
             write_fence(&transaction, key, next_fence(Some(fence))?).await
         }
         .await;
-        finish_transaction(transaction, operation).await
+        self.finish(transaction, operation).await
     }
 
     /// Trusted context/clock are independent of the decoded receipt. No authorization is
@@ -338,7 +489,7 @@ impl<'a> BootstrapStore<'a> {
                 clock,
             )
             .await;
-        finish_transaction(transaction, operation).await
+        self.finish(transaction, operation).await
     }
 
     async fn complete_in_transaction(
@@ -516,13 +667,6 @@ impl<'a> BootstrapStore<'a> {
     }
 
     /// Full context AND manifest bytes bind cancellation; delayed callers cannot erase a successor.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "Dormant private staging until reviewed native composition"
-        )
-    )]
     pub(crate) async fn cancel(
         &self,
         manifest: &[u8],
@@ -536,7 +680,7 @@ impl<'a> BootstrapStore<'a> {
         let operation = self
             .cancel_in_transaction(&transaction, manifest, expected, incarnation)
             .await;
-        finish_transaction(transaction, operation).await
+        self.finish(transaction, operation).await
     }
     async fn cancel_in_transaction(
         &self,
@@ -584,6 +728,30 @@ impl<'a> BootstrapStore<'a> {
         )
         .await
     }
+}
+
+/// Ownership is fixed for the journal; authorization snapshots are stage-local.
+pub(crate) fn same_owner(a: &BootstrapContext, b: &BootstrapContext) -> bool {
+    a.authority_id == b.authority_id
+        && a.principal_id == b.principal_id
+        && a.partition_id == b.partition_id
+        && a.client_id == b.client_id
+        && a.journal_generation == b.journal_generation
+        && a.scope.identity == b.scope.identity
+        && a.scope.subscription_revision == b.scope.subscription_revision
+}
+fn admit_context(
+    previous: &BootstrapContext,
+    incoming: &BootstrapContext,
+    terminal: bool,
+) -> Result<(), SyncStateError> {
+    if !same_owner(previous, incoming)
+        || incoming.scope.authorization_revision < previous.scope.authorization_revision
+        || (!terminal && previous != incoming)
+    {
+        return Err(SyncStateError::RevisionConflict);
+    }
+    Ok(())
 }
 
 fn validate_header(
@@ -2149,7 +2317,9 @@ mod tests {
         )
         .unwrap()
     }
-    fn live_clock(utc: &dyn Fn() -> Result<u64, SyncStateError>) -> CompletionClock<'_> {
+    fn live_clock(
+        utc: &(dyn Fn() -> Result<u64, SyncStateError> + Send + Sync),
+    ) -> CompletionClock<'_> {
         CompletionClock {
             utc_seconds: utc,
             deadline: std::time::Instant::now() + std::time::Duration::from_secs(20),
@@ -2310,10 +2480,9 @@ mod tests {
                 .await
                 .is_err()
         );
-        let count = std::cell::Cell::new(0);
+        let count = std::sync::atomic::AtomicUsize::new(0);
         let clock = || {
-            let n = count.get();
-            count.set(n + 1);
+            let n = count.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(if n < 4 { 1 } else { u64::MAX })
         };
         assert!(
@@ -2322,7 +2491,7 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(count.get() >= 5);
+        assert!(count.load(std::sync::atomic::Ordering::Relaxed) >= 5);
         let key = SyncStateKey::new(&context.partition_id, &context.client_id);
         assert_eq!(
             SyncStateStore::new(&db).load(key).await.unwrap(),

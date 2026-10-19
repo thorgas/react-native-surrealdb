@@ -138,3 +138,29 @@ recovery preserves/increments them rather than constructing fresh Default journa
 Repeated recovery and counter-exhaustion tests prove old cursor rejection within
 the shared cell. Cross-process prefix uniqueness remains probabilistic. No public
 push, ABI activation or device/performance acceptance is implied.
+
+### Local-only additive bootstrap UniFFI facade
+
+Reviewed final five-file snapshot `/private/tmp/sdk-bootstrap-facade-review-v2`:
+actual Rust UniFFI session/stage objects, independent expected context, native clock,
+capability and typed redacted errors. Begin/Page/Cancel use shared lifecycle/runtime
+ownership; read-only Progress reopens exact durable incarnation without creating
+missing schema. Unknown mutations invalidate every sibling until durable recovery.
+No JavaScript clock or fake native authentication assertion was introduced.
+
+Review exposed and reproduced an accidental authorization freeze in the first
+candidate. Final code separates immutable owner/origin/generation from changing
+authorization revision. Exact active stages remain exact; terminal replacement may
+advance authorization while checked process tickets invalidate older session
+objects. Successful Begin persists the new floor; read-only factory promotion
+alone remains process-local. Complete delegates unchanged canonical pending,
+accepted/conflict and subscription quarantine/new-journal guards.
+
+Final full core125 passed /1 existing ignored; strict all-target Clippy, format
+and diff checks pass. Old frozen candidate's red log:
+`/private/tmp/sdk-bootstrap-auth-transition-red.log`. Final logs:
+`/private/tmp/sdk-bootstrap-facade-auth-{core,clippy}.log`. Generated bindings,
+TypeScript facade, matching platform artifacts/device acceptance and startup
+measurements remain pending. Native clocks assume OS UTC accuracy; authenticated
+transport enforces server expiry. UniFFI incoming allocations precede Rust limits.
+This commit stays local with no public SDK publication or app activation.
