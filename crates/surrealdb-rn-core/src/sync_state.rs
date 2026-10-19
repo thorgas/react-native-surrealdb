@@ -36,8 +36,8 @@ pub(crate) const MAX_IDENTITY_BYTES: usize = 512;
 const MAX_RECORD_ID_BYTES: usize = 1024;
 const MAX_COMPONENT_KEY_BYTES: usize = 1024;
 pub const MAX_SYNC_STATE_BYTES: usize = 4 * 1024 * 1024;
-const MAX_COMPONENT_ITEMS: usize = 16_384;
-const MAX_AGGREGATE_STATE_BYTES: usize = 64 * 1024 * 1024;
+pub(crate) const MAX_COMPONENT_ITEMS: usize = 16_384;
+pub(crate) const MAX_AGGREGATE_STATE_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, SurrealValue)]
 pub(crate) struct ScopeBarrier {
@@ -311,13 +311,19 @@ impl<'a> SyncStateStore<'a> {
         barrier: ScopeBarrier,
     ) -> Result<(), SyncStateError> {
         validate_key(key)?;
+        validate_scope_barrier(Some(&barrier))?;
         let client = self.database.client().await.map_err(SyncStateError::Core)?;
-        client.query("UPSERT $id SET reason = IF reason = 'pending_quarantine_required' OR $reason = 'pending_quarantine_required' THEN 'pending_quarantine_required' ELSE 'needs_new_scope_journal' END, required_scope = $scope, required_subscription_revision = $subscription, required_authorization_revision = $authorization;")
+        let transaction = client.begin().await.map_err(SyncStateError::Database)?;
+        let operation = async {
+        crate::sync_bootstrap_store::guard_barrier_write(&transaction, key).await?;
+        transaction.query("UPSERT $id SET reason = IF reason = 'pending_quarantine_required' OR $reason = 'pending_quarantine_required' THEN 'pending_quarantine_required' ELSE 'needs_new_scope_journal' END, required_scope = $scope, required_subscription_revision = $subscription, required_authorization_revision = $authorization;")
             .bind(("id", scope_barrier_record_id(key)))
             .bind(("reason", barrier.reason)).bind(("scope", barrier.required_scope))
             .bind(("subscription", barrier.required_subscription_revision)).bind(("authorization", barrier.required_authorization_revision))
             .await.map_err(SyncStateError::Database)?.check().map_err(SyncStateError::Database)?;
         Ok(())
+        }.await;
+        finish_transaction(transaction, operation).await
     }
 
     /// Inspect a journal without installing schema, initializing, or migrating it.
@@ -554,10 +560,10 @@ impl<'a> SyncStateStore<'a> {
     }
 }
 
-async fn finish_transaction(
+pub(crate) async fn finish_transaction<T>(
     transaction: Transaction<Any>,
-    operation: Result<SyncStateWrite, SyncStateError>,
-) -> Result<SyncStateWrite, SyncStateError> {
+    operation: Result<T, SyncStateError>,
+) -> Result<T, SyncStateError> {
     match operation {
         Ok(disposition) => transaction
             .commit()
@@ -696,6 +702,83 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
     })
 }
 
+/// Exact normalized payload accounting, including the metadata component.
+pub(crate) fn state_budget(state: &StoredSyncState) -> Result<(usize, usize), SyncStateError> {
+    normalized_budget(&normalize_state(state)?)
+}
+
+fn normalized_budget(rows: &NormalizedRows) -> Result<(usize, usize), SyncStateError> {
+    let bytes = rows
+        .components
+        .values()
+        .try_fold(rows.meta.len(), |sum, bytes| {
+            sum.checked_add(bytes.len())
+                .ok_or(SyncStateError::StateTooLarge)
+        })?;
+    Ok((bytes, rows.components.len() + 1))
+}
+
+/// Deterministic tests drive the same inner transaction as apply_transition_atomic.
+#[cfg(test)]
+pub(crate) async fn test_transition_in_transaction(
+    transaction: &Transaction<Any>,
+    current: &StoredSyncState,
+    next: &StoredSyncState,
+) -> Result<SyncStateWrite, SyncStateError> {
+    let (key, rows) = prepare_state_write(Some(current.revision), next)?;
+    let disposition = replace_v2_in_transaction(
+        transaction,
+        key,
+        Some(current.revision),
+        Some(current),
+        next,
+        &rows,
+    )
+    .await?;
+    if disposition == SyncStateWrite::Applied {
+        apply_projection_diff(
+            transaction,
+            &optimistic_projection(current),
+            &optimistic_projection(next),
+        )
+        .await?;
+    }
+    Ok(disposition)
+}
+
+pub(crate) async fn transaction_state_inventory(
+    transaction: &Transaction<Any>,
+    key: SyncStateKey<'_>,
+) -> Result<(usize, usize), SyncStateError> {
+    #[derive(SurrealValue)]
+    struct Schema {
+        tables: BTreeMap<String, String>,
+    }
+    let mut response = transaction
+        .query("INFO FOR DB")
+        .await
+        .map_err(SyncStateError::Database)?
+        .check()
+        .map_err(SyncStateError::Database)?;
+    let schema: Option<Schema> = response.take(0).map_err(SyncStateError::Database)?;
+    let tables = schema
+        .ok_or(SyncStateError::CorruptState)?
+        .tables
+        .into_keys()
+        .collect();
+    preflight_inspection(transaction, &tables, key).await
+}
+
+pub(crate) async fn transaction_state(
+    transaction: &Transaction<Any>,
+    key: SyncStateKey<'_>,
+) -> Result<StoredSyncState, SyncStateError> {
+    transaction_state_inventory(transaction, key).await?;
+    load_v2(Connection::Transaction(transaction), key)
+        .await?
+        .ok_or(SyncStateError::CorruptState)
+}
+
 fn address(table: &'static str, key: String) -> ComponentAddress {
     ComponentAddress { table, key }
 }
@@ -747,6 +830,9 @@ async fn write_row_diff(
     current: Option<&NormalizedRows>,
     next: &NormalizedRows,
 ) -> Result<(), SyncStateError> {
+    let bootstrap_fence =
+        crate::sync_bootstrap_store::guard_state_write(transaction, key, normalized_budget(next)?)
+            .await?;
     if let Some(current) = current {
         for item in current.components.keys() {
             if !next.components.contains_key(item) {
@@ -785,6 +871,9 @@ async fn write_row_diff(
         .content(row)
         .await
         .map_err(SyncStateError::Database)?;
+    if let Some(fence) = bootstrap_fence {
+        crate::sync_bootstrap_store::write_fence(transaction, key, fence).await?;
+    }
     Ok(())
 }
 
@@ -825,11 +914,11 @@ fn inspection_length_budget(
     Ok(())
 }
 
-async fn preflight_inspection(
+pub(crate) async fn preflight_inspection(
     transaction: &Transaction<Any>,
     tables: &BTreeSet<String>,
     key: SyncStateKey<'_>,
-) -> Result<(), SyncStateError> {
+) -> Result<(usize, usize), SyncStateError> {
     let mut aggregate = 0;
     let mut count = 0;
     for table in [
@@ -912,7 +1001,7 @@ async fn preflight_inspection(
             return Err(SyncStateError::StateTooLarge);
         }
     }
-    Ok(())
+    Ok((aggregate as usize, count + 1))
 }
 
 fn validate_scope_barrier(barrier: Option<&ScopeBarrier>) -> Result<(), SyncStateError> {
@@ -1203,7 +1292,7 @@ fn strictly_sorted<T: Ord>(values: &[T]) -> bool {
     values.windows(2).all(|pair| pair[0] < pair[1])
 }
 
-fn encode_tagged<T: Serialize>(value: &T) -> Result<Vec<u8>, SyncStateError> {
+pub(crate) fn encode_tagged<T: Serialize>(value: &T) -> Result<Vec<u8>, SyncStateError> {
     let value = serde_json::to_value(value).map_err(SyncStateError::Encode)?;
     let bytes = serde_json::to_vec(&tag_json(value)).map_err(SyncStateError::Encode)?;
     if bytes.len() > MAX_SYNC_STATE_BYTES {
@@ -1349,7 +1438,7 @@ fn decode_record(
     Ok(state)
 }
 
-fn validate_key(key: SyncStateKey<'_>) -> Result<(), SyncStateError> {
+pub(crate) fn validate_key(key: SyncStateKey<'_>) -> Result<(), SyncStateError> {
     if key.partition_id.0.len() > MAX_IDENTITY_BYTES || key.client_id.0.len() > MAX_IDENTITY_BYTES {
         return Err(SyncStateError::IdentityTooLarge);
     }
@@ -1409,7 +1498,7 @@ fn record_id(key: SyncStateKey<'_>) -> NativeRecordId {
     )
 }
 
-fn meta_record_id(key: SyncStateKey<'_>) -> NativeRecordId {
+pub(crate) fn meta_record_id(key: SyncStateKey<'_>) -> NativeRecordId {
     NativeRecordId::new(
         META_TABLE,
         Array::from(vec![key.partition_id.0.clone(), key.client_id.0.clone()]),
@@ -1427,7 +1516,9 @@ fn component_record_id(key: SyncStateKey<'_>, item: &ComponentAddress) -> Native
     )
 }
 
-fn native_record_id(record_id: &ProtocolRecordId) -> Result<NativeRecordId, SyncStateError> {
+pub(crate) fn native_record_id(
+    record_id: &ProtocolRecordId,
+) -> Result<NativeRecordId, SyncStateError> {
     if record_id.0.len() > MAX_RECORD_ID_BYTES {
         return Err(SyncStateError::UnsupportedRecordId);
     }

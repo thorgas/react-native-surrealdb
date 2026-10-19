@@ -34,3 +34,26 @@ Task9 on feat/sync-observability-dst-20261016 extends candidate3a1105a. See
 [SYNC_TELEMETRY.md](docs/SYNC_TELEMETRY.md) for verification, APIs and native ABI
 rebuild boundary. Public merge/package publication and production changes remain
 separate. Native status/support reads do not provide atomic application-row snapshots.
+
+
+## Local-only native bootstrap staging foundation (2026-10-19)
+
+Branch `private/bootstrap-staging-20261019` is intentionally local with no remote
+tracking. Public SDK publication is paused pending the user's decision about the
+three previously pushed commits. Do not push this branch or export these sources.
+
+Private Rust-only begin/page/progress/cancel stores exact bounded manifest/pages
+outside confirmed journal data. Per-key rotating incarnation/fence prevents ABA;
+combined stage/current/final reservations are checked before payload decoding.
+Journal and barrier writes participate in the same fence. First-begin barrier
+write intent has real both-order Memory/SurrealKV transaction regressions. Native
+512-byte UTF-8 key limits apply before DB access at all four entrypoints.
+
+Frozen foundation: `/private/tmp/sdk-bootstrap-storage-bench/review-v3-keyguard`.
+Core tests: 88 passed, 1 existing ignored; strict Clippy and formatting pass.
+No ABI/bindings/native artifacts, completion receipt, final install or activation
+are added. Reads fully validate staged/current data; host debug measurements show
+material overhead requiring optimization and later matching-build device proof.
+Evidence: `/private/tmp/sdk-bootstrap-storage-bench/`. Final atomic install must
+verify complete root/context/receipt and commit journal, projection, cursor and
+consumed identity together while preserving newer local pending/accepted intent.
