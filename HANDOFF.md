@@ -57,3 +57,22 @@ material overhead requiring optimization and later matching-build device proof.
 Evidence: `/private/tmp/sdk-bootstrap-storage-bench/`. Final atomic install must
 verify complete root/context/receipt and commit journal, projection, cursor and
 consumed identity together while preserving newer local pending/accepted intent.
+
+
+### Local query consolidation follow-up
+
+Batch scalar inventory statements with unchanged per-table bounds, then reuse
+inspection only within its borrowed transaction. Full payload/canonical/orphan
+checks and normalized budget validation remain. The preflight loader has exactly
+one caller, `InspectedStage::current`; do not bypass this transaction-local proof.
+Final restored source: 88 core passed / 1 existing ignored; strict Clippy, format
+and diff checks pass. Source hashes: `review-v4-opt/sha256.json` in the evidence.
+
+Six alternating source-verified pairs (144 samples/variant/case) in the repeat
+show active progress 25.10 to 17.79 ms and active barrier update 26.43 to 19.23 ms
+medians. Ordinary save 19.24 to 20.14 ms and barrier update 1.39 to 1.47 ms show
+observed slowdowns; their cause remains unresolved. Peer workloads were paused,
+but host load still ranged 66.17 to 125.66. These are host debug memory-engine
+results, not an idle-host causal finding, mobile startup, Release or fsync proof.
+No overall performance win or activation readiness is claimed. Retain all runs
+and uncertainty: `/private/tmp/sdk-bootstrap-storage-opt-bench/quiet-replay/`.

@@ -746,34 +746,12 @@ pub(crate) async fn test_transition_in_transaction(
     Ok(disposition)
 }
 
-pub(crate) async fn transaction_state_inventory(
-    transaction: &Transaction<Any>,
-    key: SyncStateKey<'_>,
-) -> Result<(usize, usize), SyncStateError> {
-    #[derive(SurrealValue)]
-    struct Schema {
-        tables: BTreeMap<String, String>,
-    }
-    let mut response = transaction
-        .query("INFO FOR DB")
-        .await
-        .map_err(SyncStateError::Database)?
-        .check()
-        .map_err(SyncStateError::Database)?;
-    let schema: Option<Schema> = response.take(0).map_err(SyncStateError::Database)?;
-    let tables = schema
-        .ok_or(SyncStateError::CorruptState)?
-        .tables
-        .into_keys()
-        .collect();
-    preflight_inspection(transaction, &tables, key).await
-}
-
-pub(crate) async fn transaction_state(
+/// Caller holds the same transaction-local combined scalar inspection proof.
+/// This still performs the complete existing payload/canonical/orphan validation.
+pub(crate) async fn transaction_state_after_preflight(
     transaction: &Transaction<Any>,
     key: SyncStateKey<'_>,
 ) -> Result<StoredSyncState, SyncStateError> {
-    transaction_state_inventory(transaction, key).await?;
     load_v2(Connection::Transaction(transaction), key)
         .await?
         .ok_or(SyncStateError::CorruptState)
@@ -919,8 +897,8 @@ pub(crate) async fn preflight_inspection(
     tables: &BTreeSet<String>,
     key: SyncStateKey<'_>,
 ) -> Result<(usize, usize), SyncStateError> {
-    let mut aggregate = 0;
-    let mut count = 0;
+    let mut statements = Vec::new();
+    let mut selected = Vec::new();
     for table in [
         META_TABLE,
         STATE_TABLE,
@@ -944,44 +922,47 @@ pub(crate) async fn preflight_inspection(
         let projection = format!(
             "SELECT bytes::len(payload) AS payload_bytes, bytes::len(<bytes>encoding::json::encode(partition_id)) AS partition_bytes, bytes::len(<bytes>encoding::json::encode(client_id)) AS client_bytes, {key_expression} AS key_bytes"
         );
-        let statement = if component {
-            format!(
-                "{projection} FROM {table} WHERE partition_id = $partition_id AND client_id = $client_id LIMIT 16385"
-            )
-        } else {
-            format!("{projection} FROM $id")
-        };
-        let mut response = transaction
-            .query(statement)
-            .bind(("partition_id", key.partition_id.0.clone()))
-            .bind(("client_id", key.client_id.0.clone()))
-            .bind((
-                "id",
-                if table == STATE_TABLE {
-                    record_id(key)
-                } else {
-                    meta_record_id(key)
-                },
-            ))
-            .await
-            .map_err(SyncStateError::Database)?
-            .check()
-            .map_err(SyncStateError::Database)?;
-        let rows: Vec<InspectionLengths> = response.take(0).map_err(SyncStateError::Database)?;
+        statements.push(if component { format!("{projection} FROM {table} WHERE partition_id = $partition_id AND client_id = $client_id LIMIT 16385") } else if table == STATE_TABLE { format!("{projection} FROM $legacy_id") } else { format!("{projection} FROM $meta_id") });
+        selected.push((table, component));
+    }
+    let has_barrier = tables.contains("_sync_client_scope_barrier");
+    if has_barrier {
+        statements.push("SELECT bytes::len(<bytes>encoding::json::encode(reason)) AS reason_bytes, bytes::len(<bytes>encoding::json::encode(required_scope)) AS scope_bytes, bytes::len(<bytes>encoding::json::encode(required_subscription_revision)) AS subscription_bytes, bytes::len(<bytes>encoding::json::encode(required_authorization_revision)) AS authorization_bytes FROM $barrier_id".into());
+    }
+    if statements.is_empty() {
+        return Ok((0, 1));
+    }
+    // Only scalar metadata is batched. Each table retains its prior returned-row
+    // cap; returned metadata is bounded by the fixed table count times that cap,
+    // not by a claim about scanned rows, CPU, or constant RSS. No blobs are loaded.
+    let mut response = transaction
+        .query(statements.join(";"))
+        .bind(("partition_id", key.partition_id.0.clone()))
+        .bind(("client_id", key.client_id.0.clone()))
+        .bind(("meta_id", meta_record_id(key)))
+        .bind(("legacy_id", record_id(key)))
+        .bind(("barrier_id", scope_barrier_record_id(key)))
+        .await
+        .map_err(SyncStateError::Database)?
+        .check()
+        .map_err(SyncStateError::Database)?;
+    let mut aggregate = 0;
+    let mut count = 0;
+    for (index, (table, component)) in selected.iter().enumerate() {
+        let rows: Vec<InspectionLengths> =
+            response.take(index).map_err(SyncStateError::Database)?;
         for row in rows {
-            if table == STATE_TABLE {
+            if *table == STATE_TABLE {
                 if row.key_bytes > 6 * 20 + 2 {
                     return Err(SyncStateError::StateTooLarge);
                 }
-                // A migrated sentinel is additional to the current format's budget;
-                // a genuine legacy journal has its own stricter 4 MiB envelope.
                 inspection_length_budget(&row, false, &mut 0, &mut 0)?;
             } else {
-                inspection_length_budget(&row, component, &mut aggregate, &mut count)?;
+                inspection_length_budget(&row, *component, &mut aggregate, &mut count)?;
             }
         }
     }
-    if tables.contains("_sync_client_scope_barrier") {
+    if has_barrier {
         #[derive(SurrealValue)]
         struct BarrierLengths {
             reason_bytes: u64,
@@ -989,9 +970,9 @@ pub(crate) async fn preflight_inspection(
             subscription_bytes: u64,
             authorization_bytes: u64,
         }
-        let mut response = transaction.query("SELECT bytes::len(<bytes>encoding::json::encode(reason)) AS reason_bytes, bytes::len(<bytes>encoding::json::encode(required_scope)) AS scope_bytes, bytes::len(<bytes>encoding::json::encode(required_subscription_revision)) AS subscription_bytes, bytes::len(<bytes>encoding::json::encode(required_authorization_revision)) AS authorization_bytes FROM $id")
-            .bind(("id", scope_barrier_record_id(key))).await.map_err(SyncStateError::Database)?.check().map_err(SyncStateError::Database)?;
-        let rows: Vec<BarrierLengths> = response.take(0).map_err(SyncStateError::Database)?;
+        let rows: Vec<BarrierLengths> = response
+            .take(selected.len())
+            .map_err(SyncStateError::Database)?;
         if rows.iter().any(|row| {
             row.reason_bytes > 6 * 32 + 2
                 || row.scope_bytes > (6 * MAX_IDENTITY_BYTES + 2) as u64

@@ -16,7 +16,6 @@ use crate::SurrealDatabase;
 use crate::sync_state::{
     MAX_AGGREGATE_STATE_BYTES, MAX_COMPONENT_ITEMS, MAX_SYNC_STATE_BYTES, SyncStateError,
     SyncStateKey, encode_tagged, finish_transaction, meta_record_id, state_budget,
-    transaction_state,
 };
 
 const HEADER: &str = "_sync_bootstrap_header";
@@ -77,6 +76,20 @@ struct Stage {
     pages: BTreeMap<u64, Vec<u8>>,
 }
 
+// This proof cannot outlive or switch its read/write transaction. Construction
+// performs combined scalar admission before any stored stage/current blob load.
+struct InspectedStage<'a> {
+    transaction: &'a Transaction<Any>,
+    key: SyncStateKey<'a>,
+    current_budget: (usize, usize),
+    stage: Option<Stage>,
+}
+impl InspectedStage<'_> {
+    async fn current(&self) -> Result<crate::sync_state::StoredSyncState, SyncStateError> {
+        crate::sync_state::transaction_state_after_preflight(self.transaction, self.key).await
+    }
+}
+
 pub(crate) struct BootstrapStore<'a> {
     database: &'a SurrealDatabase,
 }
@@ -131,10 +144,9 @@ impl<'a> BootstrapStore<'a> {
                 .map_err(SyncStateError::Database)?;
             // Combined persisted stage/current scalar admission MUST precede any
             // current-state payload decoding, including on exact begin retry.
-            let existing = load_stage(&transaction, key).await?;
-            if existing.is_none() {
-                let current =
-                    crate::sync_state::transaction_state_inventory(&transaction, key).await?;
+            let inspection = inspect_stage(&transaction, key).await?;
+            if inspection.stage.is_none() {
+                let current = inspection.current_budget;
                 let incoming = start.len() + manifest.len();
                 if current
                     .0
@@ -151,7 +163,8 @@ impl<'a> BootstrapStore<'a> {
                     return Err(SyncStateError::StateTooLarge);
                 }
             }
-            let state = transaction_state(&transaction, key).await?;
+            let state = inspection.current().await?;
+            let existing = inspection.stage;
             check_barrier(&transaction, key).await?;
             if read_fence(&transaction, key).await?.is_none() {
                 fence_first_barrier(&transaction, key, &decoded.context).await?;
@@ -229,8 +242,10 @@ impl<'a> BootstrapStore<'a> {
             let fence = read_fence(&transaction, key)
                 .await?
                 .ok_or(SyncStateError::CorruptState)?;
-            let mut stage = load_stage(&transaction, key)
-                .await?
+            let mut inspection = inspect_stage(&transaction, key).await?;
+            let mut stage = inspection
+                .stage
+                .take()
                 .ok_or(SyncStateError::CorruptState)?;
             validate_header(&stage.header.start, &stage.manifest, expected)?;
             if parse_fence(&stage.header.incarnation)? != incarnation {
@@ -249,7 +264,7 @@ impl<'a> BootstrapStore<'a> {
                 };
             }
             stage.pages.insert(page.index, raw.to_vec());
-            let state = transaction_state(&transaction, key).await?;
+            let state = inspection.current().await?;
             check_budget(key, state_budget(&state)?, &stage)?;
             let row = PageRow {
                 format_version: 1,
@@ -291,7 +306,8 @@ impl<'a> BootstrapStore<'a> {
             if read_fence(&transaction, key).await?.is_none() {
                 return Ok(None);
             }
-            let Some(stage) = load_stage(&transaction, key).await? else {
+            let mut inspection = inspect_stage(&transaction, key).await?;
+            let Some(stage) = inspection.stage.take() else {
                 return Ok(None);
             };
             validate_header(&stage.header.start, &stage.manifest, expected)?;
@@ -301,7 +317,7 @@ impl<'a> BootstrapStore<'a> {
             if stage.header.cancelled {
                 return Ok(None);
             }
-            let state = transaction_state(&transaction, key).await?;
+            let state = inspection.current().await?;
             check_budget(key, state_budget(&state)?, &stage)?;
             Ok(Some(stage.pages.keys().copied().collect()))
         }
@@ -621,16 +637,18 @@ pub(crate) async fn guard_barrier_write(
     key: SyncStateKey<'_>,
 ) -> Result<(), SyncStateError> {
     let Some(fence) = read_fence(transaction, key).await? else {
-        // Bootstrap-only barrier-key fencing remains under review. No speculative
-        // mutation of legacy metadata is permitted in this pre-bootstrap path.
+        // First begin itself writes the barrier-key intent, so the ordinary
+        // pre-bootstrap barrier path needs no legacy metadata mutation.
         return Ok(());
     };
-    let stage = load_stage(transaction, key)
-        .await?
+    let inspection = inspect_stage(transaction, key).await?;
+    let stage = inspection
+        .stage
+        .as_ref()
         .ok_or(SyncStateError::CorruptState)?;
-    let state = transaction_state(transaction, key).await?;
+    let state = inspection.current().await?;
     if parse_metadata_fence(&fence)?.1 {
-        check_budget(key, state_budget(&state)?, &stage)?;
+        check_budget(key, state_budget(&state)?, stage)?;
     } else {
         if !stage.header.cancelled {
             return Err(SyncStateError::CorruptState);
@@ -725,6 +743,13 @@ async fn load_stage(
     transaction: &Transaction<Any>,
     key: SyncStateKey<'_>,
 ) -> Result<Option<Stage>, SyncStateError> {
+    Ok(inspect_stage(transaction, key).await?.stage)
+}
+
+async fn inspect_stage<'a>(
+    transaction: &'a Transaction<Any>,
+    key: SyncStateKey<'a>,
+) -> Result<InspectedStage<'a>, SyncStateError> {
     let mut response = transaction
         .query("INFO FOR DB")
         .await
@@ -773,7 +798,12 @@ async fn load_stage(
         .map_err(SyncStateError::Database)?;
     let Some(header) = header else {
         return if pages.is_empty() {
-            Ok(None)
+            Ok(InspectedStage {
+                transaction,
+                key,
+                current_budget: current,
+                stage: None,
+            })
         } else {
             Err(SyncStateError::CorruptState)
         };
@@ -807,11 +837,16 @@ async fn load_stage(
             return Err(SyncStateError::CorruptState);
         }
     }
-    Ok(Some(Stage {
-        header,
-        manifest,
-        pages,
-    }))
+    Ok(InspectedStage {
+        transaction,
+        key,
+        current_budget: current,
+        stage: Some(Stage {
+            header,
+            manifest,
+            pages,
+        }),
+    })
 }
 
 #[cfg(test)]
