@@ -418,77 +418,7 @@ impl<'a> SyncStateStore<'a> {
         validate_key(key)?;
         let client = self.database.client().await.map_err(SyncStateError::Core)?;
         let transaction = client.begin().await.map_err(SyncStateError::Database)?;
-        let result = async {
-            #[derive(SurrealValue)]
-            struct Schema {
-                tables: BTreeMap<String, String>,
-            }
-            let response = transaction
-                .query("INFO FOR DB")
-                .await
-                .map_err(SyncStateError::Database)?;
-            let mut response = match response.check() {
-                Ok(response) => response,
-                Err(error)
-                    if matches!(
-                        error.not_found_details(),
-                        Some(
-                            surrealdb::types::NotFoundError::Namespace { .. }
-                                | surrealdb::types::NotFoundError::Database { .. }
-                        )
-                    ) =>
-                {
-                    return Ok((None, None));
-                }
-                Err(error) => return Err(SyncStateError::Database(error)),
-            };
-            let schema: Option<Schema> = response.take(0).map_err(SyncStateError::Database)?;
-            let tables: BTreeSet<String> = schema
-                .ok_or(SyncStateError::CorruptState)?
-                .tables
-                .into_keys()
-                .collect();
-            preflight_inspection(&transaction, &tables, key).await?;
-            let state = load_v2(Connection::Inspection(&transaction, &tables), key).await?;
-            let legacy: Option<StoredRecord> = if tables.contains(STATE_TABLE) {
-                transaction
-                    .select(record_id(key))
-                    .await
-                    .map_err(SyncStateError::Database)?
-            } else {
-                None
-            };
-            let state = match (state, legacy) {
-                (Some(state), Some(sentinel)) => {
-                    if sentinel.format_version != FORMAT_VERSION
-                        || sentinel.partition_id != key.partition_id.0
-                        || sentinel.client_id != key.client_id.0
-                        || sentinel.payload.as_ref() != MIGRATED_SENTINEL
-                        || parse_revision(&sentinel.revision)? > state.revision
-                    {
-                        return Err(SyncStateError::CorruptState);
-                    }
-                    Some(state)
-                }
-                (Some(state), None) => Some(state),
-                (None, Some(legacy)) => Some(decode_record(key, legacy)?),
-                (None, None) => None,
-            };
-            let barrier: Option<ScopeBarrier> = if tables.contains("_sync_client_scope_barrier") {
-                transaction
-                    .select(scope_barrier_record_id(key))
-                    .await
-                    .map_err(SyncStateError::Database)?
-            } else {
-                None
-            };
-            validate_scope_barrier(barrier.as_ref())?;
-            if state.is_none() && barrier.is_some() {
-                return Err(SyncStateError::CorruptState);
-            }
-            Ok((state, barrier))
-        }
-        .await;
+        let result = inspect_transaction(&transaction, key).await;
         // Cancellation failure is an error even if the reads succeeded.
         transaction
             .cancel()
@@ -1564,6 +1494,144 @@ fn parse_revision(revision: &str) -> Result<u64, SyncStateError> {
     }
     Ok(parsed)
 }
+
+/// No-init coherent read for callers already holding the database lifecycle guard.
+pub(crate) async fn inspect_transaction(
+    transaction: &Transaction<Any>,
+    key: SyncStateKey<'_>,
+) -> Result<(Option<StoredSyncState>, Option<ScopeBarrier>), SyncStateError> {
+    validate_key(key)?;
+    #[derive(SurrealValue)]
+    struct Schema {
+        tables: BTreeMap<String, String>,
+    }
+    let response = transaction
+        .query("INFO FOR DB")
+        .await
+        .map_err(SyncStateError::Database)?;
+    let mut response = match response.check() {
+        Ok(response) => response,
+        Err(error)
+            if matches!(
+                error.not_found_details(),
+                Some(
+                    surrealdb::types::NotFoundError::Namespace { .. }
+                        | surrealdb::types::NotFoundError::Database { .. }
+                )
+            ) =>
+        {
+            return Ok((None, None));
+        }
+        Err(error) => return Err(SyncStateError::Database(error)),
+    };
+    let schema: Option<Schema> = response.take(0).map_err(SyncStateError::Database)?;
+    let tables: BTreeSet<String> = schema
+        .ok_or(SyncStateError::CorruptState)?
+        .tables
+        .into_keys()
+        .collect();
+    inspect_known_tables(transaction, &tables, key).await
+}
+
+/// Reuse admitted metadata without fetching schema definition strings again.
+pub(crate) async fn inspect_known_tables(
+    transaction: &Transaction<Any>,
+    tables: &BTreeSet<String>,
+    key: SyncStateKey<'_>,
+) -> Result<(Option<StoredSyncState>, Option<ScopeBarrier>), SyncStateError> {
+    validate_key(key)?;
+    preflight_inspection(transaction, tables, key).await?;
+    let state = load_v2(Connection::Inspection(transaction, tables), key).await?;
+    let legacy: Option<StoredRecord> = if tables.contains(STATE_TABLE) {
+        transaction
+            .select(record_id(key))
+            .await
+            .map_err(SyncStateError::Database)?
+    } else {
+        None
+    };
+    let state = match (state, legacy) {
+        (Some(state), Some(sentinel)) => {
+            if sentinel.format_version != FORMAT_VERSION
+                || sentinel.partition_id != key.partition_id.0
+                || sentinel.client_id != key.client_id.0
+                || sentinel.payload.as_ref() != MIGRATED_SENTINEL
+                || parse_revision(&sentinel.revision)? > state.revision
+            {
+                return Err(SyncStateError::CorruptState);
+            }
+            Some(state)
+        }
+        (Some(state), None) => Some(state),
+        (None, Some(legacy)) => Some(decode_record(key, legacy)?),
+        (None, None) => None,
+    };
+    let barrier: Option<ScopeBarrier> = if tables.contains("_sync_client_scope_barrier") {
+        transaction
+            .select(scope_barrier_record_id(key))
+            .await
+            .map_err(SyncStateError::Database)?
+    } else {
+        None
+    };
+    validate_scope_barrier(barrier.as_ref())?;
+    if state.is_none() && barrier.is_some() {
+        return Err(SyncStateError::CorruptState);
+    }
+    Ok((state, barrier))
+}
+
+/// Whole-store ownership admission, before any journal payload is fetched.
+pub(crate) async fn inspect_all_owners(
+    transaction: &Transaction<Any>,
+    tables: &BTreeSet<String>,
+    key: SyncStateKey<'_>,
+) -> Result<bool, SyncStateError> {
+    let mut occupied = false;
+    for table in JOURNAL_TABLES {
+        if !tables.contains(*table) {
+            continue;
+        }
+        let component = !matches!(
+            *table,
+            STATE_TABLE | META_TABLE | "_sync_client_scope_barrier"
+        );
+        let owner = if *table == "_sync_client_scope_barrier" {
+            "record::id(id) = [$partition,$client]".to_owned()
+        } else {
+            let suffix = if component { ",component_key" } else { "" };
+            let component_guard = if component {
+                " AND type::is_string(component_key) AND string::len(component_key) > 0 AND bytes::len(<bytes>component_key) <= 1024"
+            } else {
+                ""
+            };
+            format!(
+                "type::is_string(partition_id) AND type::is_string(client_id) AND partition_id=$partition AND client_id=$client AND record::id(id)=[$partition,$client{suffix}]{component_guard}"
+            )
+        };
+        let mut response = transaction.query(format!("SELECT VALUE true FROM {table} WHERE NOT ({owner}) LIMIT 1; SELECT VALUE true FROM {table} LIMIT 1"))
+            .bind(("partition", key.partition_id.0.clone())).bind(("client", key.client_id.0.clone()))
+            .await.map_err(SyncStateError::Database)?.check().map_err(SyncStateError::Database)?;
+        let foreign: Vec<bool> = response.take(0).map_err(SyncStateError::Database)?;
+        let present: Vec<bool> = response.take(1).map_err(SyncStateError::Database)?;
+        if !foreign.is_empty() {
+            return Err(SyncStateError::CorruptState);
+        }
+        occupied |= !present.is_empty();
+    }
+    Ok(occupied)
+}
+
+pub(crate) const JOURNAL_TABLES: &[&str] = &[
+    STATE_TABLE,
+    META_TABLE,
+    CONFIRMED_TABLE,
+    OUTBOX_TABLE,
+    OUTCOME_TABLE,
+    ID_MAP_TABLE,
+    SUBSCRIPTION_RECORD_TABLE,
+    "_sync_client_scope_barrier",
+];
 
 fn record_id(key: SyncStateKey<'_>) -> NativeRecordId {
     NativeRecordId::new(

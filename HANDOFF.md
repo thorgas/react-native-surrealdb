@@ -247,3 +247,24 @@ Prettier, Bobmodule+declarations and whitespace checks passed. Actual red/green
 logs and source snapshot are at `/private/tmp/sdk-bootstrap-redaction-review/`.
 Only facade/test and this documentation changed since the postsettlement freeze;
 generated binding/Rust bytes are unchanged, and no Cargo work was needed.
+
+## Internal whole-storage ownership inspector (2026-10-19)
+
+Accepted six-file frozen inspector patch d80bc0db4724db7bc4a1cfceb64c1048f3e5aff75ab9f17a07752feccf4eb3ff.
+Rust-only no-init observation now distinguishes pristine unselected metadata from
+selected app occupancy and exact native journal state, rejecting foreign/alias/
+orphan/malformed layouts across all ten fixed native tables. Lifecycle WRITE,
+session and sticky settlement-poison checks prevent unsafe concurrent observation.
+No exported ABI, marker policy, repair, deletion or app activation is included.
+See READ_STORAGE_INSPECTION.md for the ROOT postdecode metadata exception and
+physical-work limits. The observation is not a future-write lease.
+
+Canonical exact frozen hashes were verified and Rust source mtimes refreshed;
+CargoJSON fresh:false and canonical manifest were verified before immutable
+executable copy/hash and listing13 inspector tests plus2 bootstrap regressions.
+146 core tests passed,2 existing explicit cases ignored; explicit SurrealKV reopen
+passed1/0skip. All-target warning-denied Clippy, format and diff checks passed.
+Logs/provenance: /private/tmp/haus-inspector-canonical-{build.log,artifacts.jsonl,
+provenance.json,tests.log,persistent.log,clippy.log}. Persistent fixture retained at
+/private/tmp/haus-inspector-canonical-persistent. Matching rebuilt iOS/Android
+acceptance remains required; no SDK public push is authorized pending user choice.

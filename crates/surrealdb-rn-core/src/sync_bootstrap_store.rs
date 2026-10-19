@@ -1156,6 +1156,59 @@ fn page_id(key: SyncStateKey<'_>, index: u64) -> RecordId {
     )
 }
 
+/// Whole-physical-store no-init bootstrap ownership and codec admission.
+/// Terminal header authorization may predate current journal authorization.
+pub(crate) async fn inspect_all_owners(
+    transaction: &Transaction<Any>,
+    tables: &BTreeSet<String>,
+    key: SyncStateKey<'_>,
+) -> Result<bool, SyncStateError> {
+    if tables.contains(HEADER) != tables.contains(PAGE) {
+        return Err(SyncStateError::CorruptState);
+    }
+    let mut occupied = false;
+    for table in [HEADER, PAGE] {
+        if !tables.contains(table) {
+            continue;
+        }
+        let predicate = if table == HEADER {
+            "record::id(id)=[$partition,$client]"
+        } else {
+            "type::is_string(partition_id) AND type::is_string(client_id) AND partition_id=$partition AND client_id=$client AND type::is_string(index) AND string::len(index) <= 20 AND record::id(id)=[$partition,$client,index]"
+        };
+        let mut response = transaction.query(format!("SELECT VALUE true FROM {table} WHERE NOT ({predicate}) LIMIT 1; SELECT VALUE true FROM {table} LIMIT 1"))
+            .bind(("partition", key.partition_id.0.clone())).bind(("client", key.client_id.0.clone()))
+            .await.map_err(SyncStateError::Database)?.check().map_err(SyncStateError::Database)?;
+        let foreign: Vec<bool> = response.take(0).map_err(SyncStateError::Database)?;
+        let present: Vec<bool> = response.take(1).map_err(SyncStateError::Database)?;
+        if !foreign.is_empty() {
+            return Err(SyncStateError::CorruptState);
+        }
+        occupied |= !present.is_empty();
+    }
+    if !occupied
+        && tables.contains("_sync_client_meta")
+        && read_fence(transaction, key).await?.is_some()
+    {
+        return Err(SyncStateError::CorruptState);
+    }
+    if occupied {
+        if !tables.contains(HEADER) || !tables.contains(PAGE) {
+            return Err(SyncStateError::CorruptState);
+        }
+        let inspected = inspect_stage_with_tables(transaction, key, tables).await?;
+        let stage = inspected.stage.ok_or(SyncStateError::CorruptState)?;
+        for (index, bytes) in &stage.pages {
+            let page = decode_bootstrap_page(bytes).map_err(|_| SyncStateError::CorruptState)?;
+            if page.index != *index {
+                return Err(SyncStateError::CorruptState);
+            }
+            validate_page(&stage.manifest, &page)?;
+        }
+    }
+    Ok(occupied)
+}
+
 async fn load_stage(
     transaction: &Transaction<Any>,
     key: SyncStateKey<'_>,
@@ -1175,7 +1228,14 @@ async fn inspect_stage<'a>(
         .map_err(SyncStateError::Database)?;
     let schema: Option<Schema> = response.take(0).map_err(SyncStateError::Database)?;
     let schema = schema.ok_or(SyncStateError::CorruptState)?;
-    if !schema.tables.contains_key(HEADER) || !schema.tables.contains_key(PAGE) {
+    inspect_stage_with_tables(transaction, key, &schema.tables.into_keys().collect()).await
+}
+async fn inspect_stage_with_tables<'a>(
+    transaction: &'a Transaction<Any>,
+    key: SyncStateKey<'a>,
+    tables: &BTreeSet<String>,
+) -> Result<InspectedStage<'a>, SyncStateError> {
+    if !tables.contains(HEADER) || !tables.contains(PAGE) {
         return Err(SyncStateError::CorruptState);
     }
     // Scalars first, including header bytes. No unbounded blob is fetched before this guard.
@@ -1183,12 +1243,7 @@ async fn inspect_stage<'a>(
         .bind(("header", header_id(key))).bind(("partition", key.partition_id.0.clone())).bind(("client", key.client_id.0.clone())).await.map_err(SyncStateError::Database)?.check().map_err(SyncStateError::Database)?;
     let headers: Vec<Lengths> = lengths.take(0).map_err(SyncStateError::Database)?;
     let pages: Vec<Lengths> = lengths.take(1).map_err(SyncStateError::Database)?;
-    let current = crate::sync_state::preflight_inspection(
-        transaction,
-        &schema.tables.into_keys().collect(),
-        key,
-    )
-    .await?;
+    let current = crate::sync_state::preflight_inspection(transaction, tables, key).await?;
     let mut aggregate = 0usize;
     for row in headers.iter().chain(&pages) {
         if !row.canonical {
@@ -3104,5 +3159,76 @@ mod tests {
             Some(*installed)
         );
         db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn whole_storage_accepts_staging_and_terminal_header_with_older_authorization() {
+        use crate::sync_storage_inspection::{NativeStorageInspectionOptions, inspect_storage};
+        let db = database().await;
+        let initial = initialized(&db).await;
+        let (start, manifest, context, pages) = wire("whole-storage");
+        let stage = BootstrapStore::new(&db);
+        let handle = stage.begin(&start, &manifest, &context).await.unwrap();
+        stage.stage_page(&pages[0], &context, handle).await.unwrap();
+        let options = || NativeStorageInspectionOptions {
+            namespace: "bootstrap".into(),
+            database: "bootstrap".into(),
+            expected_journal: crate::sync_client::NativeSyncOpenOptions {
+                partition_id: "partition".into(),
+                client_id: "client".into(),
+                requested_scope: "all".into(),
+                subscription_revision: 1,
+            },
+            application_tables: vec!["item".into()],
+        };
+        assert!(inspect_storage(&db, options()).await.is_ok());
+        stage.cancel(&manifest, &context, handle).await.unwrap();
+        let mut current = initial;
+        current.revision += 1;
+        let mut scope = context.scope.clone();
+        scope.authorization_revision += 1;
+        current.checkpoint = Some(surrealdb_sync_protocol::Checkpoint {
+            token: surrealdb_sync_protocol::OpaqueCheckpoint("new-current".into()),
+            cursor: Cursor {
+                epoch: 1,
+                sequence: 1,
+            },
+            scope,
+        });
+        SyncStateStore::new(&db)
+            .save_atomic(Some(0), &current)
+            .await
+            .unwrap();
+        assert!(inspect_storage(&db, options()).await.is_ok());
+    }
+    #[tokio::test]
+    async fn whole_storage_rejects_orphan_bootstrap_fence_even_without_stage_tables() {
+        let db = database().await;
+        let state = initialized(&db).await;
+        let key = SyncStateKey::new(&state.partition_id, &state.client_id);
+        db.client()
+            .await
+            .unwrap()
+            .query("DEFINE FIELD bootstrap_fence ON _sync_client_meta TYPE option<string>; UPDATE $id SET bootstrap_fence='1:i'")
+            .bind(("id", meta_record_id(key)))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        let options = crate::sync_storage_inspection::NativeStorageInspectionOptions {
+            namespace: "bootstrap".into(),
+            database: "bootstrap".into(),
+            expected_journal: crate::sync_client::NativeSyncOpenOptions {
+                partition_id: "partition".into(),
+                client_id: "client".into(),
+                requested_scope: "all".into(),
+                subscription_revision: 1,
+            },
+            application_tables: vec!["item".into()],
+        };
+        assert!(
+            crate::sync_storage_inspection::inspect_storage(&db, options)
+                .await
+                .is_err()
+        );
     }
 }

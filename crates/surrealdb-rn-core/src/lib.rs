@@ -12,6 +12,7 @@ pub mod sync_diagnostics;
 mod sync_http_codec;
 mod sync_read;
 pub mod sync_state;
+mod sync_storage_inspection;
 mod sync_subscription;
 mod wire;
 

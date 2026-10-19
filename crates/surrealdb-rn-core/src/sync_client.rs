@@ -197,8 +197,12 @@ pub(crate) struct RuntimeRegistry {
     lifecycle_read_arrived: Mutex<Option<Arc<tokio::sync::Notify>>>,
 }
 impl RuntimeRegistry {
-    fn is_poisoned(&self) -> bool {
+    pub(crate) fn is_poisoned(&self) -> bool {
         self.poison_all.load(Ordering::Acquire)
+    }
+    #[cfg(test)]
+    pub(crate) fn poison_for_test(&self) {
+        self.poison();
     }
     fn poison(&self) {
         self.poison_all.store(true, Ordering::Release);
