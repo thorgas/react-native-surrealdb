@@ -718,9 +718,9 @@ fn normalized_budget(rows: &NormalizedRows) -> Result<(usize, usize), SyncStateE
     Ok((bytes, rows.components.len() + 1))
 }
 
-/// Deterministic tests drive the same inner transaction as apply_transition_atomic.
-#[cfg(test)]
-pub(crate) async fn test_transition_in_transaction(
+/// Private composition: caller owns the transaction and has scalar-admitted its journal.
+/// Does not begin/commit; projection failure rolls back with every other caller write.
+pub(crate) async fn apply_transition_in_transaction(
     transaction: &Transaction<Any>,
     current: &StoredSyncState,
     next: &StoredSyncState,
@@ -744,6 +744,16 @@ pub(crate) async fn test_transition_in_transaction(
         .await?;
     }
     Ok(disposition)
+}
+
+/// Deterministic tests drive the same inner transaction as apply_transition_atomic.
+#[cfg(test)]
+pub(crate) async fn test_transition_in_transaction(
+    transaction: &Transaction<Any>,
+    current: &StoredSyncState,
+    next: &StoredSyncState,
+) -> Result<SyncStateWrite, SyncStateError> {
+    apply_transition_in_transaction(transaction, current, next).await
 }
 
 /// Caller holds the same transaction-local combined scalar inspection proof.
@@ -1610,6 +1620,20 @@ mod tests {
         .unwrap()
     }
 
+    fn structural_root(value: Option<Value>) -> Option<Value> {
+        value.map(|mut value| {
+            if let Value::Object(root) = &mut value {
+                // Exclude only the two observed volatile INFO counters, preserving
+                // every other field (including unknown/new system metadata).
+                if let Some(Value::Object(system)) = root.get_mut("system") {
+                    system.remove("cpu_usage");
+                    system.remove("memory_usage");
+                }
+            }
+            value
+        })
+    }
+
     #[tokio::test]
     async fn inspection_missing_and_legacy_never_install_or_migrate() {
         let database = memory_database().await;
@@ -1635,7 +1659,24 @@ mod tests {
             .unwrap()
             .take::<Option<Value>>(0)
             .unwrap();
-        assert_eq!(before, after);
+        assert_eq!(structural_root(before.clone()), structural_root(after));
+        client
+            .query("DEFINE NAMESPACE unexpected_schema_mutation")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        let changed = client
+            .query("INFO FOR ROOT")
+            .await
+            .unwrap()
+            .take::<Option<Value>>(0)
+            .unwrap();
+        assert_ne!(
+            structural_root(before),
+            structural_root(changed),
+            "structural namespace changes must remain visible"
+        );
         // A genuine v1-only schema: no normalized tables are defined.
         client
             .query("DEFINE TABLE _sync_client_state SCHEMALESS")

@@ -1,4 +1,5 @@
-//! Dormant private bootstrap storage. Pages never become confirmed/readable here.
+//! Dormant private bootstrap storage. Only verified complete publishes durable projection;
+//! no public/native runtime activation or observer publication is exposed here.
 //! Encoded reservations are deliberately conservative; they do not bound RSS or DB scans.
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -8,8 +9,9 @@ use surrealdb::types::{Array, Bytes, RecordId, SurrealValue, Value};
 use surrealdb_sync_protocol::RecordState;
 use surrealdb_sync_protocol::bootstrap::{BootstrapContext, BootstrapManifest, BootstrapPage};
 use surrealdb_sync_protocol::bootstrap_codec::{
-    bootstrap_manifest_digest, decode_bootstrap_manifest, decode_bootstrap_page,
-    decode_bootstrap_start, validate_bootstrap_manifest_context,
+    BootstrapVerifier, bootstrap_manifest_digest, decode_bootstrap_manifest, decode_bootstrap_page,
+    decode_bootstrap_receipt, decode_bootstrap_start, validate_bootstrap_manifest_context,
+    validate_bootstrap_receipt,
 };
 
 use crate::SurrealDatabase;
@@ -31,6 +33,8 @@ DEFINE FIELD IF NOT EXISTS start ON _sync_bootstrap_header TYPE bytes;
 DEFINE FIELD IF NOT EXISTS manifest ON _sync_bootstrap_header TYPE bytes;
 DEFINE FIELD IF NOT EXISTS cancelled ON _sync_bootstrap_header TYPE bool;
 DEFINE FIELD IF NOT EXISTS incarnation ON _sync_bootstrap_header TYPE string;
+DEFINE FIELD IF NOT EXISTS consumed_receipt ON _sync_bootstrap_header TYPE option<bytes>;
+DEFINE FIELD IF NOT EXISTS consumed_revision ON _sync_bootstrap_header TYPE option<string>;
 DEFINE TABLE IF NOT EXISTS _sync_bootstrap_page SCHEMAFULL PERMISSIONS NONE;
 DEFINE FIELD IF NOT EXISTS format_version ON _sync_bootstrap_page TYPE int;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_bootstrap_page TYPE string;
@@ -47,6 +51,8 @@ struct Header {
     incarnation: String,
     start: Bytes,
     manifest: Bytes,
+    consumed_receipt: Option<Bytes>,
+    consumed_revision: Option<String>,
 }
 #[derive(SurrealValue)]
 struct PageRow {
@@ -88,6 +94,38 @@ impl InspectedStage<'_> {
     async fn current(&self) -> Result<crate::sync_state::StoredSyncState, SyncStateError> {
         crate::sync_state::transaction_state_after_preflight(self.transaction, self.key).await
     }
+}
+
+/// Supplied by authenticated composition on EACH completion attempt (including restart).
+/// UTC must be independently trusted; monotonic deadline bounds verification stalls.
+pub(crate) struct CompletionClock<'a> {
+    pub(crate) utc_seconds: &'a dyn Fn() -> Result<u64, SyncStateError>,
+    pub(crate) deadline: std::time::Instant,
+}
+impl CompletionClock<'_> {
+    fn check(&self, expires_at: u64) -> Result<(), SyncStateError> {
+        let now = std::time::Instant::now();
+        if now >= self.deadline
+            || self.deadline.duration_since(now) > std::time::Duration::from_secs(30)
+            || (self.utc_seconds)()? >= expires_at
+        {
+            return Err(SyncStateError::RevisionConflict);
+        }
+        Ok(())
+    }
+}
+#[derive(Debug)]
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "Dormant private completion until reviewed runtime publication"
+    )
+)]
+pub(crate) enum Completion {
+    Applied(Box<crate::sync_state::StoredSyncState>),
+    /// Historical success identity ONLY: never publish a prepared historical runtime.
+    HistoricalSuccess,
 }
 
 pub(crate) struct BootstrapStore<'a> {
@@ -197,6 +235,8 @@ impl<'a> BootstrapStore<'a> {
             let stage = Stage {
                 header: Header {
                     format_version: 1,
+                    consumed_receipt: None,
+                    consumed_revision: None,
                     cancelled: false,
                     incarnation: incarnation.to_string(),
                     start: start.to_vec().into(),
@@ -284,6 +324,173 @@ impl<'a> BootstrapStore<'a> {
         finish_transaction(transaction, operation).await
     }
 
+    /// Trusted context/clock are independent of the decoded receipt. No authorization is
+    /// inferred from wire bytes. Fresh authenticated completion is required after restart.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "Dormant private staging until reviewed native composition"
+        )
+    )]
+    pub(crate) async fn complete(
+        &self,
+        receipt_bytes: &[u8],
+        expected: &BootstrapContext,
+        incarnation: u64,
+        clock: &CompletionClock<'_>,
+    ) -> Result<Completion, SyncStateError> {
+        let key = SyncStateKey::new(&expected.partition_id, &expected.client_id);
+        crate::sync_state::validate_key(key)?;
+        if receipt_bytes.len() > MAX_SYNC_STATE_BYTES {
+            return Err(SyncStateError::StateTooLarge);
+        }
+        let receipt =
+            decode_bootstrap_receipt(receipt_bytes).map_err(|_| SyncStateError::CorruptState)?;
+        let client = self.database.client().await.map_err(SyncStateError::Core)?;
+        let transaction = client.begin().await.map_err(SyncStateError::Database)?;
+        let operation = self
+            .complete_in_transaction(
+                &transaction,
+                receipt_bytes,
+                &receipt,
+                expected,
+                incarnation,
+                clock,
+            )
+            .await;
+        finish_transaction(transaction, operation).await
+    }
+
+    async fn complete_in_transaction(
+        &self,
+        transaction: &Transaction<Any>,
+        receipt_bytes: &[u8],
+        receipt: &surrealdb_sync_protocol::bootstrap::BootstrapReceipt,
+        expected: &BootstrapContext,
+        incarnation: u64,
+        clock: &CompletionClock<'_>,
+    ) -> Result<Completion, SyncStateError> {
+        let key = SyncStateKey::new(&expected.partition_id, &expected.client_id);
+        let mut inspection = inspect_stage(transaction, key).await?;
+        let stage = inspection
+            .stage
+            .take()
+            .ok_or(SyncStateError::CorruptState)?;
+        validate_header(&stage.header.start, &stage.manifest, expected)?;
+        if parse_fence(&stage.header.incarnation)? != incarnation {
+            return Err(SyncStateError::RevisionConflict);
+        }
+        validate_bootstrap_receipt(&stage.manifest, receipt)
+            .map_err(|_| SyncStateError::CorruptState)?;
+        if let Some(consumed) = &stage.header.consumed_receipt {
+            if &consumed[..] != receipt_bytes {
+                return Err(SyncStateError::RevisionConflict);
+            }
+            let current = inspection.current().await?;
+            if current.revision
+                < parse_fence(
+                    stage
+                        .header
+                        .consumed_revision
+                        .as_ref()
+                        .ok_or(SyncStateError::CorruptState)?,
+                )?
+            {
+                return Err(SyncStateError::CorruptState);
+            }
+            // Readback validates the latest journal, but never clears/rewrites its barrier.
+            return Ok(Completion::HistoricalSuccess);
+        }
+        if stage.header.cancelled {
+            return Err(SyncStateError::RevisionConflict);
+        }
+        check_barrier(transaction, key).await?;
+        clock.check(stage.manifest.expires_at)?;
+        let current = inspection.current().await?;
+        check_budget(key, state_budget(&current)?, &stage)?;
+        let mut verifier = BootstrapVerifier::new(stage.manifest.clone())
+            .map_err(|_| SyncStateError::CorruptState)?;
+        let mut records = Vec::new();
+        for raw in stage.pages.values() {
+            clock.check(stage.manifest.expires_at)?;
+            let page = decode_bootstrap_page(raw).map_err(|_| SyncStateError::CorruptState)?;
+            verifier
+                .push(&page)
+                .map_err(|_| SyncStateError::CorruptState)?;
+            page_reservation(&page)?;
+            for record in page.records {
+                let state = match record.state {
+                    RecordState::Present {
+                        value,
+                        version,
+                        reference,
+                    } => RecordState::Present {
+                        value: crate::sync_http_codec::canonical_to_json(value)
+                            .map_err(|_| SyncStateError::CorruptState)?,
+                        version,
+                        reference,
+                    },
+                    RecordState::Tombstone { version } => RecordState::Tombstone { version },
+                    RecordState::Absent => return Err(SyncStateError::CorruptState),
+                };
+                records.push(surrealdb_sync_protocol::SnapshotRecord {
+                    record_id: record.record_id,
+                    state,
+                });
+            }
+        }
+        verifier
+            .finish()
+            .map_err(|_| SyncStateError::CorruptState)?;
+        clock.check(stage.manifest.expires_at)?;
+        let runtime = surrealdb_sync_client::ClientRuntime::open(current.clone())
+            .map_err(SyncStateError::InvalidState)?;
+        let next = runtime
+            .prepare_bootstrap_snapshot(receipt.checkpoint.clone(), records)
+            .map_err(SyncStateError::InvalidState)?
+            .into_state();
+        crate::sync_codec::validate_state_codec(&next).map_err(|_| SyncStateError::CorruptState)?;
+        final_budget(key, &current, &next, &stage, receipt_bytes)?;
+        // Prior staging schemas predate terminal marker fields. Only explicit successful
+        // completion installs these definitions, atomically with the final marker.
+        transaction.query("DEFINE FIELD IF NOT EXISTS consumed_receipt ON _sync_bootstrap_header TYPE option<bytes>; DEFINE FIELD IF NOT EXISTS consumed_revision ON _sync_bootstrap_header TYPE option<string>;").await.map_err(SyncStateError::Database)?.check().map_err(SyncStateError::Database)?;
+        crate::sync_state::apply_transition_in_transaction(transaction, &current, &next).await?;
+        for index in stage.pages.keys() {
+            let _: Option<Value> = transaction
+                .delete(page_id(key, *index))
+                .await
+                .map_err(SyncStateError::Database)?;
+        }
+        let marker: Option<Header> = transaction
+            .upsert(header_id(key))
+            .content(Header {
+                cancelled: true,
+                consumed_receipt: Some(receipt_bytes.to_vec().into()),
+                consumed_revision: Some(next.revision.to_string()),
+                ..stage.header
+            })
+            .await
+            .map_err(SyncStateError::Database)?;
+        let marker = marker.ok_or(SyncStateError::CorruptState)?;
+        if marker.consumed_receipt.as_ref().map(|bytes| &bytes[..]) != Some(receipt_bytes)
+            || marker.consumed_revision.as_deref() != Some(next.revision.to_string().as_str())
+            || !marker.cancelled
+        {
+            return Err(SyncStateError::CorruptState);
+        }
+        let fence = next_fence(read_fence(transaction, key).await?)?;
+        write_fence(
+            transaction,
+            key,
+            format!("{}:i", parse_metadata_fence(&fence)?.0),
+        )
+        .await?;
+        // All tentative writes roll back if verification/preparation exhausted the deadline.
+        clock.check(stage.manifest.expires_at)?;
+        Ok(Completion::Applied(Box::new(next)))
+    }
+
     /// Progress grants no coverage/read revision or completion. It performs bounded
     /// full stage/current integrity validation, NOT a metadata-only/constant-time read.
     #[cfg_attr(
@@ -347,44 +554,56 @@ impl<'a> BootstrapStore<'a> {
         crate::sync_state::validate_key(key)?;
         let client = self.database.client().await.map_err(SyncStateError::Core)?;
         let transaction = client.begin().await.map_err(SyncStateError::Database)?;
-        let operation = async {
-            let Some(fence) = read_fence(&transaction, key).await? else {
-                return Ok(());
-            };
-            let Some(stage) = load_stage(&transaction, key).await? else {
-                return Ok(());
-            };
-            validate_header(&stage.header.start, &stage.manifest, expected)?;
-            if parse_fence(&stage.header.incarnation)? != incarnation {
-                return Err(SyncStateError::RevisionConflict);
-            }
-            if &stage.header.manifest[..] != manifest {
-                return Err(SyncStateError::RevisionConflict);
-            }
-            for index in stage.pages.keys() {
-                let _: Option<Value> = transaction
-                    .delete(page_id(key, *index))
-                    .await
-                    .map_err(SyncStateError::Database)?;
-            }
+        let operation = self
+            .cancel_in_transaction(&transaction, manifest, expected, incarnation)
+            .await;
+        finish_transaction(transaction, operation).await
+    }
+    async fn cancel_in_transaction(
+        &self,
+        transaction: &Transaction<Any>,
+        manifest: &[u8],
+        expected: &BootstrapContext,
+        incarnation: u64,
+    ) -> Result<(), SyncStateError> {
+        let key = SyncStateKey::new(&expected.partition_id, &expected.client_id);
+        let Some(fence) = read_fence(transaction, key).await? else {
+            return Ok(());
+        };
+        let Some(stage) = load_stage(transaction, key).await? else {
+            return Ok(());
+        };
+        validate_header(&stage.header.start, &stage.manifest, expected)?;
+        if parse_fence(&stage.header.incarnation)? != incarnation {
+            return Err(SyncStateError::RevisionConflict);
+        }
+        if &stage.header.manifest[..] != manifest {
+            return Err(SyncStateError::RevisionConflict);
+        }
+        if stage.header.consumed_receipt.is_some() {
+            return Ok(());
+        }
+        for index in stage.pages.keys() {
             let _: Option<Value> = transaction
-                .upsert(header_id(key))
-                .content(Header {
-                    cancelled: true,
-                    ..stage.header
-                })
+                .delete(page_id(key, *index))
                 .await
                 .map_err(SyncStateError::Database)?;
-            let next = next_fence(Some(fence))?;
-            write_fence(
-                &transaction,
-                key,
-                format!("{}:i", parse_metadata_fence(&next)?.0),
-            )
-            .await
         }
-        .await;
-        finish_transaction(transaction, operation).await
+        let _: Option<Value> = transaction
+            .upsert(header_id(key))
+            .content(Header {
+                cancelled: true,
+                ..stage.header
+            })
+            .await
+            .map_err(SyncStateError::Database)?;
+        let next = next_fence(Some(fence))?;
+        write_fence(
+            transaction,
+            key,
+            format!("{}:i", parse_metadata_fence(&next)?.0),
+        )
+        .await
     }
 }
 
@@ -526,6 +745,57 @@ fn check_budget(
         || count > MAX_COMPONENT_ITEMS
         || records > stage.manifest.record_count
     {
+        return Err(SyncStateError::StateTooLarge);
+    }
+    Ok(())
+}
+
+fn final_budget(
+    key: SyncStateKey<'_>,
+    current: &crate::sync_state::StoredSyncState,
+    next: &crate::sync_state::StoredSyncState,
+    stage: &Stage,
+    receipt: &[u8],
+) -> Result<(), SyncStateError> {
+    let current = state_budget(current)?;
+    let next = state_budget(next)?;
+    let header = stage.header.start.len() + stage.header.manifest.len() + receipt.len();
+    if header > MAX_SYNC_STATE_BYTES {
+        return Err(SyncStateError::StateTooLarge);
+    }
+    // Include both old and final encoded state, ALL raw staged pages, terminal header,
+    // original header, exact key framing and bounded fence/revision/marker overhead.
+    let mut bytes = current
+        .0
+        .checked_add(next.0)
+        .and_then(|n| n.checked_add(FINAL_OVERHEAD))
+        .and_then(|n| n.checked_add(header))
+        .ok_or(SyncStateError::StateTooLarge)?;
+    let mut count = current
+        .1
+        .checked_add(next.1)
+        .and_then(|n| n.checked_add(4))
+        .ok_or(SyncStateError::StateTooLarge)?;
+    for (index, raw) in &stage.pages {
+        bytes = bytes
+            .checked_add(raw.len())
+            .and_then(|n| {
+                n.checked_add(
+                    encode_tagged(&(
+                        key.partition_id.0.as_str(),
+                        key.client_id.0.as_str(),
+                        index.to_string(),
+                    ))
+                    .ok()?
+                    .len()
+                        * 2
+                        + 128,
+                )
+            })
+            .ok_or(SyncStateError::StateTooLarge)?;
+        count = count.checked_add(1).ok_or(SyncStateError::StateTooLarge)?;
+    }
+    if bytes > MAX_AGGREGATE_STATE_BYTES || count > MAX_COMPONENT_ITEMS {
         return Err(SyncStateError::StateTooLarge);
     }
     Ok(())
@@ -762,7 +1032,7 @@ async fn inspect_stage<'a>(
         return Err(SyncStateError::CorruptState);
     }
     // Scalars first, including header bytes. No unbounded blob is fetched before this guard.
-    let mut lengths = transaction.query("SELECT bytes::len(start) + bytes::len(manifest) AS bytes, bytes::len(<bytes>incarnation) AS key_bytes, format_version = 1 AS canonical FROM $header; SELECT bytes::len(payload) AS bytes, bytes::len(<bytes>encoding::json::encode([partition_id,client_id,index])) AS key_bytes, (format_version = 1 AND record::id(id) = [partition_id,client_id,index]) AS canonical FROM _sync_bootstrap_page WHERE partition_id = $partition AND client_id = $client LIMIT 16385")
+    let mut lengths = transaction.query("SELECT bytes::len(start) + bytes::len(manifest) + (IF consumed_receipt = NONE { 0 } ELSE { bytes::len(consumed_receipt) }) AS bytes, bytes::len(<bytes>incarnation) + (IF consumed_revision = NONE { 0 } ELSE { bytes::len(<bytes>consumed_revision) }) AS key_bytes, (format_version = 1 AND array::len(array::complement(object::keys($this), [\"id\",\"format_version\",\"start\",\"manifest\",\"cancelled\",\"incarnation\",\"consumed_receipt\",\"consumed_revision\"])) = 0 AND ((consumed_receipt = NONE AND consumed_revision = NONE) OR (type::is_bytes(consumed_receipt) AND type::is_string(consumed_revision) AND cancelled = true))) AS canonical FROM $header; SELECT bytes::len(payload) AS bytes, bytes::len(<bytes>encoding::json::encode([partition_id,client_id,index])) AS key_bytes, (format_version = 1 AND record::id(id) = [partition_id,client_id,index]) AS canonical FROM _sync_bootstrap_page WHERE partition_id = $partition AND client_id = $client LIMIT 16385")
         .bind(("header", header_id(key))).bind(("partition", key.partition_id.0.clone())).bind(("client", key.client_id.0.clone())).await.map_err(SyncStateError::Database)?.check().map_err(SyncStateError::Database)?;
     let headers: Vec<Lengths> = lengths.take(0).map_err(SyncStateError::Database)?;
     let pages: Vec<Lengths> = lengths.take(1).map_err(SyncStateError::Database)?;
@@ -808,6 +1078,17 @@ async fn inspect_stage<'a>(
             Err(SyncStateError::CorruptState)
         };
     };
+    if header.consumed_receipt.is_some() != header.consumed_revision.is_some() {
+        return Err(SyncStateError::CorruptState);
+    }
+    if let Some(revision) = &header.consumed_revision {
+        if parse_fence(revision)? == 0 {
+            return Err(SyncStateError::CorruptState);
+        }
+        if !header.cancelled {
+            return Err(SyncStateError::CorruptState);
+        }
+    }
     let incarnation = parse_fence(&header.incarnation)?;
     let fence = read_fence(transaction, key)
         .await?
@@ -819,6 +1100,11 @@ async fn inspect_stage<'a>(
     let manifest =
         decode_bootstrap_manifest(&header.manifest).map_err(|_| SyncStateError::CorruptState)?;
     validate_header(&header.start, &manifest, &manifest.context)?;
+    if let Some(bytes) = &header.consumed_receipt {
+        let receipt = decode_bootstrap_receipt(bytes).map_err(|_| SyncStateError::CorruptState)?;
+        validate_bootstrap_receipt(&manifest, &receipt)
+            .map_err(|_| SyncStateError::CorruptState)?;
+    }
     if manifest.context.partition_id != *key.partition_id
         || manifest.context.client_id != *key.client_id
         || (header.cancelled && !pages.is_empty())
@@ -1073,7 +1359,7 @@ mod tests {
         assert_eq!(schema(&db).await, before);
         assert!(!before.contains(HEADER));
         let client = db.client().await.unwrap();
-        let transaction = client.begin().await.unwrap();
+        let transaction = client.clone().begin().await.unwrap();
         assert_eq!(
             read_fence(
                 &transaction,
@@ -1417,7 +1703,7 @@ mod tests {
         let store = BootstrapStore::new(&db);
         let handle = store.begin(&start, &manifest, &context).await.unwrap();
         let client = db.client().await.unwrap();
-        let transaction = client.begin().await.unwrap();
+        let transaction = client.clone().begin().await.unwrap();
         let _: Option<Value> = transaction
             .upsert(page_id(key, 0))
             .content(PageRow {
@@ -1539,7 +1825,7 @@ mod tests {
             .await
             .unwrap();
         let client = db.client().await.unwrap();
-        let transaction = client.begin().await.unwrap();
+        let transaction = client.clone().begin().await.unwrap();
         let fence = read_fence(&transaction, key).await.unwrap().unwrap();
         let (counter, active) = parse_metadata_fence(&fence).unwrap();
         assert!(counter > handle);
@@ -1817,6 +2103,12 @@ mod tests {
                 store.cancel(&manifest, &oversized, 1).await,
                 Err(SyncStateError::IdentityTooLarge)
             ));
+            assert!(matches!(
+                store
+                    .complete(b"invalid", &oversized, 1, &live_clock(&|| Ok(1)))
+                    .await,
+                Err(SyncStateError::IdentityTooLarge)
+            ));
         }
     }
 
@@ -1861,5 +2153,808 @@ mod tests {
         );
         stage.cancel(&manifest, &context, handle).await.unwrap();
         assert_eq!(stage.progress(&context, handle).await.unwrap(), None);
+    }
+    fn completion_receipt(manifest: &[u8]) -> Vec<u8> {
+        let manifest = decode_bootstrap_manifest(manifest).unwrap();
+        surrealdb_sync_protocol::bootstrap_codec::encode_bootstrap_receipt(
+            &surrealdb_sync_protocol::bootstrap::BootstrapReceipt {
+                session_id: manifest.session_id.clone(),
+                manifest_digest: bootstrap_manifest_digest(&manifest).unwrap(),
+                checkpoint: surrealdb_sync_protocol::Checkpoint {
+                    token: surrealdb_sync_protocol::OpaqueCheckpoint("bootstrap-receipt".into()),
+                    cursor: manifest.cursor,
+                    scope: manifest.context.scope,
+                },
+                expires_at: manifest.expires_at,
+            },
+        )
+        .unwrap()
+    }
+    fn live_clock(utc: &dyn Fn() -> Result<u64, SyncStateError>) -> CompletionClock<'_> {
+        CompletionClock {
+            utc_seconds: utc,
+            deadline: std::time::Instant::now() + std::time::Duration::from_secs(20),
+        }
+    }
+    async fn ready_stage(db: &SurrealDatabase, session: &str) -> (Vec<u8>, BootstrapContext, u64) {
+        let (start, manifest, context, pages) = wire(session);
+        let store = BootstrapStore::new(db);
+        let handle = store.begin(&start, &manifest, &context).await.unwrap();
+        for page in pages {
+            store.stage_page(&page, &context, handle).await.unwrap();
+        }
+        (manifest, context, handle)
+    }
+    fn valid_pending(current: StoredSyncState, id: &str) -> StoredSyncState {
+        let mut commit = ClientCommit {
+            identity: CommitIdentity {
+                client_commit_id: ClientCommitId(id.into()),
+                fingerprint: Fingerprint(String::new()),
+            },
+            operations: vec![Operation::Delete {
+                record_id: ProtocolId("item:pending".into()),
+                base_version: 0,
+            }],
+        };
+        commit.identity.fingerprint =
+            crate::sync_codec::canonical_fingerprint(&current, &commit).unwrap();
+        ClientRuntime::open(current)
+            .unwrap()
+            .prepare_enqueue(commit)
+            .unwrap()
+            .into_state()
+    }
+
+    #[tokio::test]
+    async fn completion_installs_root_projection_cursor_preserves_pending_and_consumed_retry_is_historical()
+     {
+        let db = database().await;
+        let initial = initialized(&db).await;
+        let (manifest, context, handle) = ready_stage(&db, "complete").await;
+        let pending = valid_pending(initial.clone(), "later-local");
+        SyncStateStore::new(&db)
+            .apply_transition_atomic(&initial, &pending)
+            .await
+            .unwrap();
+        let receipt = completion_receipt(&manifest);
+        let Completion::Applied(installed) = BootstrapStore::new(&db)
+            .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+            .await
+            .unwrap()
+        else {
+            panic!("not installed")
+        };
+        let installed = *installed;
+        assert_eq!(installed.outbox, pending.outbox);
+        assert_eq!(installed.confirmed.len(), 2);
+        assert_eq!(installed.checkpoint.as_ref().unwrap().cursor.sequence, 1);
+        assert!(installed.reset_coverage.is_some());
+        let row: Option<Value> = db
+            .client()
+            .await
+            .unwrap()
+            .select(("item", "0"))
+            .await
+            .unwrap();
+        assert!(row.is_some());
+        assert_eq!(
+            BootstrapStore::new(&db)
+                .progress(&context, handle)
+                .await
+                .unwrap(),
+            None
+        );
+        let later = valid_pending(installed.clone(), "post-completion");
+        SyncStateStore::new(&db)
+            .apply_transition_atomic(&installed, &later)
+            .await
+            .unwrap();
+        let key = SyncStateKey::new(&context.partition_id, &context.client_id);
+        SyncStateStore::new(&db)
+            .save_scope_barrier(key, barrier())
+            .await
+            .unwrap();
+        assert!(matches!(
+            BootstrapStore::new(&db)
+                .complete(
+                    &receipt,
+                    &context,
+                    handle,
+                    &CompletionClock {
+                        utc_seconds: &|| Ok(u64::MAX),
+                        deadline: std::time::Instant::now()
+                    }
+                )
+                .await
+                .unwrap(),
+            Completion::HistoricalSuccess
+        ));
+        assert_eq!(
+            SyncStateStore::new(&db).load(key).await.unwrap(),
+            Some(later)
+        );
+        assert!(
+            SyncStateStore::new(&db)
+                .load_scope_barrier(key)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        BootstrapStore::new(&db)
+            .cancel(&manifest, &context, handle)
+            .await
+            .unwrap();
+        assert!(matches!(
+            BootstrapStore::new(&db)
+                .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+                .await
+                .unwrap(),
+            Completion::HistoricalSuccess
+        ));
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn completion_failures_roll_back_and_clock_is_rechecked_after_verification() {
+        let db = database().await;
+        let initial = initialized(&db).await;
+        let (start, manifest, context, pages) = wire("failures");
+        let store = BootstrapStore::new(&db);
+        let handle = store.begin(&start, &manifest, &context).await.unwrap();
+        let receipt = completion_receipt(&manifest);
+        assert!(
+            store
+                .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+                .await
+                .is_err()
+        );
+        for page in &pages {
+            store.stage_page(page, &context, handle).await.unwrap();
+        }
+        let mut foreign = context.clone();
+        foreign.principal_id = "other".into();
+        assert!(
+            store
+                .complete(&receipt, &foreign, handle, &live_clock(&|| Ok(1)))
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .complete(&receipt, &context, handle + 1, &live_clock(&|| Ok(1)))
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .complete(b"forged", &context, handle, &live_clock(&|| Ok(1)))
+                .await
+                .is_err()
+        );
+        let count = std::cell::Cell::new(0);
+        let clock = || {
+            let n = count.get();
+            count.set(n + 1);
+            Ok(if n < 4 { 1 } else { u64::MAX })
+        };
+        assert!(
+            store
+                .complete(&receipt, &context, handle, &live_clock(&clock))
+                .await
+                .is_err()
+        );
+        assert!(count.get() >= 5);
+        let key = SyncStateKey::new(&context.partition_id, &context.client_id);
+        assert_eq!(
+            SyncStateStore::new(&db).load(key).await.unwrap(),
+            Some(initial)
+        );
+        assert_eq!(
+            store.progress(&context, handle).await.unwrap(),
+            Some(vec![0, 1])
+        );
+        let row: Option<Value> = db
+            .client()
+            .await
+            .unwrap()
+            .select(("item", "0"))
+            .await
+            .unwrap();
+        assert!(row.is_none());
+        assert!(matches!(
+            store
+                .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+                .await
+                .unwrap(),
+            Completion::Applied(_)
+        ));
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn completion_surrealkv_restart_and_lost_ack_never_reapplies_over_later_writes() {
+        let dir = temp_dir::TempDir::new().unwrap();
+        let options = || ConnectOptions {
+            endpoint: format!("surrealkv://{}", dir.path().display()),
+            namespace: Some("complete".into()),
+            database: Some("complete".into()),
+        };
+        let db = connect(options()).await.unwrap();
+        initialized(&db).await;
+        let (manifest, context, handle) = ready_stage(&db, "restart").await;
+        let receipt = completion_receipt(&manifest);
+        db.close().await.unwrap();
+        drop(db);
+        let db = connect(options()).await.unwrap();
+        let store = BootstrapStore::new(&db);
+        let client = db.client().await.unwrap();
+        let transaction = client.clone().begin().await.unwrap();
+        let decoded = decode_bootstrap_receipt(&receipt).unwrap();
+        assert!(matches!(
+            store
+                .complete_in_transaction(
+                    &transaction,
+                    &receipt,
+                    &decoded,
+                    &context,
+                    handle,
+                    &live_clock(&|| Ok(1))
+                )
+                .await
+                .unwrap(),
+            Completion::Applied(_)
+        ));
+        transaction.cancel().await.unwrap();
+        assert_eq!(
+            store.progress(&context, handle).await.unwrap(),
+            Some(vec![0, 1])
+        );
+        let transaction = client.clone().begin().await.unwrap();
+        let Completion::Applied(installed) = store
+            .complete_in_transaction(
+                &transaction,
+                &receipt,
+                &decoded,
+                &context,
+                handle,
+                &live_clock(&|| Ok(1)),
+            )
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let installed = *installed;
+        transaction.commit().await.unwrap(); // Deliberately discard the successful result (lost ACK).
+        let later = valid_pending(installed.clone(), "post-ack-loss");
+        SyncStateStore::new(&db)
+            .apply_transition_atomic(&installed, &later)
+            .await
+            .unwrap();
+        drop(client);
+        db.close().await.unwrap();
+        drop(db);
+        let db = connect(options()).await.unwrap();
+        assert!(matches!(
+            BootstrapStore::new(&db)
+                .complete(&receipt, &context, handle, &live_clock(&|| Ok(u64::MAX)))
+                .await
+                .unwrap(),
+            Completion::HistoricalSuccess
+        ));
+        assert_eq!(
+            SyncStateStore::new(&db)
+                .load(SyncStateKey::new(&context.partition_id, &context.client_id))
+                .await
+                .unwrap(),
+            Some(later)
+        );
+        db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn complete_conflicts_with_enqueue_barrier_and_cancel_in_both_orders_memory_and_kv() {
+        for persistent in [false, true] {
+            for competitor in ["enqueue", "barrier", "cancel"] {
+                for complete_first in [false, true] {
+                    let directory = temp_dir::TempDir::new().unwrap();
+                    let db = if persistent {
+                        connect(ConnectOptions {
+                            endpoint: format!("surrealkv://{}", directory.path().display()),
+                            namespace: Some("race".into()),
+                            database: Some("race".into()),
+                        })
+                        .await
+                        .unwrap()
+                    } else {
+                        database().await
+                    };
+                    let initial = initialized(&db).await;
+                    let (manifest, context, handle) = ready_stage(&db, "race-complete").await;
+                    let receipt = completion_receipt(&manifest);
+                    let decoded = decode_bootstrap_receipt(&receipt).unwrap();
+                    let store = BootstrapStore::new(&db);
+                    let key = SyncStateKey::new(&context.partition_id, &context.client_id);
+                    let client = db.client().await.unwrap();
+                    let a = client.clone().begin().await.unwrap();
+                    let b = client.begin().await.unwrap();
+                    let old = read_fence(&a, key).await.unwrap();
+                    assert_eq!(read_fence(&b, key).await.unwrap(), old);
+                    let Completion::Applied(installed) = store
+                        .complete_in_transaction(
+                            &a,
+                            &receipt,
+                            &decoded,
+                            &context,
+                            handle,
+                            &live_clock(&|| Ok(1)),
+                        )
+                        .await
+                        .unwrap()
+                    else {
+                        panic!()
+                    };
+                    let queued = valid_pending(initial.clone(), "racing");
+                    match competitor {
+                        "enqueue" => {
+                            crate::sync_state::test_transition_in_transaction(
+                                &b, &initial, &queued,
+                            )
+                            .await
+                            .unwrap();
+                        }
+                        "barrier" => {
+                            guard_barrier_write(&b, key).await.unwrap();
+                            let _: Option<Value> =
+                                b.upsert(barrier_id(key)).content(barrier()).await.unwrap();
+                        }
+                        _ => {
+                            store
+                                .cancel_in_transaction(&b, &manifest, &context, handle)
+                                .await
+                                .unwrap();
+                        }
+                    }
+                    if complete_first {
+                        a.commit().await.unwrap();
+                        assert!(b.commit().await.is_err());
+                    } else {
+                        b.commit().await.unwrap();
+                        assert!(a.commit().await.is_err());
+                    }
+                    let current = SyncStateStore::new(&db).load(key).await.unwrap().unwrap();
+                    if complete_first {
+                        assert_eq!(current, *installed);
+                        assert!(matches!(
+                            store
+                                .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+                                .await
+                                .unwrap(),
+                            Completion::HistoricalSuccess
+                        ));
+                    } else {
+                        assert_eq!(
+                            current,
+                            if competitor == "enqueue" {
+                                queued.clone()
+                            } else {
+                                initial.clone()
+                            }
+                        );
+                        if competitor == "enqueue" {
+                            let Completion::Applied(next) = store
+                                .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+                                .await
+                                .unwrap()
+                            else {
+                                panic!()
+                            };
+                            assert_eq!(next.outbox, queued.outbox);
+                        } else {
+                            assert!(
+                                store
+                                    .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+                                    .await
+                                    .is_err()
+                            );
+                        }
+                    }
+                    db.close().await.unwrap();
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn preexisting_header_compatibility_marker_pair_and_unknown_fields_fail_closed() {
+        let db = database().await;
+        initialized(&db).await;
+        let (manifest, context, handle) = ready_stage(&db, "headers").await;
+        let key = SyncStateKey::new(&context.partition_id, &context.client_id);
+        let client = db.client().await.unwrap();
+        // Old staging v3 schemas/rows have neither optional consumed field.
+        client.query("REMOVE FIELD consumed_receipt ON _sync_bootstrap_header; REMOVE FIELD consumed_revision ON _sync_bootstrap_header;").await.unwrap().check().unwrap();
+        let receipt = completion_receipt(&manifest);
+        assert!(matches!(
+            BootstrapStore::new(&db)
+                .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+                .await
+                .unwrap(),
+            Completion::Applied(_)
+        ));
+        client
+            .query("UPDATE $id UNSET consumed_revision")
+            .bind(("id", header_id(key)))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        assert!(
+            BootstrapStore::new(&db)
+                .progress(&context, handle)
+                .await
+                .is_err()
+        );
+        client
+            .query("UPDATE $id SET consumed_revision='1', consumed_receipt=$bad")
+            .bind(("id", header_id(key)))
+            .bind(("bad", Bytes::from(vec![0xff])))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        assert!(
+            BootstrapStore::new(&db)
+                .progress(&context, handle)
+                .await
+                .is_err()
+        );
+        client
+            .query("UPDATE $id SET consumed_receipt=$receipt")
+            .bind(("id", header_id(key)))
+            .bind(("receipt", Bytes::from(receipt.clone())))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        client.query("UPDATE $id SET consumed_revision='1'; DEFINE FIELD unexpected ON _sync_bootstrap_header TYPE string; UPDATE $id SET unexpected='invalid';").bind(("id",header_id(key))).await.unwrap().check().unwrap();
+        assert!(
+            BootstrapStore::new(&db)
+                .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+                .await
+                .is_err()
+        );
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn forged_root_and_late_projection_error_preserve_old_journal_and_stage() {
+        let db = database().await;
+        let initial = initialized(&db).await;
+        let (start, manifest, context, pages) = wire("root");
+        let mut bad = decode_bootstrap_manifest(&manifest).unwrap();
+        bad.root.0[0] ^= 1;
+        let bad = encode_bootstrap_manifest(&bad).unwrap();
+        let store = BootstrapStore::new(&db);
+        let handle = store.begin(&start, &bad, &context).await.unwrap();
+        let digest = bootstrap_manifest_digest(&decode_bootstrap_manifest(&bad).unwrap()).unwrap();
+        for raw in pages {
+            let mut page = decode_bootstrap_page(&raw).unwrap();
+            page.manifest_digest = digest;
+            store
+                .stage_page(&encode_bootstrap_page(&page).unwrap(), &context, handle)
+                .await
+                .unwrap();
+        }
+        assert!(
+            store
+                .complete(
+                    &completion_receipt(&bad),
+                    &context,
+                    handle,
+                    &live_clock(&|| Ok(1))
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            SyncStateStore::new(&db)
+                .load(SyncStateKey::new(&context.partition_id, &context.client_id))
+                .await
+                .unwrap(),
+            Some(initial.clone())
+        );
+        store.cancel(&bad, &context, handle).await.unwrap();
+        let (manifest, context, handle) = ready_stage(&db, "projection").await;
+        db.client()
+            .await
+            .unwrap()
+            .query("DEFINE FIELD fail ON item VALUE true ASSERT false")
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        assert!(
+            store
+                .complete(
+                    &completion_receipt(&manifest),
+                    &context,
+                    handle,
+                    &live_clock(&|| Ok(1))
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            SyncStateStore::new(&db)
+                .load(SyncStateKey::new(&context.partition_id, &context.client_id))
+                .await
+                .unwrap(),
+            Some(initial)
+        );
+        assert_eq!(
+            store.progress(&context, handle).await.unwrap(),
+            Some(vec![0, 1])
+        );
+        db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn complete_retains_same_epoch_accepted_and_conflict_but_rejects_unknown_or_other_epoch()
+    {
+        for epoch in [None, Some(1), Some(2)] {
+            let db = database().await;
+            let initial = initialized(&db).await;
+            let mut current = valid_pending(initial.clone(), "accepted");
+            let commit = current.outbox.remove(0);
+            current
+                .outcomes
+                .push(surrealdb_sync_client::ResolvedCommit {
+                    outcome: surrealdb_sync_protocol::DurableOutcome::Accepted {
+                        identity: commit.identity.clone(),
+                        sequence: 2,
+                        id_mappings: vec![],
+                    },
+                    local_commit: commit,
+                    resolution: None,
+                    covered_by_reset: false,
+                });
+            if let Some(epoch) = epoch {
+                current.checkpoint = Some(surrealdb_sync_protocol::Checkpoint {
+                    token: surrealdb_sync_protocol::OpaqueCheckpoint("old".into()),
+                    cursor: Cursor { epoch, sequence: 0 },
+                    scope: wire("x").2.scope,
+                });
+            }
+            let mut conflict = valid_pending(initial, "conflict").outbox.remove(0);
+            conflict.identity.fingerprint =
+                crate::sync_codec::canonical_fingerprint(&current, &conflict).unwrap();
+            current
+                .outcomes
+                .push(surrealdb_sync_client::ResolvedCommit {
+                    outcome: surrealdb_sync_protocol::DurableOutcome::Conflict {
+                        identity: conflict.identity.clone(),
+                        record_id: ProtocolId("item:pending".into()),
+                        authoritative: RecordState::Tombstone { version: 1 },
+                    },
+                    local_commit: conflict,
+                    resolution: None,
+                    covered_by_reset: false,
+                });
+            SyncStateStore::new(&db)
+                .save_atomic(Some(0), &current)
+                .await
+                .unwrap();
+            let (manifest, context, handle) = ready_stage(&db, "accepted").await;
+            let result = BootstrapStore::new(&db)
+                .complete(
+                    &completion_receipt(&manifest),
+                    &context,
+                    handle,
+                    &live_clock(&|| Ok(1)),
+                )
+                .await;
+            if epoch == Some(1) {
+                let Completion::Applied(next) = result.unwrap() else {
+                    panic!()
+                };
+                assert_eq!(next.outcomes, current.outcomes);
+                assert!(matches!(
+                    ClientRuntime::open(*next)
+                        .unwrap()
+                        .optimistic()
+                        .get(&ProtocolId("item:pending".into())),
+                    Some(surrealdb_sync_client::OptimisticRecord::Deleted { .. })
+                ));
+            } else {
+                assert!(matches!(
+                    result,
+                    Err(SyncStateError::InvalidState(
+                        surrealdb_sync_client::ClientError::NeedsNewScopeJournal
+                    ))
+                ));
+                assert_eq!(
+                    SyncStateStore::new(&db)
+                        .load(SyncStateKey::new(&context.partition_id, &context.client_id))
+                        .await
+                        .unwrap(),
+                    Some(current)
+                );
+                assert_eq!(
+                    BootstrapStore::new(&db)
+                        .progress(&context, handle)
+                        .await
+                        .unwrap(),
+                    Some(vec![0, 1])
+                );
+            }
+            db.close().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn consumed_marker_scalar_admission_precedes_current_payload_decode() {
+        let db = database().await;
+        let initial = initialized(&db).await;
+        let (manifest, context, handle) = ready_stage(&db, "oversize-marker").await;
+        let key = SyncStateKey::new(&initial.partition_id, &initial.client_id);
+        db.client().await.unwrap().query("UPDATE $meta SET payload=$bad; UPDATE $header SET consumed_receipt=$large, consumed_revision='1', cancelled=true;")
+            .bind(("meta",meta_record_id(key))).bind(("header",header_id(key))).bind(("bad",Bytes::from(vec![0xff]))).bind(("large",Bytes::from(vec![0xff;MAX_SYNC_STATE_BYTES+1]))).await.unwrap().check().unwrap();
+        assert!(matches!(
+            BootstrapStore::new(&db)
+                .complete(
+                    &completion_receipt(&manifest),
+                    &context,
+                    handle,
+                    &live_clock(&|| Ok(1))
+                )
+                .await,
+            Err(SyncStateError::StateTooLarge)
+        ));
+        db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn final_candidate_budget_counts_old_pages_marker_and_final_components_together() {
+        let db = database().await;
+        let initial = initialized(&db).await;
+        let (_manifest, context, handle) = ready_stage(&db, "combined-final").await;
+        let key = SyncStateKey::new(&context.partition_id, &context.client_id);
+        let transaction = db.client().await.unwrap().begin().await.unwrap();
+        let stage = load_stage(&transaction, key).await.unwrap().unwrap();
+        let mut candidate = initial.clone();
+        candidate.revision = 1;
+        for index in 0..(MAX_COMPONENT_ITEMS - 4) {
+            candidate.confirmed.insert(
+                ProtocolId(format!("item:{index}")),
+                RecordState::Tombstone { version: 1 },
+            );
+        }
+        assert!(
+            state_budget(&candidate).is_ok(),
+            "candidate alone fits native component budget"
+        );
+        assert!(
+            matches!(
+                final_budget(key, &initial, &candidate, &stage, b"receipt"),
+                Err(SyncStateError::StateTooLarge)
+            ),
+            "old+stage+marker+final must fit together"
+        );
+        transaction.cancel().await.unwrap();
+        assert_eq!(
+            SyncStateStore::new(&db).load(key).await.unwrap(),
+            Some(initial)
+        );
+        assert_eq!(
+            BootstrapStore::new(&db)
+                .progress(&context, handle)
+                .await
+                .unwrap(),
+            Some(vec![0, 1])
+        );
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn completion_rejects_expired_unbounded_or_failed_trusted_clock_without_mutation() {
+        let db = database().await;
+        let initial = initialized(&db).await;
+        let (manifest, context, handle) = ready_stage(&db, "clocks").await;
+        let receipt = completion_receipt(&manifest);
+        let store = BootstrapStore::new(&db);
+        let now = || Ok(1);
+        for deadline in [
+            std::time::Instant::now(),
+            std::time::Instant::now() + std::time::Duration::from_secs(31),
+        ] {
+            assert!(
+                store
+                    .complete(
+                        &receipt,
+                        &context,
+                        handle,
+                        &CompletionClock {
+                            utc_seconds: &now,
+                            deadline
+                        }
+                    )
+                    .await
+                    .is_err()
+            );
+        }
+        assert!(
+            store
+                .complete(
+                    &receipt,
+                    &context,
+                    handle,
+                    &live_clock(&|| Err(SyncStateError::RevisionConflict))
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            SyncStateStore::new(&db)
+                .load(SyncStateKey::new(&context.partition_id, &context.client_id))
+                .await
+                .unwrap(),
+            Some(initial)
+        );
+        assert_eq!(
+            store.progress(&context, handle).await.unwrap(),
+            Some(vec![0, 1])
+        );
+        db.close().await.unwrap();
+    }
+    #[tokio::test]
+    async fn zero_consumed_revision_blocks_historical_success_and_inactive_journal_writes() {
+        let db = database().await;
+        initialized(&db).await;
+        let (manifest, context, handle) = ready_stage(&db, "zero-revision").await;
+        let receipt = completion_receipt(&manifest);
+        let store = BootstrapStore::new(&db);
+        let Completion::Applied(installed) = store
+            .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+            .await
+            .unwrap()
+        else {
+            panic!()
+        };
+        let key = SyncStateKey::new(&context.partition_id, &context.client_id);
+        db.client()
+            .await
+            .unwrap()
+            .query("UPDATE $id SET consumed_revision='0'")
+            .bind(("id", header_id(key)))
+            .await
+            .unwrap()
+            .check()
+            .unwrap();
+        assert!(matches!(
+            store.progress(&context, handle).await,
+            Err(SyncStateError::CorruptState)
+        ));
+        assert!(matches!(
+            store
+                .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+                .await,
+            Err(SyncStateError::CorruptState)
+        ));
+        let next = valid_pending((*installed).clone(), "must-not-write");
+        assert!(matches!(
+            SyncStateStore::new(&db)
+                .apply_transition_atomic(&installed, &next)
+                .await,
+            Err(SyncStateError::CorruptState)
+        ));
+        assert!(matches!(
+            SyncStateStore::new(&db)
+                .save_scope_barrier(key, barrier())
+                .await,
+            Err(SyncStateError::CorruptState)
+        ));
+        assert_eq!(
+            SyncStateStore::new(&db).load(key).await.unwrap(),
+            Some(*installed)
+        );
+        db.close().await.unwrap();
     }
 }
