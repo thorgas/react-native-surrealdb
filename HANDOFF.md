@@ -76,3 +76,30 @@ but host load still ranged 66.17 to 125.66. These are host debug memory-engine
 results, not an idle-host causal finding, mobile startup, Release or fsync proof.
 No overall performance win or activation readiness is claimed. Retain all runs
 and uncertainty: `/private/tmp/sdk-bootstrap-storage-opt-bench/quiet-replay/`.
+
+
+### Local-only durable bootstrap completion
+
+Commit `281a1c8` is private Rust store-only completion: exact trusted context and
+receipt, full ordered root and latest durable state are verified in one transaction;
+journal/projection/cursor/terminal identity and page deletion commit together. UTC
+and a maximum 30-second monotonic window are rechecked before commit. Historical
+exact success never reapplies state or clears a newer barrier. Genuine prior
+header schemas receive optional marker fields only inside explicit completion.
+Zero/malformed consumed revisions fail closed.
+
+Final full core: 99 passed / 1 existing ignored; strict Clippy, formatting and diff
+checks passed. Memory/SurrealKV both-order enqueue/barrier/cancel races, rollback/
+reopen, discarded successful ACK, accepted-intent/epoch and capacity/corruption
+cases pass. The inspector comparison excludes only volatile CPU/memory counters
+and still detects actual namespace mutation. Final commit blobs and live source
+match `/private/tmp/sdk-bootstrap-final-install-review-v2/sha256.json`; the old
+f195 review snapshot is superseded. Root initially attempted verification against
+that stale snapshot before receiving the refreshed freeze; the local commit has
+since been independently reconciled against the exact 99-test source.
+
+No NativeSyncClient publication, cross-handle ownership/reader-generation proof,
+FFI/ABI, bindings, platform builds or activation is included. Read-only next design:
+`/private/tmp/haus-native-bootstrap-runtime-publication-design.md`. Core evidence:
+`/private/tmp/sdk-bootstrap-final-install-core.log`. Public SDK publication remains
+paused; do not push this local branch.
