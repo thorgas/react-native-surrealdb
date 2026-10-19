@@ -174,6 +174,22 @@ interface NativeModuleInterface {
     ptr: bigint,
     uniffi_out_err: UniffiRustCallStatus,
   ): void;
+  ubrn_uniffi_surrealdb_rn_core_fn_clone_nativebootstrapsession(
+    ptr: bigint,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_free_nativebootstrapsession(
+    ptr: bigint,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): void;
+  ubrn_uniffi_surrealdb_rn_core_fn_clone_nativebootstrapstage(
+    ptr: bigint,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_free_nativebootstrapstage(
+    ptr: bigint,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): void;
   ubrn_uniffi_surrealdb_rn_core_fn_clone_nativesyncclient(
     ptr: bigint,
     uniffi_out_err: UniffiRustCallStatus,
@@ -199,6 +215,13 @@ interface NativeModuleInterface {
     uniffi_out_err: UniffiRustCallStatus,
   ): void;
   ubrn_uniffi_surrealdb_rn_core_fn_func_benchmark_boundary_noop(): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_bind_bootstrap_session(
+    client: bigint,
+    expected: Uint8Array,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_bootstrap_capabilities(
+    uniffi_out_err: UniffiRustCallStatus,
+  ): Uint8Array;
   ubrn_uniffi_surrealdb_rn_core_fn_func_connect(options: Uint8Array): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_func_decode_subscription_response(
     bytes: Uint8Array,
@@ -224,6 +247,10 @@ interface NativeModuleInterface {
     clientId: Uint8Array,
     commitJson: Uint8Array,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_inspect_sync_state(
+    database: bigint,
+    options: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_func_open_sync_client(
     database: bigint,
     options: Uint8Array,
@@ -237,6 +264,29 @@ interface NativeModuleInterface {
   ): number;
   ubrn_uniffi_surrealdb_rn_core_fn_method_livequery_next(
     uniffiSelf: bigint,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_begin(
+    uniffiSelf: bigint,
+    start: Uint8Array,
+    manifest: Uint8Array,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_cancel(
+    uniffiSelf: bigint,
+    stage: bigint,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_complete(
+    uniffiSelf: bigint,
+    stage: bigint,
+    receipt: Uint8Array,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_page(
+    uniffiSelf: bigint,
+    stage: bigint,
+    bytes: Uint8Array,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_progress(
+    uniffiSelf: bigint,
+    manifest: Uint8Array,
   ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_apply_pull_response(
     uniffiSelf: bigint,
@@ -435,6 +485,8 @@ interface NativeModuleInterface {
   ): bigint;
   ubrn_ffi_surrealdb_rn_core_uniffi_contract_version(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_bind_bootstrap_session(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_bootstrap_capabilities(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_connect(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_decode_subscription_response(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_decode_sync_pull_response(): number;
@@ -442,10 +494,16 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_subscription_request_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_sync_pull_request(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_sync_push_request(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_inspect_sync_state(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_open_sync_client(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_close(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_next(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_begin(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_cancel(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_complete(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_page(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_progress(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_pull_response(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_subscription_response_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_cancel_subscription(): number;
@@ -492,7 +550,15 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_batch(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_surrealtransaction_query_profiled_with_encoding(): number;
+  ubrn_uniffi_internal_fn_method_nativebootstrapstage_ffi__bless_pointer(
+    pointer: bigint,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): UniffiGcObject;
   ubrn_uniffi_internal_fn_method_livequery_ffi__bless_pointer(
+    pointer: bigint,
+    uniffi_out_err: UniffiRustCallStatus,
+  ): UniffiGcObject;
+  ubrn_uniffi_internal_fn_method_nativebootstrapsession_ffi__bless_pointer(
     pointer: bigint,
     uniffi_out_err: UniffiRustCallStatus,
   ): UniffiGcObject;

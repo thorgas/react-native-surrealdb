@@ -164,3 +164,86 @@ TypeScript facade, matching platform artifacts/device acceptance and startup
 measurements remain pending. Native clocks assume OS UTC accuracy; authenticated
 transport enforces server expiry. UniFFI incoming allocations precede Rust limits.
 This commit stays local with no public SDK publication or app activation.
+
+## 2026-10-19 additive bootstrap generated bindings and TypeScript facade
+
+Source slice based on local Rust facade commit `498ecc8` (no public push).
+Generated TS/C++ comes from a default-feature host dylib and pinned installed
+`uniffi-bindgen-react-native` `0.31.0-3`; the unchanged TurboModule entry was also
+regenerated. A second run reproduced all six generated/entry files byte for byte.
+The complete current metadata includes the dormant inspector ABI. No generated
+checksums were hand-edited, no existing exports removed, and no iOS/Android native
+artifacts were rebuilt or distributed. Host dylib SHA256:
+`ba461e6496c26e5c32989543f2ca28565d5cfd32a69b0b70c8a0325b74ecc105`.
+All 66 generated exported checksums (including 7 bootstrap) matched actual host
+symbols; this does not establish JSI method execution or device acceptance.
+
+`ExperimentalSyncClient` now exposes bootstrap capability/binding with independent
+context, exact copied byte-view slices, pre-dispatch 4 MiB limits, opaque per-session
+stage handles, lossless bigint metadata, explicit Missing/Staging/Cancelled/Consumed
+progress, applied/historical completion, typed redacted errors and closure guards.
+Native UTC/deadline remain authoritative. Whole-old-binary imports can fail the
+existing generated initialization gate before any facade or storage; the typed
+UnsupportedAbi guarantee applies only once binding-module initialization succeeds.
+The generated gate stays unchanged. Matching native runtime fingerprints/builds
+must prevent a new JS bundle from reaching an old binary.
+
+Verification: package TypeScript full suite **124/124 tests**, typecheck, complete
+source/test Prettier check, Bob module+declaration build and git diff whitespace
+check passed. Initial sandbox-only full run could not listen on loopback; the
+approved disposable-loopback rerun passed all tests. Logs/receipts:
+`/private/tmp/sdk-bootstrap-ts-full-approved.log`,
+`/private/tmp/sdk-bootstrap-ts-typecheck.log`,
+`/private/tmp/sdk-bootstrap-ts-format.log`,
+`/private/tmp/sdk-bootstrap-ts-build.log`,
+`/private/tmp/sdk-bootstrap-native-handshake.json`,
+`/private/tmp/sdk-bootstrap-bindings-sha256.json`,
+`/private/tmp/sdk-bootstrap-generated-review.json`.
+
+At the initial498ecc8 generation, native future-drop/cancellation settlement
+remained open; the later9f7880f source milestone addresses that host-native gate
+as documented in [Native mutation settlement](docs/NATIVE_MUTATION_SETTLEMENT.md).
+JS mock AbortSignal tests do not prove native settlement or device execution.
+Matching iOS+Android builds/device acceptance and previously recorded storage
+performance uncertainty remain separate activation gates. No app activation,
+package publish or public SDK push occurred.
+
+### Post-settlement binding recheck on9f7880f
+
+Regenerated from exact local Rust
+`9f7880ffa6d0f41b7e757a9aacdf486e62aee1e9`. Its Arc receiver changes emit no
+TS/C++/TurboModule differences from the prior498ecc8 binding generation. Two
+fresh runs reproduced all six generated/entry files exactly. The newly linked
+host dylib SHA256 is
+`b32f075a1bba3922cd890316a1843b045f467d608c530a1b16d0d2bfdd9f554f`;
+all66 actual exported checksums (7bootstrap) match generated TS. Parent independently
+accepted the Rust132-pass/1-existing-ignored settlement gate; this binding slice
+rechecked host generation/checksums and TypeScript, not mobile JS execution.
+See [Native mutation settlement](docs/NATIVE_MUTATION_SETTLEMENT.md) for owned
+worker cancellation, unknown-outcome poison and recovery limits.
+
+Final TS recheck:124/124 tests across15files, no skips; typecheck, full Prettier,
+Bob module+declarations build and whitespace checks green. Receipts and exact
+source snapshots: `/private/tmp/sdk-bootstrap-settlement-binding-review/`.
+The generated whole-old-binary import failure boundary remains unchanged;
+method-level UnsupportedAbi does not promise the error type from importing an
+incompatible binary. Matching iOS/Android builds, generated argument-lifting and
+device acceptance, plus recorded performance gates, remain outstanding. No
+platform build/distribution, activation, package publication or SDK push occurred.
+
+### Bootstrap error inspection hardening
+
+Root review found tag getter/proxy inspection could throw a private error out of
+the redactor. Two permanent regressions failed against the original code, then
+passed after own-data descriptor inspection was enclosed in a protective catch.
+`instanceof`/prototype traps are protected too. Local wrapper errors are rebuilt
+from allowlisted own code fields instead of retaining potentially modified
+messages/causes. Actual generated native error classes and safe own-data-tag
+proxies still preserve their allowlisted codes. Unknown mutation/read failures
+remain RecoveryRequired/Storage with no raw cause/private text.
+
+Final gate:126/126 TS tests across15files,0skips; typecheck, fullsource/test
+Prettier, Bobmodule+declarations and whitespace checks passed. Actual red/green
+logs and source snapshot are at `/private/tmp/sdk-bootstrap-redaction-review/`.
+Only facade/test and this documentation changed since the postsettlement freeze;
+generated binding/Rust bytes are unchanged, and no Cargo work was needed.

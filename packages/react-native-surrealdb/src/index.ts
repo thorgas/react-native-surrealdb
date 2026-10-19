@@ -14,3 +14,17 @@ export * from "./sync-read";
 export * from "./sync-window";
 
 export * from "./sync-window-store";
+
+export {
+  ExperimentalBootstrapError,
+  ExperimentalBootstrapSession,
+} from "./sync-bootstrap";
+export type {
+  ExperimentalBootstrapContext,
+  ExperimentalBootstrapBytes,
+  ExperimentalBootstrapCapabilities,
+  ExperimentalBootstrapErrorCode,
+  ExperimentalBootstrapStage,
+  ExperimentalBootstrapProgress,
+  ExperimentalBootstrapCompletion,
+} from "./sync-bootstrap";

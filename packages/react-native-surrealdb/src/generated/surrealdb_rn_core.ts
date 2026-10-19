@@ -88,6 +88,87 @@ export async function benchmarkBoundaryNoop(asyncOpts_?: {
   }
 }
 
+/**
+ * Trusted caller supplies authenticated context independently from any received body.
+ * A generation-bearing client identity is an application concern, never parsed here.
+ * Factory binding is read-only/process-local. A newer authorization snapshot may
+ * supersede a terminal stage; its first successful Begin establishes the durable
+ * floor. Existing sessions become stale on promotion. Active stages remain exact,
+ * and Complete always applies the canonical pending/history/subscription fences.
+ */
+export async function bindBootstrapSession(
+  client: NativeSyncClientLike,
+  expected: NativeBootstrapContext,
+  asyncOpts_?: { signal: AbortSignal },
+): Promise<NativeBootstrapSessionLike> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_func_bind_bootstrap_session(
+          FfiConverterTypeNativeSyncClient.lower(
+            client,
+            nativeModule().rustbuffer_alloc,
+          ),
+          FfiConverterTypeNativeBootstrapContext.lower(
+            expected,
+            nativeModule().rustbuffer_alloc,
+          ),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_poll_u64,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_u64,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_complete_u64,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_free_u64,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterTypeNativeBootstrapSession.lift.bind(
+        FfiConverterTypeNativeBootstrapSession,
+      ),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeNativeBootstrapError.lift.bind(
+        FfiConverterTypeNativeBootstrapError,
+      ),
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
+ * Source capability only until regenerated bindings and matching native binaries exist.
+ */
+export function bootstrapCapabilities(): NativeBootstrapCapabilities {
+  return ((__rb: Uint8Array) => {
+    try {
+      return FfiConverterTypeNativeBootstrapCapabilities.lift(__rb);
+    } finally {
+      nativeModule().rustbuffer_free(__rb);
+    }
+  })(
+    uniffiCaller.rustCall(
+      /*caller:*/ (callStatus) => {
+        return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_func_bootstrap_capabilities(
+          callStatus,
+        );
+      },
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ),
+  );
+}
+
 export async function connect(
   options: ConnectOptions,
   asyncOpts_?: { signal: AbortSignal },
@@ -396,6 +477,60 @@ export async function encodeSyncPushRequest(
       // export. The bytes the runtime hands back must be deserialized
       // here using the per-callable return-type converter.
       /*liftFunc:*/ FfiConverterArrayBuffer.lift.bind(FfiConverterArrayBuffer),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+        FfiConverterTypeNativeSyncError,
+      ),
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
+/**
+ * Read existing durable state only; never initialize, migrate, or clear a barrier.
+ */
+export async function inspectSyncState(
+  database: SurrealDatabaseLike,
+  options: NativeSyncOpenOptions,
+  asyncOpts_?: { signal: AbortSignal },
+): Promise<NativeSyncInspection> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_func_inspect_sync_state(
+          FfiConverterTypeSurrealDatabase.lower(
+            database,
+            nativeModule().rustbuffer_alloc,
+          ),
+          FfiConverterTypeNativeSyncOpenOptions.lower(
+            options,
+            nativeModule().rustbuffer_alloc,
+          ),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterTypeNativeSyncInspection.lift.bind(
+        FfiConverterTypeNativeSyncInspection,
+      ),
       /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
       /*asyncOpts:*/ asyncOpts_,
       /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
@@ -810,6 +945,364 @@ const FfiConverterTypeNativeBatchQueryResult = (() => {
   return new FFIConverter();
 })();
 
+export type NativeBootstrapCapabilities = {
+  protocol: string;
+  requiresMatchingNativeAbi: boolean;
+  maxFrameBytes: bigint;
+  maxPersistenceBytes: bigint;
+  maxComponents: number;
+  nativeKeyBytes: number;
+  completionDeadlineSeconds: number;
+};
+
+/**
+ * Generated factory for {@link NativeBootstrapCapabilities} record objects.
+ */
+export const NativeBootstrapCapabilities = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      NativeBootstrapCapabilities,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () =>
+      Object.freeze(defaults()) as Partial<NativeBootstrapCapabilities>,
+  });
+})();
+
+const FfiConverterTypeNativeBootstrapCapabilities = (() => {
+  type TypeName = NativeBootstrapCapabilities;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        protocol: FfiConverterString.read(from),
+        requiresMatchingNativeAbi: FfiConverterBool.read(from),
+        maxFrameBytes: FfiConverterUInt64.read(from),
+        maxPersistenceBytes: FfiConverterUInt64.read(from),
+        maxComponents: FfiConverterUInt32.read(from),
+        nativeKeyBytes: FfiConverterUInt32.read(from),
+        completionDeadlineSeconds: FfiConverterUInt32.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.protocol, into);
+      FfiConverterBool.write(value.requiresMatchingNativeAbi, into);
+      FfiConverterUInt64.write(value.maxFrameBytes, into);
+      FfiConverterUInt64.write(value.maxPersistenceBytes, into);
+      FfiConverterUInt32.write(value.maxComponents, into);
+      FfiConverterUInt32.write(value.nativeKeyBytes, into);
+      FfiConverterUInt32.write(value.completionDeadlineSeconds, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.protocol) +
+        FfiConverterBool.allocationSize(value.requiresMatchingNativeAbi) +
+        FfiConverterUInt64.allocationSize(value.maxFrameBytes) +
+        FfiConverterUInt64.allocationSize(value.maxPersistenceBytes) +
+        FfiConverterUInt32.allocationSize(value.maxComponents) +
+        FfiConverterUInt32.allocationSize(value.nativeKeyBytes) +
+        FfiConverterUInt32.allocationSize(value.completionDeadlineSeconds)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type NativeBootstrapContext = {
+  authorityId: string;
+  principalId: string;
+  partitionId: string;
+  clientId: string;
+  journalGeneration: string;
+  requestedScope: string;
+  subscriptionRevision: bigint;
+  /**
+   * Independently obtained from authenticated authority; never inferred from Manifest.
+   */
+  authorizationRevision: bigint;
+};
+
+/**
+ * Generated factory for {@link NativeBootstrapContext} record objects.
+ */
+export const NativeBootstrapContext = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      NativeBootstrapContext,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () =>
+      Object.freeze(defaults()) as Partial<NativeBootstrapContext>,
+  });
+})();
+
+const FfiConverterTypeNativeBootstrapContext = (() => {
+  type TypeName = NativeBootstrapContext;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        authorityId: FfiConverterString.read(from),
+        principalId: FfiConverterString.read(from),
+        partitionId: FfiConverterString.read(from),
+        clientId: FfiConverterString.read(from),
+        journalGeneration: FfiConverterString.read(from),
+        requestedScope: FfiConverterString.read(from),
+        subscriptionRevision: FfiConverterUInt64.read(from),
+        authorizationRevision: FfiConverterUInt64.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.authorityId, into);
+      FfiConverterString.write(value.principalId, into);
+      FfiConverterString.write(value.partitionId, into);
+      FfiConverterString.write(value.clientId, into);
+      FfiConverterString.write(value.journalGeneration, into);
+      FfiConverterString.write(value.requestedScope, into);
+      FfiConverterUInt64.write(value.subscriptionRevision, into);
+      FfiConverterUInt64.write(value.authorizationRevision, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.authorityId) +
+        FfiConverterString.allocationSize(value.principalId) +
+        FfiConverterString.allocationSize(value.partitionId) +
+        FfiConverterString.allocationSize(value.clientId) +
+        FfiConverterString.allocationSize(value.journalGeneration) +
+        FfiConverterString.allocationSize(value.requestedScope) +
+        FfiConverterUInt64.allocationSize(value.subscriptionRevision) +
+        FfiConverterUInt64.allocationSize(value.authorizationRevision)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export enum NativeBootstrapStageState {
+  Missing,
+  Staging,
+  Cancelled,
+  Consumed,
+}
+
+const FfiConverterTypeNativeBootstrapStageState = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeBootstrapStageState;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return NativeBootstrapStageState.Missing;
+        case 2:
+          return NativeBootstrapStageState.Staging;
+        case 3:
+          return NativeBootstrapStageState.Cancelled;
+        case 4:
+          return NativeBootstrapStageState.Consumed;
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value) {
+        case NativeBootstrapStageState.Missing:
+          return ordinalConverter.write(1, into);
+        case NativeBootstrapStageState.Staging:
+          return ordinalConverter.write(2, into);
+        case NativeBootstrapStageState.Cancelled:
+          return ordinalConverter.write(3, into);
+        case NativeBootstrapStageState.Consumed:
+          return ordinalConverter.write(4, into);
+      }
+    }
+    allocationSize(value: TypeName): number {
+      return ordinalConverter.allocationSize(0);
+    }
+  }
+  return new FFIConverter();
+})();
+
+/**
+ * Opaque fixed incarnation. Fresh sessions recover a new handle through read-only progress.
+ */
+export interface NativeBootstrapStageLike {}
+/**
+ * @deprecated Use `NativeBootstrapStageLike` instead.
+ */
+export type NativeBootstrapStageInterface = NativeBootstrapStageLike;
+
+/**
+ * Opaque fixed incarnation. Fresh sessions recover a new handle through read-only progress.
+ */
+export class NativeBootstrapStage
+  extends UniffiAbstractObject
+  implements NativeBootstrapStageLike
+{
+  readonly [uniffiTypeNameSymbol] = "NativeBootstrapStage";
+  readonly [destructorGuardSymbol]: UniffiGcObject;
+  readonly [pointerLiteralSymbol]: UniffiHandle;
+  // No primary constructor declared for this class.
+  private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] =
+      uniffiTypeNativeBootstrapStageObjectFactory.bless(pointer);
+  }
+
+  uniffiDestroy(): void {
+    const ptr = (this as any)[destructorGuardSymbol];
+    if (ptr !== undefined) {
+      const pointer = uniffiTypeNativeBootstrapStageObjectFactory.pointer(this);
+      uniffiTypeNativeBootstrapStageObjectFactory.freePointer(pointer);
+      uniffiTypeNativeBootstrapStageObjectFactory.unbless(ptr);
+      delete (this as any)[destructorGuardSymbol];
+    }
+  }
+
+  static instanceOf(obj_: any): obj_ is NativeBootstrapStage {
+    return uniffiTypeNativeBootstrapStageObjectFactory.isConcreteType(obj_);
+  }
+}
+
+const uniffiTypeNativeBootstrapStageObjectFactory: UniffiObjectFactory<NativeBootstrapStageLike> =
+  (() => {
+    return {
+      create(pointer: UniffiHandle): NativeBootstrapStageLike {
+        const instance = Object.create(NativeBootstrapStage.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "NativeBootstrapStage";
+        return instance;
+      },
+
+      bless(p: UniffiHandle): UniffiGcObject {
+        return uniffiCaller.rustCall(
+          /*caller:*/ (status) =>
+            nativeModule().ubrn_uniffi_internal_fn_method_nativebootstrapstage_ffi__bless_pointer(
+              p,
+              status,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      unbless(ptr_: UniffiGcObject) {
+        ptr_.markDestroyed();
+      },
+
+      pointer(obj_: NativeBootstrapStageLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+          throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+      },
+
+      clonePointer(obj_: NativeBootstrapStageLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_clone_nativebootstrapstage(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_free_nativebootstrapstage(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      isConcreteType(obj_: any): obj_ is NativeBootstrapStageLike {
+        return (
+          obj_[destructorGuardSymbol] &&
+          obj_[uniffiTypeNameSymbol] === "NativeBootstrapStage"
+        );
+      },
+    };
+  })();
+const FfiConverterTypeNativeBootstrapStage = new FfiConverterObject(
+  uniffiTypeNativeBootstrapStageObjectFactory,
+);
+
+export type NativeBootstrapProgress = {
+  state: NativeBootstrapStageState;
+  stage?: NativeBootstrapStageLike;
+  receivedIndices?: Array<bigint>;
+  expectedPages?: bigint;
+  successfulRevision?: bigint;
+};
+
+/**
+ * Generated factory for {@link NativeBootstrapProgress} record objects.
+ */
+export const NativeBootstrapProgress = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      NativeBootstrapProgress,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () =>
+      Object.freeze(defaults()) as Partial<NativeBootstrapProgress>,
+  });
+})();
+
+const FfiConverterTypeNativeBootstrapProgress = (() => {
+  type TypeName = NativeBootstrapProgress;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        state: FfiConverterTypeNativeBootstrapStageState.read(from),
+        stage: FfiConverterOptionalTypeNativeBootstrapStage.read(from),
+        receivedIndices: FfiConverterOptionalSequenceUInt64.read(from),
+        expectedPages: FfiConverterOptionalUInt64.read(from),
+        successfulRevision: FfiConverterOptionalUInt64.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterTypeNativeBootstrapStageState.write(value.state, into);
+      FfiConverterOptionalTypeNativeBootstrapStage.write(value.stage, into);
+      FfiConverterOptionalSequenceUInt64.write(value.receivedIndices, into);
+      FfiConverterOptionalUInt64.write(value.expectedPages, into);
+      FfiConverterOptionalUInt64.write(value.successfulRevision, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterTypeNativeBootstrapStageState.allocationSize(value.state) +
+        FfiConverterOptionalTypeNativeBootstrapStage.allocationSize(
+          value.stage,
+        ) +
+        FfiConverterOptionalSequenceUInt64.allocationSize(
+          value.receivedIndices,
+        ) +
+        FfiConverterOptionalUInt64.allocationSize(value.expectedPages) +
+        FfiConverterOptionalUInt64.allocationSize(value.successfulRevision)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
 export type NativeQueryTiming = {
   inputDecodeNs: bigint;
   engineNs: bigint;
@@ -1164,6 +1657,596 @@ const FfiConverterTypeNativeSyncStatus = (() => {
         FfiConverterOptionalUInt64.allocationSize(value.cursorEpoch) +
         FfiConverterOptionalUInt64.allocationSize(value.cursorSequence)
       );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export enum NativeBootstrapCompletion {
+  Applied,
+  HistoricalSuccess,
+}
+
+const FfiConverterTypeNativeBootstrapCompletion = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeBootstrapCompletion;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return NativeBootstrapCompletion.Applied;
+        case 2:
+          return NativeBootstrapCompletion.HistoricalSuccess;
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value) {
+        case NativeBootstrapCompletion.Applied:
+          return ordinalConverter.write(1, into);
+        case NativeBootstrapCompletion.HistoricalSuccess:
+          return ordinalConverter.write(2, into);
+      }
+    }
+    allocationSize(value: TypeName): number {
+      return ordinalConverter.allocationSize(0);
+    }
+  }
+  return new FFIConverter();
+})();
+
+// Error type: NativeBootstrapError
+export enum NativeBootstrapError_Tags {
+  InvalidInput = "InvalidInput",
+  InvalidFrame = "InvalidFrame",
+  ContextMismatch = "ContextMismatch",
+  StageMismatch = "StageMismatch",
+  CapacityExceeded = "CapacityExceeded",
+  CorruptStage = "CorruptStage",
+  Expired = "Expired",
+  ClockUnavailable = "ClockUnavailable",
+  Closed = "Closed",
+  NeedsNewScopeJournal = "NeedsNewScopeJournal",
+  PendingQuarantineRequired = "PendingQuarantineRequired",
+  RecoveryRequired = "RecoveryRequired",
+  Storage = "Storage",
+}
+export const NativeBootstrapError = (() => {
+  type InvalidInput__interface = {
+    tag: NativeBootstrapError_Tags.InvalidInput;
+  };
+  class InvalidInput_ extends UniffiError implements InvalidInput__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.InvalidInput;
+    constructor() {
+      super("NativeBootstrapError", "InvalidInput");
+    }
+
+    static new(): InvalidInput_ {
+      return new InvalidInput_();
+    }
+
+    static instanceOf(obj: any): obj is InvalidInput_ {
+      return obj.tag === NativeBootstrapError_Tags.InvalidInput;
+    }
+    static hasInner(obj: any): obj is InvalidInput_ {
+      return false;
+    }
+  }
+
+  type InvalidFrame__interface = {
+    tag: NativeBootstrapError_Tags.InvalidFrame;
+  };
+  class InvalidFrame_ extends UniffiError implements InvalidFrame__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.InvalidFrame;
+    constructor() {
+      super("NativeBootstrapError", "InvalidFrame");
+    }
+
+    static new(): InvalidFrame_ {
+      return new InvalidFrame_();
+    }
+
+    static instanceOf(obj: any): obj is InvalidFrame_ {
+      return obj.tag === NativeBootstrapError_Tags.InvalidFrame;
+    }
+    static hasInner(obj: any): obj is InvalidFrame_ {
+      return false;
+    }
+  }
+
+  type ContextMismatch__interface = {
+    tag: NativeBootstrapError_Tags.ContextMismatch;
+  };
+  class ContextMismatch_
+    extends UniffiError
+    implements ContextMismatch__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.ContextMismatch;
+    constructor() {
+      super("NativeBootstrapError", "ContextMismatch");
+    }
+
+    static new(): ContextMismatch_ {
+      return new ContextMismatch_();
+    }
+
+    static instanceOf(obj: any): obj is ContextMismatch_ {
+      return obj.tag === NativeBootstrapError_Tags.ContextMismatch;
+    }
+    static hasInner(obj: any): obj is ContextMismatch_ {
+      return false;
+    }
+  }
+
+  type StageMismatch__interface = {
+    tag: NativeBootstrapError_Tags.StageMismatch;
+  };
+  class StageMismatch_ extends UniffiError implements StageMismatch__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.StageMismatch;
+    constructor() {
+      super("NativeBootstrapError", "StageMismatch");
+    }
+
+    static new(): StageMismatch_ {
+      return new StageMismatch_();
+    }
+
+    static instanceOf(obj: any): obj is StageMismatch_ {
+      return obj.tag === NativeBootstrapError_Tags.StageMismatch;
+    }
+    static hasInner(obj: any): obj is StageMismatch_ {
+      return false;
+    }
+  }
+
+  type CapacityExceeded__interface = {
+    tag: NativeBootstrapError_Tags.CapacityExceeded;
+  };
+  class CapacityExceeded_
+    extends UniffiError
+    implements CapacityExceeded__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.CapacityExceeded;
+    constructor() {
+      super("NativeBootstrapError", "CapacityExceeded");
+    }
+
+    static new(): CapacityExceeded_ {
+      return new CapacityExceeded_();
+    }
+
+    static instanceOf(obj: any): obj is CapacityExceeded_ {
+      return obj.tag === NativeBootstrapError_Tags.CapacityExceeded;
+    }
+    static hasInner(obj: any): obj is CapacityExceeded_ {
+      return false;
+    }
+  }
+
+  type CorruptStage__interface = {
+    tag: NativeBootstrapError_Tags.CorruptStage;
+  };
+  class CorruptStage_ extends UniffiError implements CorruptStage__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.CorruptStage;
+    constructor() {
+      super("NativeBootstrapError", "CorruptStage");
+    }
+
+    static new(): CorruptStage_ {
+      return new CorruptStage_();
+    }
+
+    static instanceOf(obj: any): obj is CorruptStage_ {
+      return obj.tag === NativeBootstrapError_Tags.CorruptStage;
+    }
+    static hasInner(obj: any): obj is CorruptStage_ {
+      return false;
+    }
+  }
+
+  type Expired__interface = {
+    tag: NativeBootstrapError_Tags.Expired;
+  };
+  class Expired_ extends UniffiError implements Expired__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.Expired;
+    constructor() {
+      super("NativeBootstrapError", "Expired");
+    }
+
+    static new(): Expired_ {
+      return new Expired_();
+    }
+
+    static instanceOf(obj: any): obj is Expired_ {
+      return obj.tag === NativeBootstrapError_Tags.Expired;
+    }
+    static hasInner(obj: any): obj is Expired_ {
+      return false;
+    }
+  }
+
+  type ClockUnavailable__interface = {
+    tag: NativeBootstrapError_Tags.ClockUnavailable;
+  };
+  class ClockUnavailable_
+    extends UniffiError
+    implements ClockUnavailable__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.ClockUnavailable;
+    constructor() {
+      super("NativeBootstrapError", "ClockUnavailable");
+    }
+
+    static new(): ClockUnavailable_ {
+      return new ClockUnavailable_();
+    }
+
+    static instanceOf(obj: any): obj is ClockUnavailable_ {
+      return obj.tag === NativeBootstrapError_Tags.ClockUnavailable;
+    }
+    static hasInner(obj: any): obj is ClockUnavailable_ {
+      return false;
+    }
+  }
+
+  type Closed__interface = {
+    tag: NativeBootstrapError_Tags.Closed;
+  };
+  class Closed_ extends UniffiError implements Closed__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.Closed;
+    constructor() {
+      super("NativeBootstrapError", "Closed");
+    }
+
+    static new(): Closed_ {
+      return new Closed_();
+    }
+
+    static instanceOf(obj: any): obj is Closed_ {
+      return obj.tag === NativeBootstrapError_Tags.Closed;
+    }
+    static hasInner(obj: any): obj is Closed_ {
+      return false;
+    }
+  }
+
+  type NeedsNewScopeJournal__interface = {
+    tag: NativeBootstrapError_Tags.NeedsNewScopeJournal;
+  };
+  class NeedsNewScopeJournal_
+    extends UniffiError
+    implements NeedsNewScopeJournal__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.NeedsNewScopeJournal;
+    constructor() {
+      super("NativeBootstrapError", "NeedsNewScopeJournal");
+    }
+
+    static new(): NeedsNewScopeJournal_ {
+      return new NeedsNewScopeJournal_();
+    }
+
+    static instanceOf(obj: any): obj is NeedsNewScopeJournal_ {
+      return obj.tag === NativeBootstrapError_Tags.NeedsNewScopeJournal;
+    }
+    static hasInner(obj: any): obj is NeedsNewScopeJournal_ {
+      return false;
+    }
+  }
+
+  type PendingQuarantineRequired__interface = {
+    tag: NativeBootstrapError_Tags.PendingQuarantineRequired;
+  };
+  class PendingQuarantineRequired_
+    extends UniffiError
+    implements PendingQuarantineRequired__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.PendingQuarantineRequired;
+    constructor() {
+      super("NativeBootstrapError", "PendingQuarantineRequired");
+    }
+
+    static new(): PendingQuarantineRequired_ {
+      return new PendingQuarantineRequired_();
+    }
+
+    static instanceOf(obj: any): obj is PendingQuarantineRequired_ {
+      return obj.tag === NativeBootstrapError_Tags.PendingQuarantineRequired;
+    }
+    static hasInner(obj: any): obj is PendingQuarantineRequired_ {
+      return false;
+    }
+  }
+
+  type RecoveryRequired__interface = {
+    tag: NativeBootstrapError_Tags.RecoveryRequired;
+  };
+  class RecoveryRequired_
+    extends UniffiError
+    implements RecoveryRequired__interface
+  {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.RecoveryRequired;
+    constructor() {
+      super("NativeBootstrapError", "RecoveryRequired");
+    }
+
+    static new(): RecoveryRequired_ {
+      return new RecoveryRequired_();
+    }
+
+    static instanceOf(obj: any): obj is RecoveryRequired_ {
+      return obj.tag === NativeBootstrapError_Tags.RecoveryRequired;
+    }
+    static hasInner(obj: any): obj is RecoveryRequired_ {
+      return false;
+    }
+  }
+
+  type Storage__interface = {
+    tag: NativeBootstrapError_Tags.Storage;
+  };
+  class Storage_ extends UniffiError implements Storage__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeBootstrapError";
+    readonly tag = NativeBootstrapError_Tags.Storage;
+    constructor() {
+      super("NativeBootstrapError", "Storage");
+    }
+
+    static new(): Storage_ {
+      return new Storage_();
+    }
+
+    static instanceOf(obj: any): obj is Storage_ {
+      return obj.tag === NativeBootstrapError_Tags.Storage;
+    }
+    static hasInner(obj: any): obj is Storage_ {
+      return false;
+    }
+  }
+
+  function instanceOf(obj: any): obj is NativeBootstrapError {
+    return obj[uniffiTypeNameSymbol] === "NativeBootstrapError";
+  }
+
+  return Object.freeze({
+    instanceOf,
+    InvalidInput: InvalidInput_,
+    InvalidFrame: InvalidFrame_,
+    ContextMismatch: ContextMismatch_,
+    StageMismatch: StageMismatch_,
+    CapacityExceeded: CapacityExceeded_,
+    CorruptStage: CorruptStage_,
+    Expired: Expired_,
+    ClockUnavailable: ClockUnavailable_,
+    Closed: Closed_,
+    NeedsNewScopeJournal: NeedsNewScopeJournal_,
+    PendingQuarantineRequired: PendingQuarantineRequired_,
+    RecoveryRequired: RecoveryRequired_,
+    Storage: Storage_,
+  });
+})();
+export type NativeBootstrapError = InstanceType<
+  (typeof NativeBootstrapError)[
+    | "InvalidInput"
+    | "InvalidFrame"
+    | "ContextMismatch"
+    | "StageMismatch"
+    | "CapacityExceeded"
+    | "CorruptStage"
+    | "Expired"
+    | "ClockUnavailable"
+    | "Closed"
+    | "NeedsNewScopeJournal"
+    | "PendingQuarantineRequired"
+    | "RecoveryRequired"
+    | "Storage"]
+>;
+
+// FfiConverter for enum NativeBootstrapError
+const FfiConverterTypeNativeBootstrapError = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeBootstrapError;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return new NativeBootstrapError.InvalidInput();
+        case 2:
+          return new NativeBootstrapError.InvalidFrame();
+        case 3:
+          return new NativeBootstrapError.ContextMismatch();
+        case 4:
+          return new NativeBootstrapError.StageMismatch();
+        case 5:
+          return new NativeBootstrapError.CapacityExceeded();
+        case 6:
+          return new NativeBootstrapError.CorruptStage();
+        case 7:
+          return new NativeBootstrapError.Expired();
+        case 8:
+          return new NativeBootstrapError.ClockUnavailable();
+        case 9:
+          return new NativeBootstrapError.Closed();
+        case 10:
+          return new NativeBootstrapError.NeedsNewScopeJournal();
+        case 11:
+          return new NativeBootstrapError.PendingQuarantineRequired();
+        case 12:
+          return new NativeBootstrapError.RecoveryRequired();
+        case 13:
+          return new NativeBootstrapError.Storage();
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value.tag) {
+        case NativeBootstrapError_Tags.InvalidInput: {
+          ordinalConverter.write(1, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.InvalidFrame: {
+          ordinalConverter.write(2, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.ContextMismatch: {
+          ordinalConverter.write(3, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.StageMismatch: {
+          ordinalConverter.write(4, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.CapacityExceeded: {
+          ordinalConverter.write(5, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.CorruptStage: {
+          ordinalConverter.write(6, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.Expired: {
+          ordinalConverter.write(7, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.ClockUnavailable: {
+          ordinalConverter.write(8, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.Closed: {
+          ordinalConverter.write(9, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.NeedsNewScopeJournal: {
+          ordinalConverter.write(10, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.PendingQuarantineRequired: {
+          ordinalConverter.write(11, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.RecoveryRequired: {
+          ordinalConverter.write(12, into);
+          return;
+        }
+        case NativeBootstrapError_Tags.Storage: {
+          ordinalConverter.write(13, into);
+          return;
+        }
+        default:
+          // Throwing from here means that NativeBootstrapError_Tags hasn't matched an ordinal.
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    allocationSize(value: TypeName): number {
+      switch (value.tag) {
+        case NativeBootstrapError_Tags.InvalidInput: {
+          return ordinalConverter.allocationSize(1);
+        }
+        case NativeBootstrapError_Tags.InvalidFrame: {
+          return ordinalConverter.allocationSize(2);
+        }
+        case NativeBootstrapError_Tags.ContextMismatch: {
+          return ordinalConverter.allocationSize(3);
+        }
+        case NativeBootstrapError_Tags.StageMismatch: {
+          return ordinalConverter.allocationSize(4);
+        }
+        case NativeBootstrapError_Tags.CapacityExceeded: {
+          return ordinalConverter.allocationSize(5);
+        }
+        case NativeBootstrapError_Tags.CorruptStage: {
+          return ordinalConverter.allocationSize(6);
+        }
+        case NativeBootstrapError_Tags.Expired: {
+          return ordinalConverter.allocationSize(7);
+        }
+        case NativeBootstrapError_Tags.ClockUnavailable: {
+          return ordinalConverter.allocationSize(8);
+        }
+        case NativeBootstrapError_Tags.Closed: {
+          return ordinalConverter.allocationSize(9);
+        }
+        case NativeBootstrapError_Tags.NeedsNewScopeJournal: {
+          return ordinalConverter.allocationSize(10);
+        }
+        case NativeBootstrapError_Tags.PendingQuarantineRequired: {
+          return ordinalConverter.allocationSize(11);
+        }
+        case NativeBootstrapError_Tags.RecoveryRequired: {
+          return ordinalConverter.allocationSize(12);
+        }
+        case NativeBootstrapError_Tags.Storage: {
+          return ordinalConverter.allocationSize(13);
+        }
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
     }
   }
   return new FFIConverter();
@@ -1758,6 +2841,211 @@ const FfiConverterTypeNativeSyncError = (() => {
   return new FFIConverter();
 })();
 
+/**
+ * Counts remain available when a persisted scope barrier blocks ordinary reads.
+ */
+export enum NativeSyncInspectionBarrier {
+  None,
+  NeedsNewScopeJournal,
+  PendingQuarantineRequired,
+}
+
+const FfiConverterTypeNativeSyncInspectionBarrier = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeSyncInspectionBarrier;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return NativeSyncInspectionBarrier.None;
+        case 2:
+          return NativeSyncInspectionBarrier.NeedsNewScopeJournal;
+        case 3:
+          return NativeSyncInspectionBarrier.PendingQuarantineRequired;
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value) {
+        case NativeSyncInspectionBarrier.None:
+          return ordinalConverter.write(1, into);
+        case NativeSyncInspectionBarrier.NeedsNewScopeJournal:
+          return ordinalConverter.write(2, into);
+        case NativeSyncInspectionBarrier.PendingQuarantineRequired:
+          return ordinalConverter.write(3, into);
+      }
+    }
+    allocationSize(value: TypeName): number {
+      return ordinalConverter.allocationSize(0);
+    }
+  }
+  return new FFIConverter();
+})();
+
+// Enum: NativeSyncInspection
+export enum NativeSyncInspection_Tags {
+  Missing = "Missing",
+  Present = "Present",
+}
+export const NativeSyncInspection = (() => {
+  type Missing__interface = {
+    tag: NativeSyncInspection_Tags.Missing;
+  };
+  class Missing_ extends UniffiEnum implements Missing__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeSyncInspection";
+    readonly tag = NativeSyncInspection_Tags.Missing;
+    constructor() {
+      super("NativeSyncInspection", "Missing");
+    }
+
+    static new(): Missing_ {
+      return new Missing_();
+    }
+
+    static instanceOf(obj: any): obj is Missing_ {
+      return obj.tag === NativeSyncInspection_Tags.Missing;
+    }
+  }
+
+  type Present__interface = {
+    tag: NativeSyncInspection_Tags.Present;
+    inner: Readonly<{
+      revision: bigint;
+      pendingCount: number;
+      outcomeCount: number;
+      conflictCount: number;
+      barrier: NativeSyncInspectionBarrier;
+    }>;
+  };
+  class Present_ extends UniffiEnum implements Present__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeSyncInspection";
+    readonly tag = NativeSyncInspection_Tags.Present;
+    readonly inner: Readonly<{
+      revision: bigint;
+      pendingCount: number;
+      outcomeCount: number;
+      conflictCount: number;
+      barrier: NativeSyncInspectionBarrier;
+    }>;
+    constructor(inner: {
+      revision: bigint;
+      pendingCount: number;
+      outcomeCount: number;
+      conflictCount: number;
+      barrier: NativeSyncInspectionBarrier;
+    }) {
+      super("NativeSyncInspection", "Present");
+
+      this.inner = Object.freeze(inner);
+    }
+    static new(inner: {
+      revision: bigint;
+      pendingCount: number;
+      outcomeCount: number;
+      conflictCount: number;
+      barrier: NativeSyncInspectionBarrier;
+    }): Present_ {
+      return new Present_(inner);
+    }
+
+    static instanceOf(obj: any): obj is Present_ {
+      return obj.tag === NativeSyncInspection_Tags.Present;
+    }
+  }
+
+  function instanceOf(obj: any): obj is NativeSyncInspection {
+    return obj[uniffiTypeNameSymbol] === "NativeSyncInspection";
+  }
+
+  return Object.freeze({
+    instanceOf,
+    Missing: Missing_,
+    Present: Present_,
+  });
+})();
+export type NativeSyncInspection = InstanceType<
+  (typeof NativeSyncInspection)["Missing" | "Present"]
+>;
+
+// FfiConverter for enum NativeSyncInspection
+const FfiConverterTypeNativeSyncInspection = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeSyncInspection;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return new NativeSyncInspection.Missing();
+        case 2:
+          return new NativeSyncInspection.Present({
+            revision: FfiConverterUInt64.read(from),
+            pendingCount: FfiConverterUInt32.read(from),
+            outcomeCount: FfiConverterUInt32.read(from),
+            conflictCount: FfiConverterUInt32.read(from),
+            barrier: FfiConverterTypeNativeSyncInspectionBarrier.read(from),
+          });
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value.tag) {
+        case NativeSyncInspection_Tags.Missing: {
+          ordinalConverter.write(1, into);
+          return;
+        }
+        case NativeSyncInspection_Tags.Present: {
+          ordinalConverter.write(2, into);
+          const inner = value.inner;
+          FfiConverterUInt64.write(inner.revision, into);
+          FfiConverterUInt32.write(inner.pendingCount, into);
+          FfiConverterUInt32.write(inner.outcomeCount, into);
+          FfiConverterUInt32.write(inner.conflictCount, into);
+          FfiConverterTypeNativeSyncInspectionBarrier.write(
+            inner.barrier,
+            into,
+          );
+          return;
+        }
+        default:
+          // Throwing from here means that NativeSyncInspection_Tags hasn't matched an ordinal.
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    allocationSize(value: TypeName): number {
+      switch (value.tag) {
+        case NativeSyncInspection_Tags.Missing: {
+          return ordinalConverter.allocationSize(1);
+        }
+        case NativeSyncInspection_Tags.Present: {
+          const inner = value.inner;
+          let size = ordinalConverter.allocationSize(2);
+          size += FfiConverterUInt64.allocationSize(inner.revision);
+          size += FfiConverterUInt32.allocationSize(inner.pendingCount);
+          size += FfiConverterUInt32.allocationSize(inner.outcomeCount);
+          size += FfiConverterUInt32.allocationSize(inner.conflictCount);
+          size += FfiConverterTypeNativeSyncInspectionBarrier.allocationSize(
+            inner.barrier,
+          );
+          return size;
+        }
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+  }
+  return new FFIConverter();
+})();
+
 // Error type: SurrealRnError
 export enum SurrealRnError_Tags {
   InvalidEndpoint = "InvalidEndpoint",
@@ -2300,6 +3588,385 @@ const uniffiTypeLiveQueryObjectFactory: UniffiObjectFactory<LiveQueryLike> =
   })();
 const FfiConverterTypeLiveQuery = new FfiConverterObject(
   uniffiTypeLiveQueryObjectFactory,
+);
+
+export interface NativeBootstrapSessionLike {
+  begin(
+    start: ArrayBuffer,
+    manifest: ArrayBuffer,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeBootstrapStageLike>;
+  cancel(
+    stage: NativeBootstrapStageLike,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<void>;
+  /**
+   * New installation requires fresh authenticated transport receipt from trusted caller.
+   * Clock/deadline are native-owned; consumed historical identity may survive expiry.
+   */
+  complete(
+    stage: NativeBootstrapStageLike,
+    receipt: ArrayBuffer,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeBootstrapCompletion>;
+  page(
+    stage: NativeBootstrapStageLike,
+    bytes: ArrayBuffer,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<void>;
+  /**
+   * Read-only resume: Missing never invokes Begin or initializes schema/state.
+   */
+  progress(
+    manifest: ArrayBuffer,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeBootstrapProgress>;
+}
+/**
+ * @deprecated Use `NativeBootstrapSessionLike` instead.
+ */
+export type NativeBootstrapSessionInterface = NativeBootstrapSessionLike;
+
+export class NativeBootstrapSession
+  extends UniffiAbstractObject
+  implements NativeBootstrapSessionLike
+{
+  readonly [uniffiTypeNameSymbol] = "NativeBootstrapSession";
+  readonly [destructorGuardSymbol]: UniffiGcObject;
+  readonly [pointerLiteralSymbol]: UniffiHandle;
+  // No primary constructor declared for this class.
+  private constructor(pointer: UniffiHandle) {
+    super();
+    this[pointerLiteralSymbol] = pointer;
+    this[destructorGuardSymbol] =
+      uniffiTypeNativeBootstrapSessionObjectFactory.bless(pointer);
+  }
+
+  async begin(
+    start: ArrayBuffer,
+    manifest: ArrayBuffer,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeBootstrapStageLike> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_begin(
+            uniffiTypeNativeBootstrapSessionObjectFactory.clonePointer(this),
+            FfiConverterArrayBuffer.lower(
+              start,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterArrayBuffer.lower(
+              manifest,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_u64,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_u64,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_u64,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_u64,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeBootstrapStage.lift.bind(
+          FfiConverterTypeNativeBootstrapStage,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeBootstrapError.lift.bind(
+          FfiConverterTypeNativeBootstrapError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async cancel(
+    stage: NativeBootstrapStageLike,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_cancel(
+            uniffiTypeNativeBootstrapSessionObjectFactory.clonePointer(this),
+            FfiConverterTypeNativeBootstrapStage.lower(
+              stage,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_void,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_void,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_void,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_void,
+        /*liftFunc:*/ (_v) => {},
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeBootstrapError.lift.bind(
+          FfiConverterTypeNativeBootstrapError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  /**
+   * New installation requires fresh authenticated transport receipt from trusted caller.
+   * Clock/deadline are native-owned; consumed historical identity may survive expiry.
+   */
+  async complete(
+    stage: NativeBootstrapStageLike,
+    receipt: ArrayBuffer,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeBootstrapCompletion> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_complete(
+            uniffiTypeNativeBootstrapSessionObjectFactory.clonePointer(this),
+            FfiConverterTypeNativeBootstrapStage.lower(
+              stage,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterArrayBuffer.lower(
+              receipt,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeBootstrapCompletion.lift.bind(
+          FfiConverterTypeNativeBootstrapCompletion,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeBootstrapError.lift.bind(
+          FfiConverterTypeNativeBootstrapError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  async page(
+    stage: NativeBootstrapStageLike,
+    bytes: ArrayBuffer,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<void> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_page(
+            uniffiTypeNativeBootstrapSessionObjectFactory.clonePointer(this),
+            FfiConverterTypeNativeBootstrapStage.lower(
+              stage,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterArrayBuffer.lower(
+              bytes,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_void,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_void,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_void,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_void,
+        /*liftFunc:*/ (_v) => {},
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeBootstrapError.lift.bind(
+          FfiConverterTypeNativeBootstrapError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  /**
+   * Read-only resume: Missing never invokes Begin or initializes schema/state.
+   */
+  async progress(
+    manifest: ArrayBuffer,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeBootstrapProgress> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_progress(
+            uniffiTypeNativeBootstrapSessionObjectFactory.clonePointer(this),
+            FfiConverterArrayBuffer.lower(
+              manifest,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeBootstrapProgress.lift.bind(
+          FfiConverterTypeNativeBootstrapProgress,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeBootstrapError.lift.bind(
+          FfiConverterTypeNativeBootstrapError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  uniffiDestroy(): void {
+    const ptr = (this as any)[destructorGuardSymbol];
+    if (ptr !== undefined) {
+      const pointer =
+        uniffiTypeNativeBootstrapSessionObjectFactory.pointer(this);
+      uniffiTypeNativeBootstrapSessionObjectFactory.freePointer(pointer);
+      uniffiTypeNativeBootstrapSessionObjectFactory.unbless(ptr);
+      delete (this as any)[destructorGuardSymbol];
+    }
+  }
+
+  static instanceOf(obj_: any): obj_ is NativeBootstrapSession {
+    return uniffiTypeNativeBootstrapSessionObjectFactory.isConcreteType(obj_);
+  }
+}
+
+const uniffiTypeNativeBootstrapSessionObjectFactory: UniffiObjectFactory<NativeBootstrapSessionLike> =
+  (() => {
+    return {
+      create(pointer: UniffiHandle): NativeBootstrapSessionLike {
+        const instance = Object.create(NativeBootstrapSession.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "NativeBootstrapSession";
+        return instance;
+      },
+
+      bless(p: UniffiHandle): UniffiGcObject {
+        return uniffiCaller.rustCall(
+          /*caller:*/ (status) =>
+            nativeModule().ubrn_uniffi_internal_fn_method_nativebootstrapsession_ffi__bless_pointer(
+              p,
+              status,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      unbless(ptr_: UniffiGcObject) {
+        ptr_.markDestroyed();
+      },
+
+      pointer(obj_: NativeBootstrapSessionLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+          throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+      },
+
+      clonePointer(obj_: NativeBootstrapSessionLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_clone_nativebootstrapsession(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+          /*caller:*/ (callStatus) =>
+            nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_free_nativebootstrapsession(
+              pointer,
+              callStatus,
+            ),
+          /*liftString:*/ FfiConverterString.lift,
+        );
+      },
+
+      isConcreteType(obj_: any): obj_ is NativeBootstrapSessionLike {
+        return (
+          obj_[destructorGuardSymbol] &&
+          obj_[uniffiTypeNameSymbol] === "NativeBootstrapSession"
+        );
+      },
+    };
+  })();
+const FfiConverterTypeNativeBootstrapSession = new FfiConverterObject(
+  uniffiTypeNativeBootstrapSessionObjectFactory,
 );
 
 export interface NativeSyncClientLike {
@@ -4818,12 +6485,25 @@ const FfiConverterSequenceTypeQueryStatementResult = new FfiConverterArray(
   FfiConverterTypeQueryStatementResult,
 );
 
-// FfiConverter for NativeSyncOperationSpan | undefined
-const FfiConverterOptionalTypeNativeSyncOperationSpan =
-  new FfiConverterOptional(FfiConverterTypeNativeSyncOperationSpan);
+// FfiConverter for NativeBootstrapStageLike | undefined
+const FfiConverterOptionalTypeNativeBootstrapStage = new FfiConverterOptional(
+  FfiConverterTypeNativeBootstrapStage,
+);
+
+// FfiConverter for Array<bigint>
+const FfiConverterSequenceUInt64 = new FfiConverterArray(FfiConverterUInt64);
+
+// FfiConverter for Array<bigint> | undefined
+const FfiConverterOptionalSequenceUInt64 = new FfiConverterOptional(
+  FfiConverterSequenceUInt64,
+);
 
 // FfiConverter for bigint | undefined
 const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
+
+// FfiConverter for NativeSyncOperationSpan | undefined
+const FfiConverterOptionalTypeNativeSyncOperationSpan =
+  new FfiConverterOptional(FfiConverterTypeNativeSyncOperationSpan);
 
 // FfiConverter for LiveNotification | undefined
 const FfiConverterOptionalTypeLiveNotification = new FfiConverterOptional(
@@ -4871,6 +6551,22 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_func_benchmark_boundary_noop",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_func_bind_bootstrap_session() !==
+    50031
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_func_bind_bootstrap_session",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_func_bootstrap_capabilities() !==
+    47229
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_func_bootstrap_capabilities",
     );
   }
   if (
@@ -4930,6 +6626,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_func_inspect_sync_state() !==
+    27988
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_func_inspect_sync_state",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_func_open_sync_client() !==
     12959
   ) {
@@ -4959,6 +6663,46 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_livequery_next",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_begin() !==
+    40010
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_begin",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_cancel() !==
+    49646
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_cancel",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_complete() !==
+    24982
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_complete",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_page() !==
+    31808
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_page",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_progress() !==
+    50014
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_progress",
     );
   }
   if (
@@ -5340,6 +7084,14 @@ export default Object.freeze({
     FfiConverterTypeLiveQuery,
     FfiConverterTypeNativeBatchQuery,
     FfiConverterTypeNativeBatchQueryResult,
+    FfiConverterTypeNativeBootstrapCapabilities,
+    FfiConverterTypeNativeBootstrapCompletion,
+    FfiConverterTypeNativeBootstrapContext,
+    FfiConverterTypeNativeBootstrapError,
+    FfiConverterTypeNativeBootstrapProgress,
+    FfiConverterTypeNativeBootstrapSession,
+    FfiConverterTypeNativeBootstrapStage,
+    FfiConverterTypeNativeBootstrapStageState,
     FfiConverterTypeNativeConflictPolicy,
     FfiConverterTypeNativeOutputEncoding,
     FfiConverterTypeNativeProfiledQueryResult,
@@ -5347,6 +7099,8 @@ export default Object.freeze({
     FfiConverterTypeNativeSyncClient,
     FfiConverterTypeNativeSyncDiagnostics,
     FfiConverterTypeNativeSyncError,
+    FfiConverterTypeNativeSyncInspection,
+    FfiConverterTypeNativeSyncInspectionBarrier,
     FfiConverterTypeNativeSyncOpenOptions,
     FfiConverterTypeNativeSyncOperationSpan,
     FfiConverterTypeNativeSyncStatus,

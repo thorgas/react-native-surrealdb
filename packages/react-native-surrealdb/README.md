@@ -451,3 +451,69 @@ led by James Hugman and built on
 [Mozilla UniFFI](https://github.com/mozilla/uniffi-rs). See
 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md) for project, contributor, and
 license details included with the published package.
+
+### Opaque bootstrap v1 (additive source ABI)
+
+`ExperimentalSyncClient.bootstrapCapabilities()` and
+`bindBootstrapSession(context, options)` require the matching regenerated native
+ABI. Missing capabilities fail before storage, with no v1 fallback. Context must
+come independently from authenticated transport, including server authorization
+revision; neither the SDK nor an unsigned manifest authenticates that input.
+Factory binding is read-only and process-local. A successful `begin(start,
+manifest)` establishes the durable context floor. A terminal stage may advance
+its authorization revision under the same immutable owner/generation; active
+stages remain exact. Native completion retains canonical history/scope guards.
+
+Session methods `begin`, `page`, `progress`, `cancel` and `complete` accept opaque
+canonical bytes. `ArrayBuffer` and typed views are copied using their exact byte
+range, with the 4 MiB frame limit checked before native dispatch. Counters remain
+`bigint`. Stage objects are opaque and scoped to their JS session; reacquire them
+with read-only `progress(manifest)` after reopen. Missing is explicit; it does
+not create a journal. Completion distinguishes `applied` and
+`historical_success`. Closing a JS session never cancels durable data.
+
+UTC and the 30-second verification deadline are native-owned. The app must obtain
+fresh authenticated completion after restart. `AbortSignal` is forwarded, but a
+failed/cancelled mutating call must not be treated as a known rollback. Native
+owned-worker admission retains mutation settlement/publication after a caller or
+UniFFI waiter is cancelled; returned unknown storage outcomes poison the database
+wrapper lifetime and ordinary sync reopen cannot clear that poison. See
+[Native mutation settlement](../../docs/NATIVE_MUTATION_SETTLEMENT.md) for the
+exact recovery boundary and host FFI proof. This is not generated JSI/mobile JS
+acceptance. Do not activate this surface until matching iOS/Android builds,
+device acceptance and performance gates pass. UniFFI allocates received buffers
+before Rust can check them; the JS check protects normal callers, not hostile JS.
+
+Binding provenance for the initial source generation: Rust `498ecc8`, existing
+`uniffi-bindgen-react-native` `0.31.0-3`, default host features. Reproduce from the
+workspace root with `CARGO_BUILD_JOBS=2 cargo rustc -p surrealdb-rn-core --lib
+--crate-type cdylib`, then
+`packages/react-native-surrealdb/node_modules/.bin/ubrn generate jsi bindings
+--library target/debug/libsurrealdb_rn_core.dylib --ts-dir
+packages/react-native-surrealdb/src/generated --cpp-dir
+packages/react-native-surrealdb/cpp/generated`. From the package directory run
+`node_modules/.bin/ubrn generate jsi turbo-module --config ubrn.config.yaml
+surrealdb_rn_core` and the existing `format:generated` script. Generation includes
+all current Rust metadata, including the previously dormant inspector ABI. Host
+export/checksum consistency is not JSI method or device acceptance.
+
+Compatibility boundary: a whole old native binary may fail the generated module's
+initial checksum/contract checks during import, before a typed bootstrap facade
+can exist. That gate performs no journal/storage operation and remains unchanged.
+`UnsupportedAbi` is the method-level error once the binding module initializes
+but bootstrap methods/capabilities are absent or incompatible. It is not a promise
+about the error type from importing a mismatched whole binary. Native runtime
+fingerprints and matching rebuilt binaries must prevent shipping this bundle to
+an older binary; no checksum bypass or fallback is provided.
+
+The bindings were regenerated again from local Rust commit
+`9f7880ffa6d0f41b7e757a9aacdf486e62aee1e9` after native mutation settlement.
+Arc receiver changes preserve method parameters; generated checksums and a host
+symbol handshake are checked separately from runtime/device execution. The
+existing whole-binary generated initialization gate remains unchanged.
+
+Bootstrap failures expose only fixed error codes/messages. Classification accepts
+allowlisted own data fields; it never evaluates an error's tag getter or inherited
+tag, and catches proxy inspection failures. Unknown mutating failures remain
+`RecoveryRequired`, unknown read failures remain `Storage`, and raw error causes
+or messages are not retained.

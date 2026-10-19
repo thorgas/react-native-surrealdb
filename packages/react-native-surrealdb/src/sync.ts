@@ -1,3 +1,10 @@
+import {
+  bindExperimentalBootstrap,
+  experimentalBootstrapCapabilities,
+  type ExperimentalBootstrapContext,
+  type ExperimentalBootstrapSession,
+  type ExperimentalBootstrapCapabilities,
+} from "./sync-bootstrap";
 import type {
   NativeSyncClientLike,
   NativeSyncStatus,
@@ -100,6 +107,7 @@ export class ExperimentalSyncClient {
   readonly #readStores = new Set<ExperimentalSyncReadStore>();
   readonly #windowClients = new Set<ExperimentalSyncWindowClient>();
   #scopeBlocked?: SyncReadScopeError;
+  #closed = false;
 
   constructor(
     native: NativeSyncClientLike &
@@ -107,6 +115,22 @@ export class ExperimentalSyncClient {
       Partial<NativeWindowPort>,
   ) {
     this.#native = native;
+  }
+
+  /** Additive opaque-byte bootstrap; never falls back to v1 reset/open. */
+  bootstrapCapabilities(): ExperimentalBootstrapCapabilities {
+    return experimentalBootstrapCapabilities();
+  }
+  bindBootstrapSession(
+    expected: ExperimentalBootstrapContext,
+    options?: CallOptions,
+  ): Promise<ExperimentalBootstrapSession> {
+    return bindExperimentalBootstrap(
+      this.#native,
+      () => this.isClosed,
+      expected,
+      options,
+    );
   }
 
   #readFailure(error: unknown): unknown {
@@ -367,6 +391,7 @@ export class ExperimentalSyncClient {
   }
 
   close(options?: CallOptions): Promise<void> {
+    this.#closed = true;
     for (const store of [...this.#readStores]) store.close();
     for (const client of [...this.#windowClients]) client.close();
     this.#windowClients.clear();
@@ -374,7 +399,7 @@ export class ExperimentalSyncClient {
   }
 
   get isClosed(): boolean {
-    return this.#native.isClosed();
+    return this.#closed || this.#native.isClosed();
   }
 }
 
