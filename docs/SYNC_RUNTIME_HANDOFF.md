@@ -424,3 +424,20 @@ commit; SDK-specific automatic conflict policy and all other existing changes ar
 The SDK client README describes the same frontier rule. No bootstrap codec, protocol wire change,
 ABI, dependency, generated binding or native artifact is included. This source-level repair still
 requires rebuilt native binaries and independent device acceptance before release.
+
+
+## Bootstrap codec source export (2026-10-19)
+
+Selectively vendored the six protocol codec/grammar paths from canonical engine commit
+`ef19279904d050f08d8936e27b21c987cead754d` onto SDK base
+`c89135e37e2fde65b5cc485654f0d95f42ab1582`. Before applying the shared helper/export patch,
+`src/http_codec.rs` and `src/lib.rs` were verified byte-identical to the canonical commit's parent.
+The three new Rust files are exact canonical copies. The grammar is
+[SYNC_BOOTSTRAP_WIRE_V1.md](SYNC_BOOTSTRAP_WIRE_V1.md), with only unavailable private-model links
+replaced by an explicit export-boundary note. No other protocol files were overwritten.
+
+The pure codec includes six success messages and bounded streaming verification; existing v1 and
+subscription vectors remain unchanged. Private models/ADR, authority, server, native storage,
+bindings and artifacts are excluded. No ABI or dependency change is included. Codec verification
+alone grants no authorization or install capability; durable staging, receipt/context/expiry
+verification and atomic native installation remain separate integration gates.

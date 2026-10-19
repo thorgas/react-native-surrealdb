@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod bootstrap;
+pub mod bootstrap_codec;
 pub mod canonical;
 pub mod http_codec;
 pub mod subscription;

@@ -87,11 +87,17 @@ fn encode_message(
     kind: u64,
     payload: impl FnOnce(&mut Encoder) -> Result<Cbor, CodecError>,
 ) -> Result<Vec<u8>, CodecError> {
-    let mut encoder = Encoder::new();
-    encoder.item(4)?;
-    take_bytes(&mut encoder.remaining_bytes, V1_NAME.len())?;
+    encode_family_message(V1_NAME, kind, payload)
+}
+
+pub(crate) fn encode_family_message(
+    family: &str,
+    kind: u64,
+    payload: impl FnOnce(&mut Encoder) -> Result<Cbor, CodecError>,
+) -> Result<Vec<u8>, CodecError> {
+    let mut encoder = Encoder::family(family)?;
     let value = Cbor::Array(vec![
-        Cbor::Text(V1_NAME.to_owned()),
+        Cbor::Text(family.to_owned()),
         integer(SCHEMA_V1),
         integer(kind),
         payload(&mut encoder)?,
@@ -100,6 +106,14 @@ fn encode_message(
 }
 
 fn decode_message(bytes: &[u8], expected_kind: u64) -> Result<Cbor, CodecError> {
+    decode_family_message(bytes, V1_NAME, expected_kind)
+}
+
+pub(crate) fn decode_family_message(
+    bytes: &[u8],
+    family: &str,
+    expected_kind: u64,
+) -> Result<Cbor, CodecError> {
     if bytes.len() > MAX_ENCODED_BYTES {
         return Err(CodecError::EncodedLimit);
     }
@@ -110,27 +124,32 @@ fn decode_message(bytes: &[u8], expected_kind: u64) -> Result<Cbor, CodecError> 
         return Err(CodecError::TrailingBytes);
     }
     let [name, schema, kind, payload] = array(decoded)?;
-    if text(name)? != V1_NAME || unsigned(schema)? != SCHEMA_V1 || unsigned(kind)? != expected_kind
-    {
+    if text(name)? != family || unsigned(schema)? != SCHEMA_V1 || unsigned(kind)? != expected_kind {
         return Err(CodecError::InvalidEnvelope);
     }
     Ok(payload)
 }
 
-struct Encoder {
+pub(crate) struct Encoder {
     remaining_items: usize,
     remaining_bytes: usize,
 }
 
 impl Encoder {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             remaining_items: MAX_TOTAL_ITEMS,
             remaining_bytes: MAX_ENCODED_BYTES,
         }
     }
 
-    fn item(&mut self, count: usize) -> Result<(), CodecError> {
+    pub(crate) fn family(family: &str) -> Result<Self, CodecError> {
+        let mut encoder = Self::new();
+        encoder.item(4)?;
+        take_bytes(&mut encoder.remaining_bytes, family.len())?;
+        Ok(encoder)
+    }
+    pub(crate) fn item(&mut self, count: usize) -> Result<(), CodecError> {
         self.remaining_items = self
             .remaining_items
             .checked_sub(count)
@@ -138,14 +157,14 @@ impl Encoder {
         Ok(())
     }
 
-    fn vec(&mut self, length: usize) -> Result<(), CodecError> {
+    pub(crate) fn vec(&mut self, length: usize) -> Result<(), CodecError> {
         if length > MAX_CONTAINER_ITEMS {
             return Err(CodecError::ContainerLimit);
         }
         self.item(length + 1)
     }
 
-    fn identity_text(&mut self, value: &str) -> Result<Cbor, CodecError> {
+    pub(crate) fn identity_text(&mut self, value: &str) -> Result<Cbor, CodecError> {
         if value.is_empty() || value.len() > MAX_IDENTITY_BYTES {
             return Err(CodecError::InvalidIdentifier);
         }
@@ -180,6 +199,53 @@ impl Encoder {
         to_cbor(value)
     }
 
+    /// Borrow-only budget pass for a later snapshot encoding; never clones canonical payloads.
+    pub(crate) fn preflight_snapshot_records(
+        &mut self,
+        records: &[SnapshotRecord<CanonicalValue>],
+        value_depth: usize,
+    ) -> Result<(), CodecError> {
+        self.vec(records.len())?;
+        for record in records {
+            self.item(3)?;
+            self.preflight_identity(&record.record_id.0)?;
+            match &record.state {
+                RecordState::Absent => self.item(2)?,
+                RecordState::Tombstone { .. } => self.item(3)?,
+                RecordState::Present {
+                    value, reference, ..
+                } => {
+                    self.item(5)?;
+                    validate_with_budget(
+                        value,
+                        value_depth,
+                        &mut self.remaining_items,
+                        &mut self.remaining_bytes,
+                    )?;
+                    match reference {
+                        Some(id) => self.preflight_identity(&id.0)?,
+                        None => self.item(1)?,
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn preflight_identity(&mut self, value: &str) -> Result<(), CodecError> {
+        if value.is_empty() || value.len() > MAX_IDENTITY_BYTES {
+            return Err(CodecError::InvalidIdentifier);
+        }
+        take_bytes(&mut self.remaining_bytes, value.len())?;
+        self.item(1)
+    }
+    pub(crate) fn digest(&mut self, value: &[u8; 32]) -> Result<Cbor, CodecError> {
+        self.preflight_digest()?;
+        Ok(Cbor::Bytes(value.to_vec()))
+    }
+    pub(crate) fn preflight_digest(&mut self) -> Result<(), CodecError> {
+        take_bytes(&mut self.remaining_bytes, 32)?;
+        self.item(1)
+    }
     fn push_request(&mut self, request: &PushRequest<CanonicalValue>) -> Result<Cbor, CodecError> {
         ensure_v1(request.schema_version)?;
         self.item(5)?;
@@ -439,7 +505,7 @@ impl Encoder {
         ]))
     }
 
-    fn snapshot_record(
+    pub(crate) fn snapshot_record(
         &mut self,
         record: &SnapshotRecord<CanonicalValue>,
     ) -> Result<Cbor, CodecError> {
@@ -450,7 +516,7 @@ impl Encoder {
         ]))
     }
 
-    fn checkpoint(&mut self, checkpoint: &Checkpoint) -> Result<Cbor, CodecError> {
+    pub(crate) fn checkpoint(&mut self, checkpoint: &Checkpoint) -> Result<Cbor, CodecError> {
         self.item(4)?;
         Ok(Cbor::Array(vec![
             self.checkpoint_text(&checkpoint.token.0)?,
@@ -467,7 +533,7 @@ impl Encoder {
     }
 }
 
-struct Decoder;
+pub(crate) struct Decoder;
 
 impl Decoder {
     fn push_request(value: Cbor) -> Result<PushRequest<CanonicalValue>, CodecError> {
@@ -547,6 +613,15 @@ impl Decoder {
         }
     }
 
+    pub(crate) fn snapshot_record(
+        value: Cbor,
+    ) -> Result<SnapshotRecord<CanonicalValue>, CodecError> {
+        let [record_id, state] = array(value)?;
+        Ok(SnapshotRecord {
+            record_id: RecordId(identity(record_id)?),
+            state: Self::record_state(state)?,
+        })
+    }
     fn record_state(value: Cbor) -> Result<RecordState<CanonicalValue>, CodecError> {
         let mut values = array_vec(value)?;
         let kind = values.first().cloned().ok_or(CodecError::InvalidEnvelope)?;
@@ -586,13 +661,7 @@ impl Decoder {
             1 if values.len() == 4 => Ok(PullResponse::Reset(ResetSnapshot {
                 reason: decode_reset_reason(unsigned(values.remove(1))?)?,
                 checkpoint: decode_checkpoint(values.remove(1))?,
-                records: vec_decode(values.remove(1), |record| {
-                    let [record_id, state] = array(record)?;
-                    Ok(SnapshotRecord {
-                        record_id: RecordId(identity(record_id)?),
-                        state: Self::record_state(state)?,
-                    })
-                })?,
+                records: vec_decode(values.remove(1), Self::snapshot_record)?,
             })),
             _ => Err(CodecError::InvalidEnvelope),
         }
@@ -632,18 +701,18 @@ impl Decoder {
     }
 }
 
-fn integer(value: u64) -> Cbor {
+pub(crate) fn integer(value: u64) -> Cbor {
     Cbor::Integer(value.into())
 }
 
-fn array<const N: usize>(value: Cbor) -> Result<[Cbor; N], CodecError> {
+pub(crate) fn array<const N: usize>(value: Cbor) -> Result<[Cbor; N], CodecError> {
     let Cbor::Array(values) = value else {
         return Err(CodecError::InvalidEnvelope);
     };
     values.try_into().map_err(|_| CodecError::InvalidEnvelope)
 }
 
-fn array_vec(value: Cbor) -> Result<Vec<Cbor>, CodecError> {
+pub(crate) fn array_vec(value: Cbor) -> Result<Vec<Cbor>, CodecError> {
     let Cbor::Array(values) = value else {
         return Err(CodecError::InvalidEnvelope);
     };
@@ -660,7 +729,7 @@ fn vec_decode<T>(
     array_vec(value)?.into_iter().map(decode).collect()
 }
 
-fn unsigned(value: Cbor) -> Result<u64, CodecError> {
+pub(crate) fn unsigned(value: Cbor) -> Result<u64, CodecError> {
     let Cbor::Integer(value) = value else {
         return Err(CodecError::InvalidEnvelope);
     };
@@ -674,7 +743,7 @@ fn text(value: Cbor) -> Result<String, CodecError> {
     Ok(value)
 }
 
-fn identity(value: Cbor) -> Result<String, CodecError> {
+pub(crate) fn identity(value: Cbor) -> Result<String, CodecError> {
     let value = text(value)?;
     if value.is_empty() || value.len() > MAX_IDENTITY_BYTES {
         return Err(CodecError::InvalidIdentifier);
@@ -756,7 +825,7 @@ fn decode_identity(value: Cbor) -> Result<CommitIdentity, CodecError> {
     })
 }
 
-fn decode_checkpoint(value: Cbor) -> Result<Checkpoint, CodecError> {
+pub(crate) fn decode_checkpoint(value: Cbor) -> Result<Checkpoint, CodecError> {
     let [token, cursor, scope] = array(value)?;
     let [epoch, sequence] = array(cursor)?;
     let [
