@@ -288,6 +288,8 @@ RustBuffer uniffi_surrealdb_rn_core_fn_func_bootstrap_capabilities(
     RustCallStatus *uniffi_out_err);
 /*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_func_inspect_sync_state(
     /*handle*/ uint64_t database, RustBuffer options);
+/*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_func_open_existing_sync_client(
+    /*handle*/ uint64_t database, RustBuffer options);
 /*handle*/ uint64_t uniffi_surrealdb_rn_core_fn_func_open_sync_client(
     /*handle*/ uint64_t database, RustBuffer options);
 /*handle*/ uint64_t
@@ -429,6 +431,7 @@ uint16_t uniffi_surrealdb_rn_core_checksum_func_inspect_storage();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_bind_bootstrap_session();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_bootstrap_capabilities();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_inspect_sync_state();
+uint16_t uniffi_surrealdb_rn_core_checksum_func_open_existing_sync_client();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_open_sync_client();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_decode_sync_pull_response();
 uint16_t uniffi_surrealdb_rn_core_checksum_func_decode_sync_push_response();
@@ -2768,6 +2771,18 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                 ->cpp_uniffi_surrealdb_rn_core_fn_func_inspect_sync_state(
                     rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_surrealdb_rn_core_fn_func_open_existing_sync_client"] =
+      jsi::Function::createFromHostFunction(
+          rt,
+          jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_fn_func_"
+                                        "open_existing_sync_client"),
+          2,
+          [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+                 const jsi::Value *args, size_t count) -> jsi::Value {
+            return this
+                ->cpp_uniffi_surrealdb_rn_core_fn_func_open_existing_sync_client(
+                    rt, thisVal, args, count);
+          });
   props["ubrn_uniffi_surrealdb_rn_core_fn_func_open_sync_client"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -3458,6 +3473,18 @@ NativeSurrealdbRnCore::NativeSurrealdbRnCore(
                 ->cpp_uniffi_surrealdb_rn_core_checksum_func_inspect_sync_state(
                     rt, thisVal, args, count);
           });
+  props["ubrn_uniffi_surrealdb_rn_core_checksum_func_open_existing_sync_"
+        "client"] = jsi::Function::createFromHostFunction(
+      rt,
+      jsi::PropNameID::forAscii(rt, "ubrn_uniffi_surrealdb_rn_core_checksum_"
+                                    "func_open_existing_sync_client"),
+      0,
+      [this](jsi::Runtime &rt, const jsi::Value &thisVal,
+             const jsi::Value *args, size_t count) -> jsi::Value {
+        return this
+            ->cpp_uniffi_surrealdb_rn_core_checksum_func_open_existing_sync_client(
+                rt, thisVal, args, count);
+      });
   props["ubrn_uniffi_surrealdb_rn_core_checksum_func_open_sync_client"] =
       jsi::Function::createFromHostFunction(
           rt,
@@ -5575,6 +5602,19 @@ NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_func_inspect_sync_state(
   return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
                                                          value);
 }
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_fn_func_open_existing_sync_client(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value = uniffi_surrealdb_rn_core_fn_func_open_existing_sync_client(
+      uniffi_jsi::Bridging</*handle*/ uint64_t>::fromJs(rt, callInvoker,
+                                                        args[0]),
+      uniffi::surrealdb_rn_core::Bridging<RustBuffer>::fromJs(rt, callInvoker,
+                                                              args[1]));
+
+  return uniffi_jsi::Bridging</*handle*/ uint64_t>::toJs(rt, callInvoker,
+                                                         value);
+}
 jsi::Value
 NativeSurrealdbRnCore::cpp_uniffi_surrealdb_rn_core_fn_func_open_sync_client(
     jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
@@ -6308,6 +6348,15 @@ jsi::Value NativeSurrealdbRnCore::
         jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
         size_t count) {
   auto value = uniffi_surrealdb_rn_core_checksum_func_inspect_sync_state();
+
+  return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
+}
+jsi::Value NativeSurrealdbRnCore::
+    cpp_uniffi_surrealdb_rn_core_checksum_func_open_existing_sync_client(
+        jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+        size_t count) {
+  auto value =
+      uniffi_surrealdb_rn_core_checksum_func_open_existing_sync_client();
 
   return uniffi_jsi::Bridging<uint16_t>::toJs(rt, callInvoker, value);
 }

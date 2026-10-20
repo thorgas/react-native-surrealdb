@@ -49,6 +49,4 @@ only because new tests treated native close() as returning a Result; the next
 run found one corruption fixture targeting a nonexistent schema field. Corrected
 fixtures now pass; failed logs remain preserved. No runtime failure was hidden.
 
-Generated bindings, matching mobile binaries and both platform/device acceptance
-remain pending. This source change adds a native ABI export but does not hand-
-edit generated code, change journal formats/dependencies, or publish a package.
+Generated bindings were regenerated through ubrn and matching iOS device/simulator-arm64 and Android arm64/x86_64 release libraries built successfully. Both platform/device acceptance and product activation remain pending. No generated code was hand-edited; journal formats and dependencies are unchanged. Private artifact version is 0.1.0-alpha.5.haus.20261020.1. Generated-package build, types, all137 TypeScript tests and package inventory verification passed. Build logs: /private/tmp/haus-sdk-existing-{ios,android}-build.log; package gate: /private/tmp/haus-sdk-existing-generated-release-check.log. No public package publication is implied.

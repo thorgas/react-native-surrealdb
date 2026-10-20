@@ -599,6 +599,61 @@ export async function inspectSyncState(
   }
 }
 
+/**
+ * Attach an existing, valid journal without schema installation, migration or initialization.
+ * Missing or damaged state refuses; this never repairs a ready application's lost journal.
+ */
+export async function openExistingSyncClient(
+  database: SurrealDatabaseLike,
+  options: NativeSyncOpenOptions,
+  asyncOpts_?: { signal: AbortSignal },
+): Promise<NativeSyncClientLike> /*throws*/ {
+  const __stack = uniffiIsDebug ? new Error().stack : undefined;
+  try {
+    return await uniffiRustCallAsync(
+      /*rustCaller:*/ uniffiCaller,
+      /*rustFutureFunc:*/ () => {
+        return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_func_open_existing_sync_client(
+          FfiConverterTypeSurrealDatabase.lower(
+            database,
+            nativeModule().rustbuffer_alloc,
+          ),
+          FfiConverterTypeNativeSyncOpenOptions.lower(
+            options,
+            nativeModule().rustbuffer_alloc,
+          ),
+        );
+      },
+      /*pollFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_poll_u64,
+      /*cancelFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_u64,
+      /*completeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_complete_u64,
+      /*freeFunc:*/ nativeModule()
+        .ubrn_ffi_surrealdb_rn_core_rust_future_free_u64,
+      // Async returns always go through the JS-side converter: the
+      // FFI symbol returns the future handle (u64), and the user-level
+      // RustBuffer comes back via the shared `rust_future_complete_*`
+      // export. The bytes the runtime hands back must be deserialized
+      // here using the per-callable return-type converter.
+      /*liftFunc:*/ FfiConverterTypeNativeSyncClient.lift.bind(
+        FfiConverterTypeNativeSyncClient,
+      ),
+      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      /*asyncOpts:*/ asyncOpts_,
+      /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+        FfiConverterTypeNativeSyncError,
+      ),
+    );
+  } catch (__error: any) {
+    if (uniffiIsDebug && __error instanceof Error) {
+      __error.stack = __stack;
+    }
+    throw __error;
+  }
+}
+
 export async function openSyncClient(
   database: SurrealDatabaseLike,
   options: NativeSyncOpenOptions,
@@ -7231,6 +7286,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_func_inspect_sync_state",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_func_open_existing_sync_client() !==
+    1491
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_func_open_existing_sync_client",
     );
   }
   if (

@@ -255,6 +255,10 @@ interface NativeModuleInterface {
     database: bigint,
     options: Uint8Array,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_func_open_existing_sync_client(
+    database: bigint,
+    options: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_func_open_sync_client(
     database: bigint,
     options: Uint8Array,
@@ -500,6 +504,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_func_encode_sync_push_request(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_inspect_storage(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_inspect_sync_state(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_func_open_existing_sync_client(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_func_open_sync_client(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_close(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_livequery_is_closed(): number;

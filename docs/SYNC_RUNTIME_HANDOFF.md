@@ -480,3 +480,8 @@ Remaining gates: regenerate bindings with repository tools, build4matching
 platform libraries and a new private SDK artifact, app strict-ready attach and
 actual iOS/Android acceptance/startup comparison. No new package/public SDK push
 or mobile release is implied. Existing SDK public commits remain as approved.
+
+
+### 2026-10-20 Matching existing-only native artifacts
+
+Source foundation committed locally as63d48db on private/bootstrap-staging-20261019. ubrn regenerated bindings and built release iOS device/simulator-arm64 and Android arm64/x86_64; repository strip scripts completed. Generated-package release:check passed build/types/137tests/inventory for private version0.1.0-alpha.5.haus.20261020.1. Logs /private/tmp/haus-sdk-existing-{ios,android}-build.log and /private/tmp/haus-sdk-existing-generated-release-check.log. No public SDK push/npm/tag; device acceptance, product activation and paired startup measurements remain pending.
