@@ -246,10 +246,34 @@ pub struct NativeSyncClient {
     persistence_pause: Mutex<Option<crate::sync_state::PersistencePause>>,
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum OpenMode {
+    CreateIfMissing,
+    ExistingOnly,
+}
+
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn open_sync_client(
     database: Arc<SurrealDatabase>,
     options: NativeSyncOpenOptions,
+) -> Result<Arc<NativeSyncClient>, NativeSyncError> {
+    open_sync_client_with_mode(database, options, OpenMode::CreateIfMissing).await
+}
+
+/// Attach an existing, valid journal without schema installation, migration or initialization.
+/// Missing or damaged state refuses; this never repairs a ready application's lost journal.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn open_existing_sync_client(
+    database: Arc<SurrealDatabase>,
+    options: NativeSyncOpenOptions,
+) -> Result<Arc<NativeSyncClient>, NativeSyncError> {
+    open_sync_client_with_mode(database, options, OpenMode::ExistingOnly).await
+}
+
+async fn open_sync_client_with_mode(
+    database: Arc<SurrealDatabase>,
+    options: NativeSyncOpenOptions,
+    mode: OpenMode,
 ) -> Result<Arc<NativeSyncClient>, NativeSyncError> {
     if !database.embedded {
         return Err(NativeSyncError::RequiresEmbeddedDatabase);
@@ -282,7 +306,7 @@ pub async fn open_sync_client(
     });
     client
         .clone()
-        .run_mutation(move |owner| async move { owner.initialize_runtime(options).await })
+        .run_mutation(move |owner| async move { owner.initialize_runtime(options, mode).await })
         .await?;
     Ok(client)
 }
@@ -291,6 +315,7 @@ impl NativeSyncClient {
     async fn initialize_runtime(
         &self,
         options: NativeSyncOpenOptions,
+        mode: OpenMode,
     ) -> Result<(), NativeSyncError> {
         let mut shared_slot = self.lock_runtime().await;
         self.ensure_session()?;
@@ -301,47 +326,11 @@ impl NativeSyncClient {
         let requested_scope = ScopeIdentity(options.requested_scope);
         let key = SyncStateKey::new(&partition_id, &client_id);
         let store = SyncStateStore::new(database).with_session_generation(session_generation);
-        if shared_slot.runtime.is_none() {
-            shared_slot.arm_mutation();
-            let defined = store.define_schema().await;
-            let schema_uncertain = matches!(defined, Err(SyncStateError::Database(_)));
-            if schema_uncertain {
-                // DDL uses a direct multi-statement query; an error need not prove router settlement.
-                self.database.sync_runtimes.poison();
-            }
-            shared_slot.settled_mutation(&defined);
-            if schema_uncertain {
-                return Err(NativeSyncError::RecoveryRequired);
-            }
-            defined.map_err(map_persistence_error)?;
-
-            let state = match store.load(key).await.map_err(map_persistence_error)? {
-                Some(state) => state,
-                None => {
-                    let initial = StoredSyncState::empty(
-                        partition_id.clone(),
-                        client_id.clone(),
-                        requested_scope.clone(),
-                        options.subscription_revision,
-                    );
-                    shared_slot.arm_mutation();
-                    let saved = store.save_atomic(None, &initial).await;
-                    shared_slot.settled_mutation(&saved);
-                    if self.database.sync_runtimes.is_poisoned() {
-                        return Err(NativeSyncError::RecoveryRequired);
-                    }
-                    match saved {
-                        Ok(_) => initial,
-                        Err(SyncStateError::RevisionConflict) => store
-                            .load(key)
-                            .await
-                            .map_err(map_persistence_error)?
-                            .ok_or(NativeSyncError::Persistence)?,
-                        Err(error) => return Err(map_persistence_error(error)),
-                    }
-                }
-            };
-
+        // Inspect under the same native runtime/lifecycle lock, even when a sibling wrapper
+        // already owns an in-memory runtime. A missing durable journal must never be hidden by it.
+        let mut existing = if mode == OpenMode::ExistingOnly {
+            let (state, barrier) = store.inspect(key).await.map_err(map_persistence_error)?;
+            let state = state.ok_or(NativeSyncError::RecoveryRequired)?;
             if state.partition_id != partition_id
                 || state.client_id != client_id
                 || state.requested_scope != requested_scope
@@ -350,11 +339,75 @@ impl NativeSyncClient {
                 return Err(NativeSyncError::Protocol);
             }
             validate_state_codec(&state)?;
-            let barrier = store
-                .load_scope_barrier(key)
-                .await
-                .map_err(|_| NativeSyncError::RecoveryRequired)?;
-            let scope_blocked = barrier.map(|value| ScopeBlock::from_reason(&value.reason));
+            let blocked = barrier.map(|value| ScopeBlock::from_reason(&value.reason));
+            if let Some(runtime) = &shared_slot.runtime
+                && (runtime.state() != &state || shared_slot.scope_blocked != blocked)
+            {
+                return Err(NativeSyncError::RecoveryRequired);
+            }
+            Some((state, blocked))
+        } else {
+            None
+        };
+        if shared_slot.runtime.is_none() {
+            let (state, scope_blocked) = if let Some(existing) = existing.take() {
+                existing
+            } else {
+                shared_slot.arm_mutation();
+                let defined = store.define_schema().await;
+                let schema_uncertain = matches!(defined, Err(SyncStateError::Database(_)));
+                if schema_uncertain {
+                    // DDL uses a direct multi-statement query; an error need not prove router settlement.
+                    self.database.sync_runtimes.poison();
+                }
+                shared_slot.settled_mutation(&defined);
+                if schema_uncertain {
+                    return Err(NativeSyncError::RecoveryRequired);
+                }
+                defined.map_err(map_persistence_error)?;
+
+                let state = match store.load(key).await.map_err(map_persistence_error)? {
+                    Some(state) => state,
+                    None => {
+                        let initial = StoredSyncState::empty(
+                            partition_id.clone(),
+                            client_id.clone(),
+                            requested_scope.clone(),
+                            options.subscription_revision,
+                        );
+                        shared_slot.arm_mutation();
+                        let saved = store.save_atomic(None, &initial).await;
+                        shared_slot.settled_mutation(&saved);
+                        if self.database.sync_runtimes.is_poisoned() {
+                            return Err(NativeSyncError::RecoveryRequired);
+                        }
+                        match saved {
+                            Ok(_) => initial,
+                            Err(SyncStateError::RevisionConflict) => store
+                                .load(key)
+                                .await
+                                .map_err(map_persistence_error)?
+                                .ok_or(NativeSyncError::Persistence)?,
+                            Err(error) => return Err(map_persistence_error(error)),
+                        }
+                    }
+                };
+
+                if state.partition_id != partition_id
+                    || state.client_id != client_id
+                    || state.requested_scope != requested_scope
+                    || state.subscription_revision != options.subscription_revision
+                {
+                    return Err(NativeSyncError::Protocol);
+                }
+                validate_state_codec(&state)?;
+                let barrier = store
+                    .load_scope_barrier(key)
+                    .await
+                    .map_err(|_| NativeSyncError::RecoveryRequired)?;
+                let scope_blocked = barrier.map(|value| ScopeBlock::from_reason(&value.reason));
+                (state, scope_blocked)
+            };
             let runtime = ClientRuntime::open(state).map_err(map_protocol_error)?;
             if shared_slot.recovery_required
                 && (shared_slot.journal.rotate().is_err()
@@ -689,7 +742,7 @@ impl NativeSyncClient {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Eq, PartialEq)]
 enum ScopeBlock {
     PendingQuarantine,
     NewJournal,
@@ -4320,5 +4373,319 @@ mod tests {
             ));
             db.close().await.unwrap();
         }
+    }
+
+    async fn existing_schema(database: &SurrealDatabase) -> String {
+        database.query("INFO FOR DB".into(), None).await.unwrap()[0]
+            .value_json
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn existing_only_missing_never_installs_schema_or_initializes() {
+        let db = database().await;
+        db.query("DEFINE TABLE person SCHEMALESS".into(), None)
+            .await
+            .unwrap();
+        let before = existing_schema(&db).await;
+        assert!(matches!(
+            open_existing_sync_client(db.clone(), options("all")).await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        assert_eq!(existing_schema(&db).await, before);
+        assert!(matches!(
+            inspect_sync_state(db.clone(), options("all"))
+                .await
+                .unwrap(),
+            NativeSyncInspection::Missing
+        ));
+        // The original explicit creation API retains its behavior.
+        let created = open_sync_client(db.clone(), options("all")).await.unwrap();
+        created.close().await;
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn existing_only_attaches_same_durable_pending_state_without_writes() {
+        let db = database().await;
+        let original = open_sync_client(db.clone(), options("all")).await.unwrap();
+        original
+            .clone()
+            .enqueue(serde_json::to_string(&commit()).unwrap())
+            .await
+            .unwrap();
+        let store = SyncStateStore::new(&db);
+        let partition = PartitionId("partition".into());
+        let account = ClientId("client".into());
+        let key = SyncStateKey::new(&partition, &account);
+        let before = store.inspect(key).await.unwrap().0.unwrap();
+        let schema = existing_schema(&db).await;
+        let attached = open_existing_sync_client(db.clone(), options("all"))
+            .await
+            .unwrap();
+        assert_eq!(attached.status().await.unwrap().pending_count, 1);
+        assert_eq!(store.inspect(key).await.unwrap().0.unwrap(), before);
+        assert_eq!(existing_schema(&db).await, schema);
+        attached.close().await;
+        original.close().await;
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn existing_only_refuses_missing_journal_even_with_cached_runtime() {
+        let db = database().await;
+        let original = open_sync_client(db.clone(), options("all")).await.unwrap();
+        db.query("DELETE _sync_client_meta".into(), None)
+            .await
+            .unwrap();
+        let schema = existing_schema(&db).await;
+        assert!(
+            open_existing_sync_client(db.clone(), options("all"))
+                .await
+                .is_err()
+        );
+        assert_eq!(existing_schema(&db).await, schema);
+        assert!(matches!(
+            inspect_sync_state(db.clone(), options("all"))
+                .await
+                .unwrap(),
+            NativeSyncInspection::Missing
+        ));
+        original.close().await;
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn existing_only_refuses_scope_drift_without_mutating_durable_state() {
+        let db = database().await;
+        let original = open_sync_client(db.clone(), options("all")).await.unwrap();
+        original.close().await;
+        drop(original);
+        let store = SyncStateStore::new(&db);
+        let partition = PartitionId("partition".into());
+        let account = ClientId("client".into());
+        let key = SyncStateKey::new(&partition, &account);
+        let before = store.inspect(key).await.unwrap().0.unwrap();
+        let schema = existing_schema(&db).await;
+        assert!(matches!(
+            open_existing_sync_client(db.clone(), options("other")).await,
+            Err(NativeSyncError::Protocol)
+        ));
+        assert_eq!(store.inspect(key).await.unwrap().0.unwrap(), before);
+        assert_eq!(existing_schema(&db).await, schema);
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn existing_only_corrupt_state_is_not_repaired() {
+        let db = database().await;
+        let original = open_sync_client(db.clone(), options("all")).await.unwrap();
+        original.close().await;
+        drop(original);
+        db.query(
+            "UPDATE _sync_client_meta SET payload=<bytes>'corrupt'".into(),
+            None,
+        )
+        .await
+        .unwrap();
+        let before = db
+            .query("SELECT * FROM _sync_client_meta".into(), None)
+            .await
+            .unwrap()[0]
+            .value_json
+            .clone();
+        assert!(
+            open_existing_sync_client(db.clone(), options("all"))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            db.query("SELECT * FROM _sync_client_meta".into(), None)
+                .await
+                .unwrap()[0]
+                .value_json,
+            before
+        );
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn existing_only_persistent_reopen_preserves_pending_and_scope_barrier() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let db = surrealkv_database(directory.path()).await;
+        let original = open_sync_client(db.clone(), options("all")).await.unwrap();
+        original
+            .clone()
+            .enqueue(serde_json::to_string(&commit()).unwrap())
+            .await
+            .unwrap();
+        let partition = PartitionId("partition".into());
+        let account = ClientId("client".into());
+        let key = SyncStateKey::new(&partition, &account);
+        let store = SyncStateStore::new(&db);
+        store
+            .save_scope_barrier(
+                key,
+                ScopeBarrier {
+                    reason: "pending_quarantine_required".into(),
+                    required_scope: "next".into(),
+                    required_subscription_revision: "2".into(),
+                    required_authorization_revision: "2".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let before = store.inspect(key).await.unwrap().0.unwrap();
+        original.close().await;
+        drop(original);
+        db.close().await.unwrap();
+        drop(db);
+        let reopened = surrealkv_database(directory.path()).await;
+        let schema = existing_schema(&reopened).await;
+        let attached = open_existing_sync_client(reopened.clone(), options("all"))
+            .await
+            .unwrap();
+        let store = SyncStateStore::new(&reopened);
+        assert_eq!(store.inspect(key).await.unwrap().0.unwrap(), before);
+        assert_eq!(
+            store.load_scope_barrier(key).await.unwrap().unwrap().reason,
+            "pending_quarantine_required"
+        );
+        assert_eq!(existing_schema(&reopened).await, schema);
+        assert!(matches!(
+            attached.read_snapshot_json().await,
+            Err(NativeSyncError::PendingQuarantineRequired)
+        ));
+        attached.close().await;
+        reopened.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn existing_only_cached_barrier_drift_never_clears_durable_quarantine() {
+        let db = database().await;
+        let original = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let partition = PartitionId("partition".into());
+        let account = ClientId("client".into());
+        let key = SyncStateKey::new(&partition, &account);
+        let store = SyncStateStore::new(&db);
+        store
+            .save_scope_barrier(
+                key,
+                ScopeBarrier {
+                    reason: "pending_quarantine_required".into(),
+                    required_scope: "next".into(),
+                    required_subscription_revision: "2".into(),
+                    required_authorization_revision: "2".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let before = store.inspect(key).await.unwrap().0.unwrap();
+        let schema = existing_schema(&db).await;
+        assert!(matches!(
+            open_existing_sync_client(db.clone(), options("all")).await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        assert_eq!(store.inspect(key).await.unwrap().0.unwrap(), before);
+        assert_eq!(existing_schema(&db).await, schema);
+        assert!(matches!(
+            original.read_snapshot_json().await,
+            Err(NativeSyncError::PendingQuarantineRequired)
+        ));
+        let attached = open_existing_sync_client(db.clone(), options("all"))
+            .await
+            .unwrap();
+        assert!(matches!(
+            attached.read_snapshot_json().await,
+            Err(NativeSyncError::PendingQuarantineRequired)
+        ));
+        assert_eq!(
+            store.load_scope_barrier(key).await.unwrap().unwrap().reason,
+            "pending_quarantine_required"
+        );
+        attached.close().await;
+        original.close().await;
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn existing_only_cancelled_open_settles_without_initialization_or_journal_changes() {
+        let db = database().await;
+        let original = open_sync_client(db.clone(), options("all")).await.unwrap();
+        original.close().await;
+        drop(original);
+        let before = inspect_sync_state(db.clone(), options("all"))
+            .await
+            .unwrap();
+        let schema = existing_schema(&db).await;
+        let held = db.journal_lifecycle.write().await;
+        let arrived = Arc::new(tokio::sync::Notify::new());
+        *db.sync_runtimes.lifecycle_read_arrived.lock().unwrap() = Some(arrived.clone());
+        let opening = db.clone();
+        let task =
+            tokio::spawn(async move { open_existing_sync_client(opening, options("all")).await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), arrived.notified())
+            .await
+            .unwrap();
+        task.abort();
+        assert!(matches!(task.await, Err(e) if e.is_cancelled()));
+        drop(held);
+        let settled = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            db.journal_lifecycle.write(),
+        )
+        .await
+        .unwrap();
+        drop(settled);
+        assert_eq!(
+            inspect_sync_state(db.clone(), options("all"))
+                .await
+                .unwrap(),
+            before
+        );
+        assert_eq!(existing_schema(&db).await, schema);
+        let retry = open_existing_sync_client(db.clone(), options("all"))
+            .await
+            .unwrap();
+        retry.close().await;
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn existing_only_queued_open_refuses_superseded_session_intent() {
+        let db = database().await;
+        let original = open_sync_client(db.clone(), options("all")).await.unwrap();
+        original.close().await;
+        drop(original);
+        let arrived = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        *db.session_pause.lock().unwrap() = Some((arrived, release.clone()));
+        let a = db.use_namespace_database("native_sync_client".into(), "native_sync_client".into());
+        tokio::pin!(a);
+        assert!(futures::poll!(a.as_mut()).is_pending());
+        let read_arrived = Arc::new(tokio::sync::Notify::new());
+        *db.sync_runtimes.lifecycle_read_arrived.lock().unwrap() = Some(read_arrived.clone());
+        let opening = db.clone();
+        let task =
+            tokio::spawn(async move { open_existing_sync_client(opening, options("all")).await });
+        tokio::time::timeout(std::time::Duration::from_secs(5), read_arrived.notified())
+            .await
+            .unwrap();
+        let b = db.use_namespace_database("native_sync_client".into(), "native_sync_client".into());
+        tokio::pin!(b);
+        assert!(futures::poll!(b.as_mut()).is_pending());
+        release.notify_one();
+        let (a, opened, b) = tokio::join!(a, task, b);
+        a.unwrap();
+        b.unwrap();
+        assert!(matches!(
+            opened.unwrap(),
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        let attached = open_existing_sync_client(db.clone(), options("all"))
+            .await
+            .unwrap();
+        attached.close().await;
+        db.close().await.unwrap();
     }
 }

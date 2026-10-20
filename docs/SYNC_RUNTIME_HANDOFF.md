@@ -459,3 +459,24 @@ The adapter must validate the complete root, receipt, trusted context, expiry an
 then persist atomically before serialized install. No protocol, native ABI, binding, schema,
 dependency or artifact change is included in this export. Native storage work and final activation
 remain separately reviewed integration gates.
+
+## 2026-10-20 Existing-only native journal attachment
+
+Added Rust open_existing_sync_client and optional-ABI TypeScript
+openExistingExperimentalSync. Existing-only admission inspects the durable journal
+under native runtime/lifecycle ownership before reuse, even with a cached sibling.
+It rejects Missing, corruption, wrong scope and state/barrier drift before schema
+installation, repair or migration; new runtime retains quarantine and existing
+pending data. Ordinary open keeps its explicit creation behavior. No raw handle
+serialization, journal format or dependency change. Older generated/native ABI
+fails closed rather than falling back to initialization.
+
+All9new native tests passed, full Rust workspace222passed/3ordinaryignored,
+then2otherwise-ignored persistent ownership/inspection gates explicitly passed
+(on fresh preserved fixtures; one normal persistent test also reran). Full TS137
+passed, focused14passed, SDK types/all5RN targets/fmt/Clippy passed. See
+docs/SYNC_EXISTING_ATTACH.md and /private/tmp/haus-sdk-existing-*.log.
+Remaining gates: regenerate bindings with repository tools, build4matching
+platform libraries and a new private SDK artifact, app strict-ready attach and
+actual iOS/Android acceptance/startup comparison. No new package/public SDK push
+or mobile release is implied. Existing SDK public commits remain as approved.

@@ -418,6 +418,33 @@ export class SurrealClient {
     );
   }
 
+  /** Attach a valid existing journal without initialization, repair or migration.
+   * Missing or damaged state refuses. Requires matching rebuilt native binaries;
+   * this never falls back to the initializing open method on an older ABI.
+   */
+  async openExistingExperimentalSync(
+    options: ExperimentalSyncOpenOptions,
+    callOptions?: CallOptions,
+  ): Promise<ExperimentalSyncClient> {
+    const open = (
+      nativeBindings as unknown as {
+        openExistingSyncClient?: (
+          database: SurrealDatabaseLike,
+          options: ExperimentalSyncOpenOptions,
+          callOptions?: CallOptions,
+        ) => ReturnType<typeof nativeOpenSyncClient>;
+      }
+    ).openExistingSyncClient;
+    if (typeof open !== "function") {
+      throw new Error(
+        "Existing sync attach requires matching rebuilt native binaries",
+      );
+    }
+    return new ExperimentalSyncClient(
+      await open(this.#native, options, callOptions),
+    );
+  }
+
   /**
    * Inspect existing local state without schema installation, initialization or
    * migration. Requires a quiesced embedded journal and matching native ABI.

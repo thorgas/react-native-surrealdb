@@ -210,6 +210,14 @@ disclosure is about how the code was produced, not a claim that generated code
 is automatically correct; the native test matrix and release checks remain the
 standard for accepting changes.
 
+### Attach an existing experimental sync journal
+
+`database.openExistingExperimentalSync(expectedScope)` refuses missing or damaged
+journals before any initializer or repair DDL. It never falls back to creation on
+an older ABI. This new source capability still requires regenerated bindings,
+matching native libraries and device acceptance. See the
+[existing-only attachment contract](docs/SYNC_EXISTING_ATTACH.md).
+
 ### Inspect an existing experimental sync journal
 
 This is a source-foundation milestone: checked-in generated bindings and
