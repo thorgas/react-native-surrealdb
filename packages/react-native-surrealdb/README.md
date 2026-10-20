@@ -548,3 +548,29 @@ and checksum consistency do not establish mobile execution, physical-owner
 creation, application activation or package publication. The caller must keep its
 own quiesced owner fence through later validation/publication; this observation
 is not a future-write lease.
+
+
+### Native bootstrap request encoding (matching rebuild required)
+
+A bound bootstrap session provides `requestStart(requestId)`,
+`requestPage(stage,index)` and `requestComplete(stage)`. Each returns opaque
+canonical request bytes for the authenticated application transport. The start
+request uses only independently supplied bound context and a nonempty request ID
+of at most512UTF-8bytes. Page/complete identity comes from the opaque native stage,
+not JavaScript parsing or a replacement server-supplied context. Page indices are
+checked against that manifest. Requests do not authenticate transport or establish
+that a remote session remains unexpired.
+
+These operations are read-only: they never initialize schema, begin/recreate a
+stage, apply pages, advance a cursor or complete bootstrap. Stage requests verify
+the current durable incarnation and refuse cancelled/replaced/cross-session
+handles. A consumed stage can reproduce the exact Complete request after a lost
+reply; fresh installation still requires a new authenticated server receipt.
+After process restart, reacquire a handle with `progress(manifest)` as before.
+The existing begin/page/complete API continues to verify original opaque bytes.
+
+The generated bindings were regenerated from a compiled host UniFFI library.
+They require corresponding rebuilt mobile native artifacts and a new matching
+app runtime. Older native sessions missing these methods fail closed; there is
+no JavaScript codec fallback. Source/host tests alone do not prove JSI, mobile
+linking, app installation, device behavior or release acceptance.

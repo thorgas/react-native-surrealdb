@@ -1064,3 +1064,123 @@ async fn newer_durable_stage_and_checkpoint_authorization_floors_survive_physica
         db.close().await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn native_request_builders_preserve_bound_context_and_manifest_without_mutation() {
+    let db = database().await;
+    let expected = context();
+    let client = open_sync_client(db.clone(), options(&expected))
+        .await
+        .unwrap();
+    let session = bind_bootstrap_session(client.clone(), expected.clone())
+        .await
+        .unwrap();
+    let input = wire(&expected, "request-codec", u64::MAX);
+    let before = schema(&db).await;
+    assert_eq!(
+        session.request_start("request-codec".into()).await.unwrap(),
+        input.start
+    );
+    assert_eq!(client.status().await.unwrap().revision, 0);
+    assert_eq!(schema(&db).await, before);
+    let stage = session
+        .clone()
+        .begin(input.start, input.manifest.clone())
+        .await
+        .unwrap();
+    let before = client.status().await.unwrap().revision;
+    let request =
+        decode_bootstrap_page_request(&session.request_page(stage.clone(), 0).await.unwrap())
+            .unwrap();
+    assert_eq!(request.partition_id.0, expected.partition_id);
+    assert_eq!(request.client_id.0, expected.client_id);
+    assert_eq!(request.session_id, "request-codec");
+    assert_eq!(request.index, 0);
+    let complete = session.request_complete(stage.clone()).await.unwrap();
+    let decoded = decode_bootstrap_complete(&complete).unwrap();
+    assert_eq!(
+        decoded.manifest_digest,
+        bootstrap_manifest_digest(&decode_bootstrap_manifest(&input.manifest).unwrap()).unwrap()
+    );
+    assert_eq!(decoded.session_id, "request-codec");
+    assert_eq!(decoded.partition_id.0, expected.partition_id);
+    assert_eq!(decoded.client_id.0, expected.client_id);
+    assert_eq!(client.status().await.unwrap().revision, before);
+    session
+        .clone()
+        .page(stage.clone(), input.page)
+        .await
+        .unwrap();
+    session
+        .clone()
+        .complete(stage.clone(), input.receipt)
+        .await
+        .unwrap();
+    let after = client.status().await.unwrap().revision;
+    assert_eq!(session.request_complete(stage).await.unwrap(), complete);
+    assert_eq!(client.status().await.unwrap().revision, after);
+    client.close().await;
+    assert!(matches!(
+        session.request_start("request-codec".into()).await,
+        Err(NativeBootstrapError::Closed)
+    ));
+}
+
+#[tokio::test]
+async fn request_builders_refuse_bad_indices_cross_binding_cancelled_and_replaced_stages() {
+    let db = database().await;
+    let expected = context();
+    let client = open_sync_client(db, options(&expected)).await.unwrap();
+    let session = bind_bootstrap_session(client.clone(), expected.clone())
+        .await
+        .unwrap();
+    for id in [String::new(), "x".repeat(513), "é".repeat(257)] {
+        assert!(matches!(
+            session.request_start(id).await,
+            Err(NativeBootstrapError::InvalidInput)
+        ));
+    }
+    let input = wire(&expected, "request-errors", u64::MAX);
+    let stage = session
+        .clone()
+        .begin(input.start.clone(), input.manifest.clone())
+        .await
+        .unwrap();
+    for index in [1, u64::MAX] {
+        assert!(matches!(
+            session.request_page(stage.clone(), index).await,
+            Err(NativeBootstrapError::InvalidInput)
+        ));
+    }
+    let other = bind_bootstrap_session(client.clone(), expected.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        other.request_page(stage.clone(), 0).await,
+        Err(NativeBootstrapError::StageMismatch)
+    ));
+    assert!(matches!(
+        other.request_complete(stage.clone()).await,
+        Err(NativeBootstrapError::StageMismatch)
+    ));
+    session.clone().cancel(stage.clone()).await.unwrap();
+    assert!(matches!(
+        session.request_complete(stage.clone()).await,
+        Err(NativeBootstrapError::StageMismatch)
+    ));
+    assert!(matches!(
+        session.request_page(stage.clone(), 0).await,
+        Err(NativeBootstrapError::StageMismatch)
+    ));
+    let replacement_input = wire(&expected, "request-replacement", u64::MAX);
+    let replacement = session
+        .clone()
+        .begin(replacement_input.start, replacement_input.manifest)
+        .await
+        .unwrap();
+    assert!(session.request_complete(replacement).await.is_ok());
+    assert!(matches!(
+        session.request_complete(stage).await,
+        Err(NativeBootstrapError::StageMismatch)
+    ));
+}

@@ -1,3 +1,9 @@
+## Unreleased private candidate
+
+- Add read-only native bootstrap request builders preserving independently bound
+  context and opaque stage ownership. Matching regenerated native artifacts and
+  rebuilt apps are required; no new public release is authorized by this entry.
+
 # Changelog
 
 All notable changes to this package are documented here.

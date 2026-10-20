@@ -193,6 +193,9 @@ export async function bindExperimentalBootstrap(
       native.progress,
       native.cancel,
       native.complete,
+      native.requestStart,
+      native.requestPage,
+      native.requestComplete,
     ].some((method) => typeof method !== "function")
   )
     return fail("UnsupportedAbi");
@@ -251,6 +254,54 @@ export class ExperimentalBootstrapSession {
     const native = this.#stages.get(stage);
     if (!native) return fail(bindings.NativeBootstrapError_Tags.StageMismatch);
     return native;
+  }
+  /** Canonical native request bytes derived only from the independently bound context. */
+  async requestStart(
+    requestId: string,
+    options?: CallOptions,
+  ): Promise<ArrayBuffer> {
+    if (
+      typeof requestId !== "string" ||
+      requestId.length === 0 ||
+      requestId.length > 512 ||
+      new TextEncoder().encode(requestId).length > 512
+    )
+      return fail(bindings.NativeBootstrapError_Tags.InvalidInput);
+    return frame(
+      await this.#call(false, options, () =>
+        this.native.requestStart(requestId, options),
+      ),
+    );
+  }
+  /** Identity/digest remains inside the opaque stage; JS supplies only the page index. */
+  async requestPage(
+    stage: ExperimentalBootstrapStage,
+    index: bigint,
+    options?: CallOptions,
+  ): Promise<ArrayBuffer> {
+    const native = this.#nativeStage(stage);
+    if (
+      typeof index !== "bigint" ||
+      index < 0n ||
+      index > 18446744073709551615n
+    )
+      return fail(bindings.NativeBootstrapError_Tags.InvalidInput);
+    return frame(
+      await this.#call(false, options, () =>
+        this.native.requestPage(native, index, options),
+      ),
+    );
+  }
+  async requestComplete(
+    stage: ExperimentalBootstrapStage,
+    options?: CallOptions,
+  ): Promise<ArrayBuffer> {
+    const native = this.#nativeStage(stage);
+    return frame(
+      await this.#call(false, options, () =>
+        this.native.requestComplete(native, options),
+      ),
+    );
   }
   async begin(
     start: ExperimentalBootstrapBytes,

@@ -48,6 +48,9 @@ function fixture() {
     })),
     cancel: vi.fn(async () => {}),
     complete: vi.fn(async () => Completion.Applied),
+    requestStart: vi.fn(async () => new Uint8Array([1, 2]).buffer),
+    requestPage: vi.fn(async () => new Uint8Array([3, 4]).buffer),
+    requestComplete: vi.fn(async () => new Uint8Array([5, 6]).buffer),
   };
   bridge.bind.mockResolvedValue(native);
   const parent = { isClosed: vi.fn(() => false), close: vi.fn(async () => {}) };
@@ -61,6 +64,41 @@ beforeEach(() => {
   bridge.capabilities.mockReturnValue(caps);
 });
 describe("opaque bootstrap facade", () => {
+  it("builds opaque native requests, preserving stage ownership and bounded IDs/indices", async () => {
+    const { client, native, stage } = fixture();
+    const session = await client.bindBootstrapSession(context);
+    const signal = new AbortController().signal;
+    expect([
+      ...new Uint8Array(await session.requestStart("request", { signal })),
+    ]).toEqual([1, 2]);
+    expect(native.requestStart).toHaveBeenCalledWith("request", { signal });
+    const owned = await session.begin(new Uint8Array([0]), new Uint8Array([0]));
+    expect([...new Uint8Array(await session.requestPage(owned, 0n))]).toEqual([
+      3, 4,
+    ]);
+    expect(native.requestPage).toHaveBeenCalledWith(stage, 0n, undefined);
+    expect([...new Uint8Array(await session.requestComplete(owned))]).toEqual([
+      5, 6,
+    ]);
+    expect(native.requestComplete).toHaveBeenCalledWith(stage, undefined);
+    for (const id of ["", "x".repeat(513), "é".repeat(257)])
+      await expect(session.requestStart(id)).rejects.toMatchObject({
+        code: "InvalidInput",
+      });
+    for (const index of [-1n, 18446744073709551616n, 1 as unknown as bigint])
+      await expect(session.requestPage(owned, index)).rejects.toMatchObject({
+        code: "InvalidInput",
+      });
+    expect(native.requestPage).toHaveBeenCalledTimes(1);
+    await expect(
+      session.requestComplete({} as ExperimentalBootstrapStage),
+    ).rejects.toMatchObject({ code: "StageMismatch" });
+    session.close();
+    await expect(session.requestStart("closed")).rejects.toMatchObject({
+      code: "Closed",
+    });
+  });
+
   it("fails before storage on missing native ABI or incompatible capability", async () => {
     const { client } = fixture();
     bridge.capabilities.mockImplementationOnce(() => {

@@ -4263,6 +4263,29 @@ export interface NativeBootstrapSessionLike {
     manifest: ArrayBuffer,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<NativeBootstrapProgress>;
+  /**
+   * Repeated Complete requests preserve the same manifest digest, including lost replies.
+   */
+  requestComplete(
+    stage: NativeBootstrapStageLike,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<ArrayBuffer>;
+  /**
+   * The stage supplies authenticated session identity; callers supply only a bounded index.
+   */
+  requestPage(
+    stage: NativeBootstrapStageLike,
+    index: bigint,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<ArrayBuffer>;
+  /**
+   * Encode a request from the independently bound context, without decoding server bytes in JS.
+   * Read-only: this never begins a durable stage or selects a replacement authorization.
+   */
+  requestStart(
+    requestId: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<ArrayBuffer>;
 }
 /**
  * @deprecated Use `NativeBootstrapSessionLike` instead.
@@ -4512,6 +4535,159 @@ export class NativeBootstrapSession
         // here using the per-callable return-type converter.
         /*liftFunc:*/ FfiConverterTypeNativeBootstrapProgress.lift.bind(
           FfiConverterTypeNativeBootstrapProgress,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeBootstrapError.lift.bind(
+          FfiConverterTypeNativeBootstrapError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  /**
+   * Repeated Complete requests preserve the same manifest digest, including lost replies.
+   */
+  async requestComplete(
+    stage: NativeBootstrapStageLike,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<ArrayBuffer> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_request_complete(
+            uniffiTypeNativeBootstrapSessionObjectFactory.clonePointer(this),
+            FfiConverterTypeNativeBootstrapStage.lower(
+              stage,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterArrayBuffer.lift.bind(
+          FfiConverterArrayBuffer,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeBootstrapError.lift.bind(
+          FfiConverterTypeNativeBootstrapError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  /**
+   * The stage supplies authenticated session identity; callers supply only a bounded index.
+   */
+  async requestPage(
+    stage: NativeBootstrapStageLike,
+    index: bigint,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<ArrayBuffer> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_request_page(
+            uniffiTypeNativeBootstrapSessionObjectFactory.clonePointer(this),
+            FfiConverterTypeNativeBootstrapStage.lower(
+              stage,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterUInt64.lower(index, nativeModule().rustbuffer_alloc),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterArrayBuffer.lift.bind(
+          FfiConverterArrayBuffer,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeBootstrapError.lift.bind(
+          FfiConverterTypeNativeBootstrapError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  /**
+   * Encode a request from the independently bound context, without decoding server bytes in JS.
+   * Read-only: this never begins a durable stage or selects a replacement authorization.
+   */
+  async requestStart(
+    requestId: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<ArrayBuffer> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_request_start(
+            uniffiTypeNativeBootstrapSessionObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              requestId,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterArrayBuffer.lift.bind(
+          FfiConverterArrayBuffer,
         ),
         /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
         /*asyncOpts:*/ asyncOpts_,
@@ -7366,6 +7542,30 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_progress",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_request_complete() !==
+    40148
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_request_complete",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_request_page() !==
+    21434
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_request_page",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_request_start() !==
+    37482
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_request_start",
     );
   }
   if (

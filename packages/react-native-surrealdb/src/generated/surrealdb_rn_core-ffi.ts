@@ -296,6 +296,19 @@ interface NativeModuleInterface {
     uniffiSelf: bigint,
     manifest: Uint8Array,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_request_complete(
+    uniffiSelf: bigint,
+    stage: bigint,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_request_page(
+    uniffiSelf: bigint,
+    stage: bigint,
+    index: bigint,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativebootstrapsession_request_start(
+    uniffiSelf: bigint,
+    requestId: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_apply_pull_response(
     uniffiSelf: bigint,
     responseJson: Uint8Array,
@@ -514,6 +527,9 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_complete(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_page(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_progress(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_request_complete(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_request_page(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativebootstrapsession_request_start(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_pull_response(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_apply_subscription_response_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_cancel_subscription(): number;

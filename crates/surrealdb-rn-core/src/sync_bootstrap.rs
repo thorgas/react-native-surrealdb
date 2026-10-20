@@ -10,10 +10,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use surrealdb_sync_protocol::bootstrap::BootstrapContext;
+use surrealdb_sync_protocol::bootstrap::{
+    BootstrapCompleteRequest, BootstrapContext, BootstrapPageRequest, BootstrapStartRequest,
+};
 use surrealdb_sync_protocol::bootstrap_codec::{
     bootstrap_manifest_digest, decode_bootstrap_manifest, decode_bootstrap_page,
-    decode_bootstrap_receipt, decode_bootstrap_start, validate_bootstrap_manifest_context,
+    decode_bootstrap_receipt, decode_bootstrap_start, encode_bootstrap_complete,
+    encode_bootstrap_page_request, encode_bootstrap_start, validate_bootstrap_manifest_context,
     validate_bootstrap_receipt,
 };
 use surrealdb_sync_protocol::{ClientId, PartitionId, ScopeIdentity, ScopeSnapshot};
@@ -262,6 +265,64 @@ impl NativeBootstrapSession {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl NativeBootstrapSession {
+    /// Encode a request from the independently bound context, without decoding server bytes in JS.
+    /// Read-only: this never begins a durable stage or selects a replacement authorization.
+    pub async fn request_start(&self, request_id: String) -> Result<Vec<u8>, NativeBootstrapError> {
+        if request_id.is_empty() || request_id.len() > crate::sync_state::MAX_IDENTITY_BYTES {
+            return Err(NativeBootstrapError::InvalidInput);
+        }
+        let mut access = self
+            .client
+            .bootstrap_access(&self.expected, Some(self.ticket))
+            .await?;
+        access.finish(Ok(()), false)?;
+        encode_bootstrap_start(&BootstrapStartRequest {
+            partition_id: self.expected.partition_id.clone(),
+            client_id: self.expected.client_id.clone(),
+            request_id,
+            requested_scope: self.expected.scope.identity.clone(),
+            subscription_revision: self.expected.scope.subscription_revision,
+            journal_generation: self.expected.journal_generation.clone(),
+        })
+        .map_err(|_| NativeBootstrapError::InvalidInput)
+    }
+
+    /// The stage supplies authenticated session identity; callers supply only a bounded index.
+    pub async fn request_page(
+        &self,
+        stage: Arc<NativeBootstrapStage>,
+        index: u64,
+    ) -> Result<Vec<u8>, NativeBootstrapError> {
+        let manifest = self.request_manifest(&stage).await?;
+        if index >= manifest.page_count {
+            return Err(NativeBootstrapError::InvalidInput);
+        }
+        encode_bootstrap_page_request(&BootstrapPageRequest {
+            partition_id: self.expected.partition_id.clone(),
+            client_id: self.expected.client_id.clone(),
+            session_id: manifest.session_id,
+            index,
+        })
+        .map_err(|_| NativeBootstrapError::InvalidFrame)
+    }
+
+    /// Repeated Complete requests preserve the same manifest digest, including lost replies.
+    pub async fn request_complete(
+        &self,
+        stage: Arc<NativeBootstrapStage>,
+    ) -> Result<Vec<u8>, NativeBootstrapError> {
+        let manifest = self.request_manifest(&stage).await?;
+        let manifest_digest =
+            bootstrap_manifest_digest(&manifest).map_err(|_| NativeBootstrapError::InvalidFrame)?;
+        encode_bootstrap_complete(&BootstrapCompleteRequest {
+            partition_id: self.expected.partition_id.clone(),
+            client_id: self.expected.client_id.clone(),
+            session_id: manifest.session_id,
+            manifest_digest,
+        })
+        .map_err(|_| NativeBootstrapError::InvalidFrame)
+    }
+
     pub async fn begin(
         self: Arc<Self>,
         start: Vec<u8>,
@@ -354,6 +415,33 @@ impl From<NativeSyncError> for NativeBootstrapError {
 }
 
 impl NativeBootstrapSession {
+    async fn request_manifest(
+        &self,
+        stage: &NativeBootstrapStage,
+    ) -> Result<surrealdb_sync_protocol::bootstrap::BootstrapManifest, NativeBootstrapError> {
+        self.validate_stage(stage)?;
+        let manifest = self.manifest(&stage.manifest)?;
+        let mut access = self
+            .client
+            .bootstrap_access(&self.expected, Some(self.ticket))
+            .await?;
+        let result = access
+            .store()
+            .resume(
+                Some(&stage.manifest),
+                &self.expected,
+                Some(stage.incarnation),
+            )
+            .await;
+        let inventory = access
+            .finish(result, false)?
+            .ok_or(NativeBootstrapError::StageMismatch)?;
+        if inventory.state == StageState::Cancelled {
+            return Err(NativeBootstrapError::StageMismatch);
+        }
+        Ok(manifest)
+    }
+
     async fn begin_owned(
         &self,
         start: Vec<u8>,
