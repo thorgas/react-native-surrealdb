@@ -1,4 +1,4 @@
-## Unreleased private candidate
+## 0.1.0-alpha.6.haus.20261020.1 — private artifact candidate
 
 - Add read-only native bootstrap request builders preserving independently bound
   context and opaque stage ownership. Matching regenerated native artifacts and
