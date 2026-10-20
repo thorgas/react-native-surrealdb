@@ -323,3 +323,34 @@ metadata and was stopped; registry-enabled lockfile-only retry passed without
 module install/scripts. Native platform artifacts will be rebuilt from this
 candidate before consuming it in Hauswirtschaft. Host functional147/134 gates
 precede this metadata-only version change; mobile acceptance remains pending.
+
+## Private native candidate and owner-metadata conformance (2026-10-20)
+
+Runtime candidate e804746ca6a0075aa72231335989306579fd0b0e, version
+0.1.0-alpha.4.haus.20261019.1, built iOS arm64 device+simulator and Android
+arm64+x86_64 release libraries. Existing strip scripts passed; generated tracked
+bindings matched committed source after formatting. Package build/types,134JS
+tests and package verification passed. Private tarball152534206bytes (existing
+180000000 ceiling), SHA256
+1d2d8baf7dff3bf512886618303801527e1bf7ffe642e9cd224b4d9f589e9b23.
+Artifact proof /private/tmp/haus-private-sdk-complete-artifact-proof.json.
+NO SDK publication, tag or remote push. New app consumption/build/device gates
+remain open. Completed iOS compiler target intermediates were removed only after
+packaging/hash verification; packaged libraries, source and evidence were retained.
+
+New test-only conformance validates pristine ROOT/no native initialization,
+same-request USE NS+INFO NS, typed use only after exact database admission, foreign
+metadata refusal and persistent SurrealKV reopen. Actual raw USE selection does
+not persist across later queries; the app must use the proved same-request INFO
+then explicit typed use. Public query encoding confirms tagged NONE and exact
+statement indices. USE's result is a namespace/database object, not NONE; the
+initial test expectation failed and was corrected from actual output, without
+changing runtime admission. Host151passed/3explicitignored; persistent test1pass
+with0skip; all-target Clippy/fmt passed. Logs /private/tmp/haus-sdk-owner-proof-*.
+
+To keep host proof cache small without changing debug assertions/optimization:
+CARGO_TARGET_DIR=/private/tmp/haus-sdk-owner-proof-target
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0
+CARGO_BUILD_JOBS=1 cargo test --locked --offline -p surrealdb-rn-core.
+This is a host correctness configuration, not mobile performance evidence.
+No API/ABI/runtime change is included in this test-only slice.

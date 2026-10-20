@@ -1267,3 +1267,6 @@ mod tests {
         reopened.close().await.unwrap();
     }
 }
+
+#[cfg(test)]
+mod household_owner_metadata_proof;
