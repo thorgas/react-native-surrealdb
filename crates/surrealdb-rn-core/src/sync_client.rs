@@ -686,6 +686,21 @@ impl NativeSyncClient {
         crate::sync_read::capabilities()
     }
 
+    /// Bounded local count/page over the same authorized optimistic view as snapshots.
+    pub async fn read_view_json(&self, request_json: String) -> Result<String, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        let response = crate::sync_view::read(slot.read_client()?, &slot.journal, &request_json)?;
+        let encoded = crate::sync_view::output(&response)?;
+        if let Some(cursor) = response
+            .get("nextCursor")
+            .and_then(serde_json::Value::as_str)
+        {
+            slot.journal.remember_view_cursor(cursor.to_owned());
+        }
+        Ok(encoded)
+    }
+
     pub async fn read_snapshot_json(&self) -> Result<String, NativeSyncError> {
         let mut slot = self.lock_runtime().await;
         self.refresh_scope_barrier(&mut slot).await?;
@@ -2198,6 +2213,14 @@ mod tests {
         let client = open_sync_client(db.clone(), options("all")).await.unwrap();
         db.close().await.unwrap();
         assert!(matches!(
+            client
+                .read_view_json(
+                    r#"{"protocolVersion":1,"operation":"count","selector":{"kind":"all"}}"#.into()
+                )
+                .await,
+            Err(NativeSyncError::RecoveryRequired)
+        ));
+        assert!(matches!(
             client.read_snapshot_json().await,
             Err(NativeSyncError::RecoveryRequired)
         ));
@@ -2382,6 +2405,14 @@ mod tests {
             Err(NativeSyncError::PendingQuarantineRequired)
         ));
         assert!(matches!(
+            client
+                .read_view_json(
+                    r#"{"protocolVersion":1,"operation":"count","selector":{"kind":"all"}}"#.into()
+                )
+                .await,
+            Err(NativeSyncError::PendingQuarantineRequired)
+        ));
+        assert!(matches!(
             client.read_changes_json(cursor.clone(), 128).await,
             Err(NativeSyncError::PendingQuarantineRequired)
         ));
@@ -2391,6 +2422,14 @@ mod tests {
             Err(NativeSyncError::PendingQuarantineRequired)
         ));
         client.close().await;
+        assert!(matches!(
+            client
+                .read_view_json(
+                    r#"{"protocolVersion":1,"operation":"count","selector":{"kind":"all"}}"#.into()
+                )
+                .await,
+            Err(NativeSyncError::Closed)
+        ));
         assert!(matches!(
             client.read_snapshot_json().await,
             Err(NativeSyncError::Closed)

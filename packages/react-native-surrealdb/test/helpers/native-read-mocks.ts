@@ -34,6 +34,11 @@ export function createNativeReadMocks() {
         predicateSubscriptions: false,
       }),
     ),
+    readViewJson: vi.fn(async () => {
+      throw new Error(
+        "Native bounded read view is not configured by this fixture",
+      );
+    }),
     readSnapshotJson: vi.fn(async () => {
       throw new Error("Native read snapshot is not configured by this fixture");
     }),

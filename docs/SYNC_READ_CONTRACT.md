@@ -97,3 +97,7 @@ optional peers and lockfile; neither library is loaded by this SDK's exports.
 Ordered query windows are a separate private protocol and capability; see
 [SYNC_ORDERED_WINDOWS.md](SYNC_ORDERED_WINDOWS.md). They do not change v1
 full-scope coverage or its predicate-subscription capability claim.
+
+Bounded local observed counts and projected record-ID pages are a separate
+additive API; see [SYNC_LOCAL_VIEWS.md](SYNC_LOCAL_VIEWS.md). They do not change
+this snapshot protocol or its coverage/absence semantics.

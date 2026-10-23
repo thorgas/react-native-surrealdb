@@ -26,6 +26,7 @@ pub(crate) struct ReadJournal {
     epoch: JournalEpoch,
     batches: VecDeque<Batch>,
     bytes: usize,
+    view_cursors: VecDeque<String>,
 }
 
 pub(crate) fn capabilities() -> String {
@@ -66,6 +67,7 @@ impl ReadJournal {
     pub(crate) fn rotate(&mut self) -> Result<(), NativeSyncError> {
         self.epoch.advance()?;
         self.batches.clear();
+        self.view_cursors.clear();
         self.bytes = 0;
         Ok(())
     }
@@ -75,6 +77,22 @@ impl ReadJournal {
     }
     fn cursor(&self, revision: u64) -> Value {
         json!({"processEpoch":self.epoch.value(),"revision":revision.to_string()})
+    }
+    pub(crate) fn view_epoch(&self) -> String {
+        self.epoch.value()
+    }
+    pub(crate) fn issued_view_cursor(&self, cursor: &str) -> bool {
+        self.view_cursors.iter().any(|issued| issued == cursor)
+    }
+    pub(crate) fn remember_view_cursor(&mut self, cursor: String) {
+        while self.view_cursors.len() >= 64
+            || self.view_cursors.iter().map(String::len).sum::<usize>() + cursor.len() > 256 * 1024
+        {
+            if self.view_cursors.pop_front().is_none() {
+                return;
+            }
+        }
+        self.view_cursors.push_back(cursor);
     }
     pub fn bootstrap(&self, runtime: &ClientRuntime<Value>) -> Result<Value, NativeSyncError> {
         let mut snapshot =
@@ -183,7 +201,7 @@ fn frontier(value: &mut Value) -> Result<(), NativeSyncError> {
     decimal(&mut value["epoch"])?;
     decimal(&mut value["sequence"])
 }
-fn metadata_wire(value: &mut Value) -> Result<(), NativeSyncError> {
+pub(crate) fn metadata_wire(value: &mut Value) -> Result<(), NativeSyncError> {
     decimal(&mut value["revision"])?;
     decimal(&mut value["scope"]["subscriptionRevision"])?;
     if !value["scope"]["authorizationRevision"].is_null() {

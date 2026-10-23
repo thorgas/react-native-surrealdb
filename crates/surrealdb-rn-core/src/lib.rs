@@ -13,6 +13,7 @@ mod sync_http_codec;
 mod sync_read;
 pub mod sync_state;
 mod sync_storage_inspection;
+mod sync_view;
 pub use sync_storage_inspection::{
     NativeStorageInspection, NativeStorageInspectionError, NativeStorageInspectionOptions,
     NativeTableOccupancy,

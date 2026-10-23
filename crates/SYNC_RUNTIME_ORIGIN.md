@@ -21,3 +21,12 @@ then deliberately synchronized here. Do not make an independent protocol decisio
 private roadmap task7 fix: reject reordered older epoch/sequence/authorization
 reset before state replacement. No new private modules are copied. The coordinating
 private task commit is recorded in docs/ROADMAP_9_7_8.md after verification.
+
+2026-10-23: bounded native local-view reads reuse two deliberately synchronized
+canonical client helpers: `read_metadata` (existing metadata without snapshot
+allocation) and `optimistic_operations` (verbatim accepted-not-pulled/outbox
+ordering factored from `optimistic_projection`). Authored against private engine
+`cf68ebabac7a765c92f0538a7ab01533c3b728ff`; helper-only synchronization preserves
+the runtime's existing private conflict-policy differences. No protocol or wire
+model changes or additional private modules are copied. The coordinating commit
+is `a6bb305a2cf58035165ff25e977934d83208f68e` after canonical verification.

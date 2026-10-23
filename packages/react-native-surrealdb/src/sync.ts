@@ -1,4 +1,10 @@
 import {
+  encodeSyncViewRequest,
+  decodeSyncViewResult,
+  type SyncViewRequest,
+  type SyncViewResult,
+} from "./sync-view";
+import {
   bindExperimentalBootstrap,
   experimentalBootstrapCapabilities,
   type ExperimentalBootstrapContext,
@@ -42,6 +48,7 @@ import {
 } from "./sync-window";
 
 interface NativeReadPort {
+  readViewJson(requestJson: string, options?: CallOptions): Promise<string>;
   readCapabilitiesJson(): string;
   readSnapshotJson(options?: CallOptions): Promise<string>;
   readChangesJson(
@@ -165,6 +172,29 @@ export class ExperimentalSyncClient {
       );
     }
     return this.#readCapabilities;
+  }
+
+  /** Bounded local observed counts/pages; coverage is always explicit. */
+  async readView(
+    request: SyncViewRequest,
+    options?: CallOptions,
+  ): Promise<SyncViewResult> {
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
+    if (this.isClosed) throw new Error("Sync client is closed");
+    if (options?.signal?.aborted) throw new Error("Sync view read aborted");
+    const encoded = encodeSyncViewRequest(request);
+    const captured = JSON.parse(encoded) as SyncViewRequest;
+    const method = this.#native.readViewJson;
+    if (!method) return missingReadAbi();
+    const response = await method
+      .call(this.#native, encoded, options)
+      .catch((error) => {
+        throw this.#readFailure(error);
+      });
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
+    if (this.isClosed) throw new Error("Sync client is closed");
+    if (options?.signal?.aborted) throw new Error("Sync view read aborted");
+    return decodeSyncViewResult(response, captured);
   }
 
   async readSnapshot(options?: CallOptions): Promise<SyncReadBootstrap> {

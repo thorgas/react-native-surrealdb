@@ -485,3 +485,44 @@ or mobile release is implied. Existing SDK public commits remain as approved.
 ### 2026-10-20 Matching existing-only native artifacts
 
 Source foundation committed locally as63d48db on private/bootstrap-staging-20261019. ubrn regenerated bindings and built release iOS device/simulator-arm64 and Android arm64/x86_64; repository strip scripts completed. Generated-package release:check passed build/types/137tests/inventory for private version0.1.0-alpha.5.haus.20261020.1. Logs /private/tmp/haus-sdk-existing-{ios,android}-build.log and /private/tmp/haus-sdk-existing-generated-release-check.log. No public SDK push/npm/tag; device acceptance, product activation and paired startup measurements remain pending.
+
+## 2026-10-23 bounded local count/page candidate (not activated)
+
+Base runtime `6ceed8ab710a2d043a1f506d7c1092797bd24b9e`; canonical engine
+`cf68ebabac7a765c92f0538a7ab01533c3b728ff`. Added `readViewJson` / `readView`
+with bounded native effective-view scans, projected record-ID pages, local
+observed counts, explicit coverage/provenance and revocable issued cursors.
+See [SYNC_LOCAL_VIEWS.md](SYNC_LOCAL_VIEWS.md) for exact limits and claim boundaries.
+No persistence format, migration, provider activation or dependency pins changed.
+Canonical `read_metadata` and borrowed `optimistic_operations` helpers plus their
+shared two-test regression were authored/reconciled in the private canonical
+engine and deliberately synchronized from canonical commit
+`a6bb305a2cf58035165ff25e977934d83208f68e`; provenance is recorded in
+`crates/SYNC_RUNTIME_ORIGIN.md`.
+
+Verification evidence lives in `output/bounded-view-20261023/` (task-owned,
+untracked; exclude it from commits). Runtime Rust workspace: 233 passed, 3 ignored;
+all 3 conditional tests separately passed against dedicated pinned 3.2.4 localhost
+and fresh preserved synthetic SurrealKV fixtures. Cleanup receipt verifies server
+exit 0 and port 18959 closed. SDK: 148 TypeScript tests, generated-binding typecheck,
+Prettier, Bob build and native warning-denied clippy passed. Canonical full
+`./scripts/check.sh` passed 335 Rust tests (427 existing external fixture ignores),
+159 Quint tests, simulations/TLC, 20 expected counterexamples and 26 Python tests;
+public export remained only `.gitkeep`, `LICENSE`, `README.md`.
+
+The synthetic 1000-record transfer test measured existing snapshot 2,406,028 bytes
+versus projected two-row page 1,109 bytes. This measures bounded host transfer,
+not Android/iOS latency. Generated TS/C++ bindings came from the freshly built
+host library with pinned `uniffi-bindgen-react-native` 0.31.0-3. Matching rebuilt
+Android/iOS binaries, app runtime fingerprints, product-domain validation and
+physical-device acceptance remain required. Record-ID order does not establish
+global title/date ordering. An eager full-snapshot JavaScript observer would
+still negate the transfer benefit; no application provider was changed here.
+
+Frozen workspace dependency restore used Node 22.22.0 / pnpm 11.5.0, preserving the
+previous stale package node_modules symlink itself under the evidence folder;
+its shared target was untouched. Installation ran only unrs-resolver/esbuild
+postinstall scripts; no harness or native generation lifecycle ran implicitly.
+Original and fresh fixtures are preserved; later conditional reruns must use a
+new uniquely named directory, since these conformance tests intentionally CREATE
+fresh records before testing preservation across reopen.

@@ -41,7 +41,7 @@ function cursor(value: unknown): void {
   text(row.processEpoch);
   counter(row.revision);
 }
-function metadata(value: unknown): void {
+export function validateSyncReadMetadata(value: unknown): void {
   const row = object(value),
     scope = object(row.scope),
     coverage = object(row.coverage);
@@ -111,6 +111,10 @@ function row(value: unknown, meta: unknown): void {
     } else if (optimistic.state === "deleted") counter(optimistic.baseVersion);
     else invalid();
   }
+  validateSyncReadSummary(entry);
+}
+export function validateSyncReadSummary(value: unknown): void {
+  const entry = object(value);
   for (const pending of array(entry.pending)) identity(pending);
   for (const value of array(entry.conflicts)) {
     const conflict = object(value);
@@ -143,7 +147,7 @@ function row(value: unknown, meta: unknown): void {
 function snapshot(value: unknown): void {
   const result = object(value);
   if (result.protocolVersion !== 1) invalid();
-  metadata(result.metadata);
+  validateSyncReadMetadata(result.metadata);
   const rows = object(result.rows),
     entries = Object.entries(rows);
   if (entries.length > 100_000) invalid();
@@ -186,7 +190,7 @@ export function decodeSyncReadChanges(json: string): SyncReadChanges {
       if (batch.protocolVersion !== 1) invalid();
       counter(batch.beforeRevision);
       counter(batch.revision);
-      metadata(batch.metadata);
+      validateSyncReadMetadata(batch.metadata);
       if (batch.revision !== object(batch.metadata).revision) invalid();
       for (const value of array(batch.changes)) {
         const change = object(value);

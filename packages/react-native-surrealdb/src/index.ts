@@ -36,3 +36,5 @@ export type {
   ExperimentalStorageJournalInspection,
   ExperimentalStorageInspectionErrorCode,
 } from "./sync-storage-inspection";
+
+export * from "./sync-view";

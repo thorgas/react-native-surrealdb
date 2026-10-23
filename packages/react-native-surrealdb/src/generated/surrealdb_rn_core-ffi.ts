@@ -358,6 +358,10 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_read_snapshot_json(
     uniffiSelf: bigint,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_read_view_json(
+    uniffiSelf: bigint,
+    requestJson: Uint8Array,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_record_push_response(
     uniffiSelf: bigint,
     responseJson: Uint8Array,
@@ -543,6 +547,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_capabilities_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_changes_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_snapshot_json(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_view_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_record_push_response(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_record_push_response_with_policy(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_requires_authorized_reset(): number;

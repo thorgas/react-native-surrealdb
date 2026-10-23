@@ -992,6 +992,35 @@ fn identity_exists<V>(state: &DurableClientState<V>, commit_id: &ClientCommitId)
             .any(|resolved| resolved.local_commit.identity.client_commit_id == *commit_id)
 }
 
+/// Borrowed operations contributing to the effective optimistic view, in order.
+/// Confirmed records are applied first; accepted-but-unpulled operations precede
+/// pending outbox operations. This does not materialize or clone payloads.
+pub fn optimistic_operations<V>(
+    state: &DurableClientState<V>,
+) -> impl Iterator<Item = &Operation<V>> {
+    let applied_sequence = state
+        .checkpoint
+        .as_ref()
+        .map_or(0, |checkpoint| checkpoint.cursor.sequence);
+    let accepted_not_pulled =
+        state
+            .outcomes
+            .iter()
+            .filter_map(move |resolved| match &resolved.outcome {
+                DurableOutcome::Accepted { sequence, .. }
+                    if !resolved.covered_by_reset && *sequence > applied_sequence =>
+                {
+                    Some(&resolved.local_commit)
+                }
+                DurableOutcome::Accepted { .. }
+                | DurableOutcome::Conflict { .. }
+                | DurableOutcome::Rejected { .. } => None,
+            });
+    accepted_not_pulled
+        .chain(&state.outbox)
+        .flat_map(|commit| &commit.operations)
+}
+
 pub fn optimistic_projection<V: Clone>(
     state: &DurableClientState<V>,
 ) -> BTreeMap<RecordId, OptimisticRecord<V>> {
@@ -1020,28 +1049,7 @@ pub fn optimistic_projection<V: Clone>(
             )),
         })
         .collect::<BTreeMap<_, _>>();
-    let applied_sequence = state
-        .checkpoint
-        .as_ref()
-        .map_or(0, |checkpoint| checkpoint.cursor.sequence);
-    let accepted_not_pulled =
-        state
-            .outcomes
-            .iter()
-            .filter_map(|resolved| match &resolved.outcome {
-                DurableOutcome::Accepted { sequence, .. }
-                    if !resolved.covered_by_reset && *sequence > applied_sequence =>
-                {
-                    Some(&resolved.local_commit)
-                }
-                DurableOutcome::Accepted { .. }
-                | DurableOutcome::Conflict { .. }
-                | DurableOutcome::Rejected { .. } => None,
-            });
-    for operation in accepted_not_pulled
-        .chain(&state.outbox)
-        .flat_map(|commit| &commit.operations)
-    {
+    for operation in optimistic_operations(state) {
         match operation {
             Operation::Upsert {
                 record_id,

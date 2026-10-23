@@ -276,6 +276,11 @@ impl<V: Clone + Eq> ReadSnapshotV1<V> {
 }
 
 impl<V: Clone + Eq> ClientRuntime<V> {
+    /// Metadata of the installed local view without materializing record payloads.
+    pub fn read_metadata(&self) -> ReadMetadataV1 {
+        metadata(&self.state)
+    }
+
     /// One pure read of one installed durable revision; no database/network read.
     pub fn read_snapshot(&self) -> ReadSnapshotV1<V> {
         snapshot(&self.state)
