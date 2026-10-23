@@ -1,0 +1,222 @@
+[
+  {
+    "version": "0",
+    "commit": {
+      "identity": {
+        "clientCommitId": "upsert-0",
+        "fingerprint": "untrusted"
+      },
+      "operations": [
+        {
+          "kind": "upsert",
+          "record_id": "person:ada",
+          "base_version": {
+            "exact": {
+              "$surreal": "int",
+              "value": "0"
+            }
+          },
+          "value": {
+            "count": {
+              "$surreal": "int",
+              "value": "5"
+            },
+            "nested": {
+              "base_version": {
+                "exact": {
+                  "$surreal": "int",
+                  "value": "5"
+                }
+              }
+            }
+          },
+          "reference": null
+        }
+      ]
+    }
+  },
+  {
+    "version": "0",
+    "commit": {
+      "identity": {
+        "clientCommitId": "delete-0",
+        "fingerprint": "untrusted"
+      },
+      "operations": [
+        {
+          "kind": "delete",
+          "record_id": "person:ada",
+          "base_version": {
+            "$surreal": "int",
+            "value": "0"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "version": "5",
+    "commit": {
+      "identity": {
+        "clientCommitId": "upsert-5",
+        "fingerprint": "untrusted"
+      },
+      "operations": [
+        {
+          "kind": "upsert",
+          "record_id": "person:ada",
+          "base_version": {
+            "exact": {
+              "$surreal": "int",
+              "value": "5"
+            }
+          },
+          "value": {
+            "count": {
+              "$surreal": "int",
+              "value": "5"
+            },
+            "nested": {
+              "base_version": {
+                "exact": {
+                  "$surreal": "int",
+                  "value": "5"
+                }
+              }
+            }
+          },
+          "reference": null
+        }
+      ]
+    }
+  },
+  {
+    "version": "5",
+    "commit": {
+      "identity": {
+        "clientCommitId": "delete-5",
+        "fingerprint": "untrusted"
+      },
+      "operations": [
+        {
+          "kind": "delete",
+          "record_id": "person:ada",
+          "base_version": {
+            "$surreal": "int",
+            "value": "5"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "version": "9007199254740993",
+    "commit": {
+      "identity": {
+        "clientCommitId": "upsert-9007199254740993",
+        "fingerprint": "untrusted"
+      },
+      "operations": [
+        {
+          "kind": "upsert",
+          "record_id": "person:ada",
+          "base_version": {
+            "exact": {
+              "$surreal": "int",
+              "value": "9007199254740993"
+            }
+          },
+          "value": {
+            "count": {
+              "$surreal": "int",
+              "value": "5"
+            },
+            "nested": {
+              "base_version": {
+                "exact": {
+                  "$surreal": "int",
+                  "value": "5"
+                }
+              }
+            }
+          },
+          "reference": null
+        }
+      ]
+    }
+  },
+  {
+    "version": "9007199254740993",
+    "commit": {
+      "identity": {
+        "clientCommitId": "delete-9007199254740993",
+        "fingerprint": "untrusted"
+      },
+      "operations": [
+        {
+          "kind": "delete",
+          "record_id": "person:ada",
+          "base_version": {
+            "$surreal": "int",
+            "value": "9007199254740993"
+          }
+        }
+      ]
+    }
+  },
+  {
+    "version": "18446744073709551615",
+    "commit": {
+      "identity": {
+        "clientCommitId": "upsert-18446744073709551615",
+        "fingerprint": "untrusted"
+      },
+      "operations": [
+        {
+          "kind": "upsert",
+          "record_id": "person:ada",
+          "base_version": {
+            "exact": {
+              "$surreal": "int",
+              "value": "18446744073709551615"
+            }
+          },
+          "value": {
+            "count": {
+              "$surreal": "int",
+              "value": "5"
+            },
+            "nested": {
+              "base_version": {
+                "exact": {
+                  "$surreal": "int",
+                  "value": "5"
+                }
+              }
+            }
+          },
+          "reference": null
+        }
+      ]
+    }
+  },
+  {
+    "version": "18446744073709551615",
+    "commit": {
+      "identity": {
+        "clientCommitId": "delete-18446744073709551615",
+        "fingerprint": "untrusted"
+      },
+      "operations": [
+        {
+          "kind": "delete",
+          "record_id": "person:ada",
+          "base_version": {
+            "$surreal": "int",
+            "value": "18446744073709551615"
+          }
+        }
+      ]
+    }
+  }
+]

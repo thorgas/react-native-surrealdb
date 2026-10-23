@@ -452,3 +452,61 @@ App facade freeze manifest:
 `roadmap-next-app/output/household-command-session-20261023/source-freeze.json`.
 It records6 owned app paths,122 passing host regressions, scope/network lifetime
 behavior and the same deferred CAS bridge blocker. It is not native acceptance.
+
+## 2026-10-23 exact bigint CAS boundary correction
+
+Branch `fix/rn-bigint-cas-boundary`, base public main
+`eec57effd9e08860b4c818975e728a93543ddf3d`. This section supersedes the deferred
+CAS decoder blocker above. A typed RN-only commit decoder accepts lossless int
+wire tags solely in upsert exact/delete version fields at enqueue, bounded enqueue
+and conflict merge. Payload JSON, canonical protocol/client crates, identity
+fingerprinting, storage format and UniFFI signatures remain unchanged. No binding
+regeneration or native library build is required to review this input-only patch.
+Matching mobile builds are still required to execute it.
+
+Permanent shared fixtures are verified by the real JS encoder and consumed by
+native operation tests for zero,5,9007199254740993 and u64MAX, update/delete,
+payload tag/key preservation, malformed input without queue mutation, numeric/tag
+identity equivalence, bounded retry, changed-version identity refusal, disk reopen
+and conflict merge. The before-fix native operation returned InvalidInput on the
+first bigint fixture while all eight real JS encoder assertions passed. After the
+fix all three native regression tests pass. Legacy enqueue retains duplicate
+Protocol refusal; bounded enqueue retains exact idempotent retries.
+
+The delete tests seed an existing physical row. An exploratory delete of a
+nonexistent row returned Persistence; that separate behavior remains unresolved
+and is not covered up by a protocol change. This correction is not a claim that
+all sync defects are resolved.
+
+Host validation uses the existing compatible Cargo target and installed SDK
+dependency closure, Rust1.96.1, Node22.22.0, jobs1/incremental0/dev+test debug0.
+A 10GiB hard-free guard applies to these scoped host checks; no dependencies or
+native cross-builds should be bootstrapped. From repository root:
+
+```sh
+export CARGO_BUILD_JOBS=1 CARGO_INCREMENTAL=0
+export CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+cargo test --locked --offline -p surrealdb-rn-core bigint_tests -- --nocapture
+cargo test --locked --offline --workspace
+cargo clippy --locked --offline --workspace --all-targets -- -D warnings
+cargo fmt --all --check
+packages/react-native-surrealdb/node_modules/.bin/tsc --noEmit \
+  -p packages/react-native-surrealdb/tsconfig.json
+cd packages/react-native-surrealdb
+./node_modules/.bin/vitest run --maxWorkers=1
+./node_modules/.bin/prettier --check test/bigint-cas.test.ts test/fixtures/bigint-cas.json
+```
+
+The full TS suite needs ephemeral localhost binding. A sandbox EPERM run is not
+a passed gate; rerun with that permission. No package installation, generated
+binding change, platform artifact replacement, app activation, publication, tag
+or release is part of this fix. Existing four mobile libraries remain on the
+older ABI. Next mobile work requires matching all four artifacts and real device
+acceptance; host results do not satisfy that gate.
+
+Final host gates:242 Rust workspace tests passed,3 inherited core ignores;
+158 SDK TS tests passed with zero skips on the localhost-enabled rerun. Strict
+workspace/all-target Clippy, rustfmt, TypeScript and focused Prettier passed.
+Both inherited persistent reopen gates were run explicitly and passed (2/2).
+The authenticated external-server websocket test remains unexecuted. Diagnostic
+logs are local under `output/bigint-cas-20261023/` and excluded from publication.
