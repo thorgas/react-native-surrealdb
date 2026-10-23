@@ -113,21 +113,38 @@ arm64 simulator. The published alpha7 archive contains the preceding ABI and mus
 not be repacked. Host tests/codegen do not establish mobile execution or product
 startup performance. Machine-specific commands/hashes belong in HANDOFF/evidence.
 
-## Release blocker: bigint CAS input bridge (deferred)
+## Exact bigint CAS input bridge
 
-Do not activate these source APIs in a QA or production app yet. The current SDK
-lossless wire encoder emits bigint as `{ "$surreal": "int", "value": "5" }`,
-including protocol `base_version` / `base_version.exact`. Native enqueue (both old
-and bounded) and conflict-merge inputs currently deserialize `ClientCommit` with
-plain serde `u64` protocol fields, which reject that tagged object. This affects
-ordinary bigint versions as well as values above JavaScript's safe integer range.
-Converting to `Number` is not an acceptable fix because it can round exact CAS.
+RN commit inputs accept the SDK wire encoder's `{ "$surreal": "int", "value": "5" }`
+in upsert `base_version.exact` and delete `base_version`, including conflict-merge
+replacement commits. Decimal digits are parsed directly into `u64`; zero and
+`18446744073709551615` are supported. Legacy JSON integer inputs remain accepted.
+Negative, fractional, overflowing, missing, extra-field or mismatched integer tags
+fail with `InvalidInput` before journal mutation. Never convert bigint through
+JavaScript `Number`.
 
-The required follow-up is a reviewed RN input-boundary normalization/decoder for
-those protocol counters, preserving canonical payload scalar tags unchanged,
-with actual Rust + SDK tests for safe/unsafe u64 CAS. No protocol/client-crate
-change, substitute serializer or silent number conversion is implemented here.
-Matching all four mobile binaries and actual device acceptance remain required
-after that fix. Current host queue tests use Rust-produced protocol JSON; they do
-not prove JavaScript bigint CAS acceptance. The issue was found before activation
-and is deliberately left open for the user's requested planning handoff.
+The decoder is specific to these typed protocol positions. Payload JSON retains
+its scalar tags and identically named nested keys verbatim. The canonical native
+fingerprint still derives from the decoded protocol commit; numeric and tagged
+versions have the same identity. Bounded enqueue accepts exact retries without
+charging twice; legacy enqueue retains its duplicate-identity refusal.
+
+The shared regression fixture is checked against the real JS `encodeSurrealValue`
+and consumed by Rust native-operation tests. Run the existing host prerequisites
+above, then from repository root:
+
+```sh
+cargo test --locked --offline -p surrealdb-rn-core bigint_tests -- --nocapture
+```
+
+From `packages/react-native-surrealdb`:
+
+```sh
+./node_modules/.bin/vitest run test/bigint-cas.test.ts --maxWorkers=1
+```
+
+This input-only correction changes no UniFFI signatures, generated bindings,
+canonical protocol crate or storage schema. It does not remove the outstanding
+mobile gate: all four matching native libraries must be rebuilt and verified
+before packaging or activation. Existing binaries still predate the bounded-queue
+ABI. Host regressions do not establish mobile execution or release readiness.
