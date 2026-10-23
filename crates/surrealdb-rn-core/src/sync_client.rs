@@ -1010,7 +1010,7 @@ impl NativeSyncClient {
         &self,
         commit_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let mut commit = decode_input::<ClientCommit<JsonValue>>(&commit_json)?;
+        let mut commit = decode_client_commit(&commit_json)?;
         let mut slot = self.lock_runtime().await;
         let runtime = slot.client()?;
         commit.identity.fingerprint = canonical_fingerprint(runtime.state(), &commit)?;
@@ -1028,7 +1028,7 @@ impl NativeSyncClient {
         bytes: u32,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
         crate::sync_queue::limits(count, bytes)?;
-        let mut commit = decode_input::<ClientCommit<JsonValue>>(&commit_json)?;
+        let mut commit = decode_client_commit(&commit_json)?;
         let mut slot = self.lock_runtime().await;
         let runtime = slot.client()?;
         commit.identity.fingerprint = canonical_fingerprint(runtime.state(), &commit)?;
@@ -1176,7 +1176,7 @@ impl NativeSyncClient {
         conflicted_commit_id: String,
         replacement_commit_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let mut replacement = decode_input::<ClientCommit<JsonValue>>(&replacement_commit_json)?;
+        let mut replacement = decode_client_commit(&replacement_commit_json)?;
         let mut slot = self.lock_runtime().await;
         let runtime = slot.client()?;
         replacement.identity.fingerprint = canonical_fingerprint(runtime.state(), &replacement)?;
@@ -1657,6 +1657,100 @@ fn rebase_conflict_operation(
         }
     }
     Ok(())
+}
+
+// Only protocol version positions accept the JS wire integer tag. Payloads stay
+// JsonValue throughout; interpreting their tags here would change commit identity.
+fn decode_client_commit(input: &str) -> Result<ClientCommit<JsonValue>, NativeSyncError> {
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum Version {
+        Number(u64),
+        Tagged(IntTag),
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct IntTag {
+        #[serde(rename = "$surreal")]
+        tag: String,
+        value: String,
+    }
+    impl Version {
+        fn exact(self) -> Result<u64, NativeSyncError> {
+            match self {
+                Self::Number(value) => Ok(value),
+                Self::Tagged(IntTag { tag, value }) => {
+                    if tag != "int"
+                        || value.is_empty()
+                        || !value.bytes().all(|c| c.is_ascii_digit())
+                    {
+                        return Err(NativeSyncError::InvalidInput);
+                    }
+                    value.parse().map_err(|_| NativeSyncError::InvalidInput)
+                }
+            }
+        }
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum InputBaseVersion {
+        Absent,
+        Exact(Version),
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    enum InputOperation {
+        Upsert {
+            record_id: RecordId,
+            base_version: InputBaseVersion,
+            value: JsonValue,
+            reference: Option<RecordId>,
+        },
+        Delete {
+            record_id: RecordId,
+            base_version: Version,
+        },
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct InputCommit {
+        identity: CommitIdentity,
+        operations: Vec<InputOperation>,
+    }
+    let input: InputCommit = decode_input(input)?;
+    let operations = input
+        .operations
+        .into_iter()
+        .map(|operation| {
+            Ok(match operation {
+                InputOperation::Upsert {
+                    record_id,
+                    base_version,
+                    value,
+                    reference,
+                } => Operation::Upsert {
+                    record_id,
+                    base_version: match base_version {
+                        InputBaseVersion::Absent => BaseVersion::Absent,
+                        InputBaseVersion::Exact(version) => BaseVersion::Exact(version.exact()?),
+                    },
+                    value,
+                    reference,
+                },
+                InputOperation::Delete {
+                    record_id,
+                    base_version,
+                } => Operation::Delete {
+                    record_id,
+                    base_version: base_version.exact()?,
+                },
+            })
+        })
+        .collect::<Result<_, NativeSyncError>>()?;
+    Ok(ClientCommit {
+        identity: input.identity,
+        operations,
+    })
 }
 
 fn decode_input<T: DeserializeOwned>(input: &str) -> Result<T, NativeSyncError> {
@@ -5084,3 +5178,7 @@ mod tests {
         db.close().await.unwrap();
     }
 }
+
+#[cfg(test)]
+#[path = "sync_client/bigint_tests.rs"]
+mod bigint_tests;
