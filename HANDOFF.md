@@ -385,3 +385,70 @@ Never replace alpha6 or push this private branch wholesale to the public origin.
 App integration/builds, physical Android/iOS execution and startup acceptance
 remain separate unfinished gates. Root SDK dependencies were previously removed
 under explicit permission; ordinary SDK development requires their restoration.
+
+## 2026-10-23 bounded pending queue source slice (unpublished)
+
+Additive `pendingWindow(maxCommits,maxBytes)` and `enqueueBounded` reuse the
+existing runtime lock/shielded atomic persistence. `docs/BOUNDED_PENDING_QUEUE.md`
+is the portable command/semantics contract. Per-call admission is not a durable
+policy certificate; old enqueue/pending APIs retain their behavior. FIFO windows
+remain independently bounded for reopened/legacy queues, with explicit oversized
+first item and no snapshot/all-pending fallback. Exact durable retries in FIFO or
+retained outcomes do not enqueue/charge again. No storage migration.
+
+Evidence: `output/bounded-queue-20261023/`. Existing runtime `target` was reused
+with Rust1.96.1/jobs1/incremental0/dev+test debug0, locked/offline; target/debug
+allocated size grew from2,406,920KiB to about2,410,320KiB. No dependency rebuild,
+mobile crosscompile, package version change, publication or device action.
+Actual existing prebuilt generator used directly:
+`/Users/timhorgas/git/react-native-surrealdb/node_modules/.pnpm/uniffi-bindgen-react-native@0.31.0-3/node_modules/uniffi-bindgen-react-native/target/debug/uniffi-bindgen-react-native`.
+Do not use its npm wrapper for help: that wrapper runs Cargo and can bootstrap.
+Node22.22.0 came from the existing fnm installation; SDK pnpm pin remains11.5.0.
+Existing SDK dependency closure was reused; root SDK node_modules was not restored.
+
+Full workspace:239 tests pass (175 core+64 other),3 inherited core ignores.
+Both ignored persistent-reopen cases were separately run against fresh owned
+`inspection-fixture`/`owner-fixture` under the evidence directory and passed2/2.
+Authenticated websocket external-server test remains unexecuted in this slice.
+Workspace/all-target warning-denied Clippy, rustfmt, typecheck and SDK TS150/150
+pass. HTTP localhost test initially hit sandbox EPERM; approved ephemeral-localhost
+rerun passed without timeout changes. Abrupt process exit23 after durable ACK
+bypasses Drop/close; actual parent reopen and duplicate retry pass. Concurrent
+bounded admission has one durable winner; cancellation and commit/rollback
+uncertainty reject unsafe reuse. Output records retain exact logs.
+
+Four generated files reproduce byte-identically after formatting. All74 actual
+host checksum function values match TS; previous72 are unchanged. Two new native
+methods/result record/appended error variant require matching new native binaries.
+Android/iOS canonical4 libraries remain unchanged and do NOT implement this ABI.
+The immutable published alpha7 tar SHA408016b9840e750aeea33a562430af5f328c7c5fa72af9b464eae4afb7ce5b5f
+still contains the prior ABI. Old hardlinked pack stages are mutable source views,
+not frozen publication evidence. No next wrapper/artifact has been packaged.
+
+
+### Wrap-up blocker and publication boundary
+
+The bounded queue source slice is committed separately from activation. Its known
+CAS bridge gap is explicit in `docs/BOUNDED_PENDING_QUEUE.md`: actual SDK
+`encodeSurrealValue` encodes bigint `base_version` as an int-tag object, whereas
+RN `ClientCommit` inputs use plain serde u64 at old enqueue, bounded enqueue and
+conflict merge. This blocks compiler-emitted bigint CAS, including5n; unsafe values
+must not be converted to Number. No correction, new cross-build or package was
+attempted after the user requested wrap-up. Next work is planning-only until
+explicit implementation authorization.
+
+The SDK origin is PUBLIC `thorgas/react-native-surrealdb`, while this local
+`private/bootstrap-staging-20261019` branch is101 commits beyond its public main.
+It includes temporary canonical sync crates, private bootstrap/roadmap work,
+Hauswirtschaft-specific packaging/harness history and machine-local evidence.
+A full fast-forward would publish all that history. Do not push or rebase this
+branch onto public main without an exact reviewed publication decision. Prefer
+an explicit audited export/cherry-pick set from a clean public-main checkout,
+with licenses/source-origin/privacy review and its real dependencies included.
+This commit is local durable handoff only; no public push is authorized by the
+coordinator yet.
+
+App facade freeze manifest:
+`roadmap-next-app/output/household-command-session-20261023/source-freeze.json`.
+It records6 owned app paths,122 passing host regressions, scope/network lifetime
+behavior and the same deferred CAS bridge blocker. It is not native acceptance.

@@ -6,6 +6,12 @@ export function createNativeReadMocks() {
     throw new Error("Native subscription is not configured by this fixture");
   });
   return {
+    pendingWindow: vi.fn(async () => {
+      throw new Error("Bounded queue native ABI unavailable");
+    }),
+    enqueueBounded: vi.fn(async () => {
+      throw new Error("Bounded queue native ABI unavailable");
+    }),
     subscriptionCapabilitiesJson: vi.fn(() =>
       JSON.stringify({
         protocolVersion: 1,

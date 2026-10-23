@@ -52,6 +52,52 @@ function createNative() {
 }
 
 describe("ExperimentalSyncClient", () => {
+  it("uses bounded native APIs and never the all-pending fallback", async () => {
+    const native = createNative();
+    const result = {
+      revision: 2n,
+      commits: ["{}"],
+      bytes: 8,
+      remainingCount: 1,
+      firstCommitTooLarge: false,
+    };
+    const pendingWindow = vi.fn(
+      async (_count: number, _bytes: number) => result,
+    );
+    const enqueueBounded = vi.fn(
+      async (_commit: string, _count: number, _bytes: number) => initialStatus,
+    );
+    const client = new ExperimentalSyncClient({
+      ...native,
+      pendingWindow,
+      enqueueBounded,
+    });
+    expect(await client.pendingWindow(2, 1024)).toBe(result);
+    expect(pendingWindow).toHaveBeenCalledWith(2, 1024, undefined);
+    expect(await client.enqueueBounded({ value: 42n }, 4, 2048)).toEqual(
+      initialStatus,
+    );
+    expect(enqueueBounded.mock.calls[0]?.[0]).toContain("42");
+    expect(native.pendingJson).not.toHaveBeenCalled();
+    expect(native.enqueue).not.toHaveBeenCalled();
+    await expect(client.pendingWindow(0, 1024)).rejects.toThrow(RangeError);
+    await expect(client.enqueueBounded({}, 65, 1024)).rejects.toThrow(
+      RangeError,
+    );
+  });
+  it("refuses old queue ABI without fallback", async () => {
+    const native = createNative();
+    const client = new ExperimentalSyncClient(native);
+    await expect(client.pendingWindow(1, 1024)).rejects.toThrow(
+      "ABI unavailable",
+    );
+    await expect(client.enqueueBounded({}, 1, 1024)).rejects.toThrow(
+      "ABI unavailable",
+    );
+    expect(native.pendingJson).not.toHaveBeenCalled();
+    expect(native.enqueue).not.toHaveBeenCalled();
+  });
+
   it("exposes native measurements without React or async runtime work", () => {
     const native = createNative();
     const client = new ExperimentalSyncClient(native);

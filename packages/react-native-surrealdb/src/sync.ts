@@ -106,10 +106,46 @@ const nativeConflictPolicy = (
  * Applications map their own logical IDs at the boundary. This API is a
  * prototype and is not release-ready.
  */
+/** Bounded FIFO prefix. bytes counts JSON UTF-8 encoding of commits as strings. */
+export interface ExperimentalPendingWindow {
+  revision: bigint;
+  commits: string[];
+  bytes: number;
+  remainingCount: number;
+  firstCommitTooLarge: boolean;
+}
+interface NativeQueuePort {
+  pendingWindow(
+    maxCommits: number,
+    maxBytes: number,
+    options?: CallOptions,
+  ): Promise<ExperimentalPendingWindow>;
+  enqueueBounded(
+    commit: string,
+    maxPendingCommits: number,
+    maxPendingBytes: number,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus>;
+}
+function queueLimits(count: number, bytes: number): void {
+  if (
+    !Number.isInteger(count) ||
+    count < 1 ||
+    count > 64 ||
+    !Number.isInteger(bytes) ||
+    bytes < 2 ||
+    bytes > 4194304
+  )
+    throw new RangeError(
+      "Queue limits require 1–64 commits and 2–4194304 bytes",
+    );
+}
+
 export class ExperimentalSyncClient {
   readonly #native: NativeSyncClientLike &
     Partial<NativeReadPort> &
-    Partial<NativeWindowPort>;
+    Partial<NativeWindowPort> &
+    Partial<NativeQueuePort>;
   #readCapabilities?: SyncReadCapabilities;
   readonly #readStores = new Set<ExperimentalSyncReadStore>();
   readonly #windowClients = new Set<ExperimentalSyncWindowClient>();
@@ -119,7 +155,8 @@ export class ExperimentalSyncClient {
   constructor(
     native: NativeSyncClientLike &
       Partial<NativeReadPort> &
-      Partial<NativeWindowPort>,
+      Partial<NativeWindowPort> &
+      Partial<NativeQueuePort>,
   ) {
     this.#native = native;
   }
@@ -360,6 +397,59 @@ export class ExperimentalSyncClient {
     options?: CallOptions,
   ): Promise<T[]> {
     return decodeProtocolJson<T>(await this.pendingProtocolJson(options));
+  }
+
+  /** Additive bounded FIFO observation; requires matching native ABI, no legacy fallback. */
+  async pendingWindow(
+    maxCommits: number,
+    maxBytes: number,
+    options?: CallOptions,
+  ): Promise<ExperimentalPendingWindow> {
+    queueLimits(maxCommits, maxBytes);
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
+    if (this.isClosed) throw new Error("Sync client is closed");
+    if (options?.signal?.aborted) throw new Error("Bounded queue call aborted");
+    const method = this.#native.pendingWindow;
+    if (!method) throw new Error("Bounded queue native ABI unavailable");
+    const result = await method
+      .call(this.#native, maxCommits, maxBytes, options)
+      .catch((error) => {
+        throw this.#readFailure(error);
+      });
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
+    if (this.isClosed || options?.signal?.aborted)
+      throw new Error("Bounded queue read unavailable");
+    return result;
+  }
+
+  /** Per-call atomic durable admission; not a persistent journal policy certificate. */
+  async enqueueBounded(
+    commit: SyncJsonValue,
+    maxPendingCommits: number,
+    maxPendingBytes: number,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus> {
+    queueLimits(maxPendingCommits, maxPendingBytes);
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
+    if (this.isClosed) throw new Error("Sync client is closed");
+    if (options?.signal?.aborted) throw new Error("Bounded queue call aborted");
+    const method = this.#native.enqueueBounded;
+    if (!method) throw new Error("Bounded queue native ABI unavailable");
+    const result = await method
+      .call(
+        this.#native,
+        encodeProtocolJson(commit),
+        maxPendingCommits,
+        maxPendingBytes,
+        options,
+      )
+      .catch((error) => {
+        throw this.#readFailure(error);
+      });
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
+    if (this.isClosed || options?.signal?.aborted)
+      throw new Error("Bounded queue admission acknowledgement unavailable");
+    return result;
   }
 
   /** @internal Exact tagged JSON used by the native HTTP codec bridge. */

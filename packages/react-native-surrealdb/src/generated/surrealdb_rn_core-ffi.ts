@@ -339,12 +339,23 @@ interface NativeModuleInterface {
     uniffiSelf: bigint,
     commitJson: Uint8Array,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_enqueue_bounded(
+    uniffiSelf: bigint,
+    commitJson: Uint8Array,
+    maxPendingCommits: number,
+    maxPendingBytes: number,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_is_closed(
     uniffiSelf: bigint,
     uniffi_out_err: UniffiRustCallStatus,
   ): number;
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_pending_json(
     uniffiSelf: bigint,
+  ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_pending_window(
+    uniffiSelf: bigint,
+    maxCommits: number,
+    maxBytes: number,
   ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_read_capabilities_json(
     uniffiSelf: bigint,
@@ -542,8 +553,10 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_conflicts_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_diagnostics(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_enqueue(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_enqueue_bounded(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_is_closed(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_pending_json(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_pending_window(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_capabilities_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_changes_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_snapshot_json(): number;

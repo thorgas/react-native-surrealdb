@@ -185,6 +185,9 @@ pub enum NativeSyncError {
 
     #[error("sync client internal conversion failed")]
     Internal,
+
+    #[error("bounded pending queue capacity exceeded")]
+    QueueCapacity,
 }
 
 type RuntimeKey = (u64, String, String);
@@ -484,6 +487,33 @@ impl NativeSyncClient {
     ) -> Result<NativeSyncStatus, NativeSyncError> {
         self.run_mutation(move |owner| async move { owner.enqueue_owned(commit_json).await })
             .await
+    }
+
+    /// Atomically admit and persist one commit under caller-selected queue limits.
+    pub async fn enqueue_bounded(
+        self: Arc<Self>,
+        commit_json: String,
+        max_pending_commits: u32,
+        max_pending_bytes: u32,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.run_mutation(move |owner| async move {
+            owner
+                .enqueue_bounded_owned(commit_json, max_pending_commits, max_pending_bytes)
+                .await
+        })
+        .await
+    }
+
+    /// Borrow the FIFO under its lock; never falls back to all-pending output.
+    pub async fn pending_window(
+        &self,
+        max_commits: u32,
+        max_bytes: u32,
+    ) -> Result<crate::sync_queue::NativePendingWindow, NativeSyncError> {
+        crate::sync_queue::limits(max_commits, max_bytes)?;
+        let slot = self.lock_runtime().await;
+        let state = slot.client()?.state();
+        crate::sync_queue::window(state.revision, state.outbox.iter(), max_commits, max_bytes)
     }
 
     pub async fn record_push_response(
@@ -984,6 +1014,39 @@ impl NativeSyncClient {
         let mut slot = self.lock_runtime().await;
         let runtime = slot.client()?;
         commit.identity.fingerprint = canonical_fingerprint(runtime.state(), &commit)?;
+        let prepared = slot
+            .client()?
+            .prepare_enqueue(commit)
+            .map_err(map_protocol_error)?;
+        self.persist_and_install(&mut slot, prepared).await
+    }
+
+    async fn enqueue_bounded_owned(
+        &self,
+        commit_json: String,
+        count: u32,
+        bytes: u32,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        crate::sync_queue::limits(count, bytes)?;
+        let mut commit = decode_input::<ClientCommit<JsonValue>>(&commit_json)?;
+        let mut slot = self.lock_runtime().await;
+        let runtime = slot.client()?;
+        commit.identity.fingerprint = canonical_fingerprint(runtime.state(), &commit)?;
+        // Retry identity is durable in either FIFO or outcome history. A changed
+        // command using that identity is still rejected, never silently accepted.
+        let state = runtime.state();
+        let prior = state
+            .outbox
+            .iter()
+            .chain(state.outcomes.iter().map(|o| &o.local_commit))
+            .find(|c| c.identity.client_commit_id == commit.identity.client_commit_id);
+        if let Some(prior) = prior {
+            if prior != &commit {
+                return Err(NativeSyncError::Protocol);
+            }
+            return status(runtime);
+        }
+        crate::sync_queue::admits(state.outbox.iter(), &commit, count, bytes)?;
         let prepared = slot
             .client()?
             .prepare_enqueue(commit)
@@ -1730,6 +1793,218 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn bounded_queue_concurrent_admission_has_one_durable_winner() {
+        let db = database().await;
+        let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let mut second = commit();
+        second.identity.client_commit_id = ClientCommitId("second".into());
+        let (left, right) = tokio::join!(
+            a.clone()
+                .enqueue_bounded(serde_json::to_string(&commit()).unwrap(), 1, 65536),
+            b.clone()
+                .enqueue_bounded(serde_json::to_string(&second).unwrap(), 1, 65536)
+        );
+        assert_ne!(left.is_ok(), right.is_ok());
+        assert!(
+            matches!(left, Err(NativeSyncError::QueueCapacity))
+                || matches!(right, Err(NativeSyncError::QueueCapacity))
+        );
+        let state = a.status().await.unwrap();
+        assert_eq!(state.revision, 1);
+        assert_eq!(state.pending_count, 1);
+        a.close().await;
+        assert!(matches!(
+            a.pending_window(1, 65536).await,
+            Err(NativeSyncError::Closed)
+        ));
+        assert!(matches!(
+            a.clone()
+                .enqueue_bounded(serde_json::to_string(&commit()).unwrap(), 1, 65536)
+                .await,
+            Err(NativeSyncError::Closed)
+        ));
+        b.close().await;
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bounded_queue_abrupt_process_exit_reopens_exact_fifo() {
+        const CHILD_PATH: &str = "SDK_BOUNDED_QUEUE_CRASH_PATH";
+        if let Some(path) = std::env::var_os(CHILD_PATH) {
+            let db = surrealkv_database(std::path::Path::new(&path)).await;
+            let client = open_sync_client(db, options("all")).await.unwrap();
+            client
+                .clone()
+                .enqueue_bounded(serde_json::to_string(&commit()).unwrap(), 2, 65536)
+                .await
+                .unwrap();
+            // Deliberately bypass every Rust Drop/close after the durable ACK.
+            // exit avoids platform core dumps while modeling abrupt owner loss.
+            std::process::exit(23);
+        }
+        let directory = temp_dir::TempDir::new().unwrap();
+        let result = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "sync_client::tests::bounded_queue_abrupt_process_exit_reopens_exact_fifo",
+                "--nocapture",
+            ])
+            .env(CHILD_PATH, directory.path())
+            .output()
+            .unwrap();
+        assert_eq!(
+            result.status.code(),
+            Some(23),
+            "child failed before durable ACK"
+        );
+        let db = surrealkv_database(directory.path()).await;
+        let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let window = client.pending_window(2, 65536).await.unwrap();
+        assert_eq!(window.commits.len(), 1);
+        assert_eq!(window.remaining_count, 0);
+        let pending: ClientCommit<JsonValue> = serde_json::from_str(&window.commits[0]).unwrap();
+        assert_eq!(
+            pending.identity.client_commit_id,
+            commit().identity.client_commit_id
+        );
+        let before = client.status().await.unwrap();
+        assert_eq!(
+            client
+                .clone()
+                .enqueue_bounded(serde_json::to_string(&commit()).unwrap(), 1, 2)
+                .await
+                .unwrap(),
+            before
+        );
+        client.close().await;
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn bounded_queue_accepted_and_rejected_retries_do_not_reenqueue() {
+        for accepted in [false, true] {
+            let db = database().await;
+            let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+            let raw = serde_json::to_string(&commit()).unwrap();
+            client
+                .clone()
+                .enqueue_bounded(raw.clone(), 1, 65536)
+                .await
+                .unwrap();
+            let pending: ClientCommit<JsonValue> =
+                serde_json::from_str(&client.pending_window(1, 65536).await.unwrap().commits[0])
+                    .unwrap();
+            let outcome = if accepted {
+                DurableOutcome::Accepted {
+                    identity: pending.identity,
+                    sequence: 1,
+                    id_mappings: vec![],
+                }
+            } else {
+                DurableOutcome::Rejected {
+                    identity: pending.identity,
+                    reason: surrealdb_sync_protocol::RejectReason::InvalidOperation,
+                }
+            };
+            let response = PushResponse::<JsonValue> {
+                schema_version: SchemaVersion::V1,
+                partition_id: PartitionId("partition".into()),
+                client_id: ClientId("client".into()),
+                outcome,
+            };
+            let settled = client
+                .clone()
+                .record_push_response(serde_json::to_string(&response).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(settled.pending_count, 0);
+            assert_eq!(settled.outcome_count, 1);
+            assert_eq!(
+                client.clone().enqueue_bounded(raw, 1, 2).await.unwrap(),
+                settled
+            );
+            let empty = client.pending_window(1, 2).await.unwrap();
+            assert!(empty.commits.is_empty());
+            assert!(!empty.first_commit_too_large);
+            assert_eq!(empty.remaining_count, 0);
+            client.close().await;
+            db.close().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn bounded_queue_fifo_capacity_retry_and_reopen() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let db = surrealkv_database(directory.path()).await;
+        let client = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let first = serde_json::to_string(&commit()).unwrap();
+        let one = client
+            .clone()
+            .enqueue_bounded(first.clone(), 2, 65536)
+            .await
+            .unwrap();
+        assert_eq!(
+            client
+                .clone()
+                .enqueue_bounded(first.clone(), 1, 2)
+                .await
+                .unwrap(),
+            one
+        );
+        let mut changed = commit();
+        changed.operations.clear();
+        assert!(
+            client
+                .clone()
+                .enqueue_bounded(serde_json::to_string(&changed).unwrap(), 2, 65536)
+                .await
+                .is_err()
+        );
+        let mut second = commit();
+        second.identity.client_commit_id = ClientCommitId("commit-2".into());
+        let second = serde_json::to_string(&second).unwrap();
+        assert!(matches!(
+            client
+                .clone()
+                .enqueue_bounded(second.clone(), 1, 65536)
+                .await,
+            Err(NativeSyncError::QueueCapacity)
+        ));
+        assert_eq!(client.status().await.unwrap(), one);
+        client
+            .clone()
+            .enqueue_bounded(second, 2, 65536)
+            .await
+            .unwrap();
+        let prefix = client.pending_window(1, 65536).await.unwrap();
+        assert_eq!(prefix.commits.len(), 1);
+        assert_eq!(prefix.remaining_count, 1);
+        assert!(!prefix.first_commit_too_large);
+        let exact = client.pending_window(1, prefix.bytes).await.unwrap();
+        assert_eq!(exact, prefix);
+        let short = client.pending_window(1, prefix.bytes - 1).await.unwrap();
+        assert!(short.first_commit_too_large);
+        assert!(short.commits.is_empty());
+        client.close().await;
+        db.close().await.unwrap();
+        let db = surrealkv_database(directory.path()).await;
+        let reopened = open_sync_client(db.clone(), options("all")).await.unwrap();
+        assert_eq!(reopened.pending_window(1, 65536).await.unwrap(), prefix);
+        assert_eq!(
+            reopened
+                .pending_window(64, 65536)
+                .await
+                .unwrap()
+                .commits
+                .len(),
+            2
+        );
+        reopened.close().await;
+        db.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -2584,6 +2859,22 @@ mod tests {
         assert_eq!(status.outcome_count, 1);
         assert_eq!(status.conflict_count, 1);
         assert_eq!(reopened.conflicts_json().await.unwrap().len(), 1);
+        assert_eq!(
+            reopened
+                .clone()
+                .enqueue_bounded(serde_json::to_string(&commit).unwrap(), 1, 2)
+                .await
+                .unwrap(),
+            status
+        );
+        assert!(
+            reopened
+                .pending_window(1, 2)
+                .await
+                .unwrap()
+                .commits
+                .is_empty()
+        );
 
         let database_client = database.client().await.unwrap();
         let record: Option<Value> = database_client
@@ -4269,6 +4560,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelled_bounded_enqueue_settles_before_sibling() {
+        for after_dispatch in [false, true] {
+            let db = database().await;
+            let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+            let b = open_sync_client(db.clone(), options("all")).await.unwrap();
+            let arrived = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            let first_poll_pending = Arc::new(AtomicBool::new(false));
+            *a.persistence_pause.lock().unwrap() = Some(crate::sync_state::PersistencePause {
+                after_dispatch,
+                arrived: arrived.clone(),
+                release: release.clone(),
+                first_poll_pending: first_poll_pending.clone(),
+            });
+            let first = tokio::spawn(a.clone().enqueue_bounded(
+                serde_json::to_string(&commit()).unwrap(),
+                2,
+                65536,
+            ));
+            tokio::time::timeout(std::time::Duration::from_secs(5), arrived.notified())
+                .await
+                .unwrap();
+            if after_dispatch {
+                assert!(first_poll_pending.load(Ordering::Acquire));
+            }
+            first.abort();
+            assert!(first.await.unwrap_err().is_cancelled());
+            let entered = Arc::new(AtomicBool::new(false));
+            let entered_worker = entered.clone();
+            let second = tokio::spawn(b.clone().run_mutation(move |_| async move {
+                entered_worker.store(true, Ordering::Release);
+                Ok::<(), NativeSyncError>(())
+            }));
+            tokio::task::yield_now().await;
+            second.abort();
+            assert!(second.await.unwrap_err().is_cancelled());
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_millis(20), b.status())
+                    .await
+                    .is_err()
+            );
+            release.notify_one();
+            let status = tokio::time::timeout(std::time::Duration::from_secs(5), b.status())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(status.pending_count, 1);
+            assert!(!entered.load(Ordering::Acquire));
+            assert!(!db.sync_runtimes.is_poisoned());
+            db.close().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
     async fn ambiguous_worker_panic_poison_survives_wrapper_drop_and_blocks_other_keys() {
         let db = database().await;
         let client = open_sync_client(db.clone(), options("all")).await.unwrap();
@@ -4401,6 +4746,17 @@ mod tests {
             });
             guard.settled_mutation(&result);
             drop(guard);
+            assert!(matches!(
+                client.pending_window(1, 65536).await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
+            assert!(matches!(
+                client
+                    .clone()
+                    .enqueue_bounded(serde_json::to_string(&commit()).unwrap(), 2, 65536)
+                    .await,
+                Err(NativeSyncError::RecoveryRequired)
+            ));
             assert!(db.sync_runtimes.is_poisoned());
             assert!(matches!(
                 inspect_sync_state(db.clone(), options("all")).await,

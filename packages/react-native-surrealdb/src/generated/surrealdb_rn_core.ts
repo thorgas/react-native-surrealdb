@@ -1412,6 +1412,66 @@ const FfiConverterTypeNativeBootstrapProgress = (() => {
   return new FFIConverter();
 })();
 
+export type NativePendingWindow = {
+  revision: bigint;
+  commits: Array<string>;
+  /**
+   * UTF-8 bytes of JSON-encoded `commits`, including escapes, quotes and brackets.
+   */
+  bytes: number;
+  remainingCount: number;
+  firstCommitTooLarge: boolean;
+};
+
+/**
+ * Generated factory for {@link NativePendingWindow} record objects.
+ */
+export const NativePendingWindow = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<NativePendingWindow, ReturnType<typeof defaults>>(
+      defaults,
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<NativePendingWindow>,
+  });
+})();
+
+const FfiConverterTypeNativePendingWindow = (() => {
+  type TypeName = NativePendingWindow;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        revision: FfiConverterUInt64.read(from),
+        commits: FfiConverterSequenceString.read(from),
+        bytes: FfiConverterUInt32.read(from),
+        remainingCount: FfiConverterUInt32.read(from),
+        firstCommitTooLarge: FfiConverterBool.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterUInt64.write(value.revision, into);
+      FfiConverterSequenceString.write(value.commits, into);
+      FfiConverterUInt32.write(value.bytes, into);
+      FfiConverterUInt32.write(value.remainingCount, into);
+      FfiConverterBool.write(value.firstCommitTooLarge, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterUInt64.allocationSize(value.revision) +
+        FfiConverterSequenceString.allocationSize(value.commits) +
+        FfiConverterUInt32.allocationSize(value.bytes) +
+        FfiConverterUInt32.allocationSize(value.remainingCount) +
+        FfiConverterBool.allocationSize(value.firstCommitTooLarge)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
 export type NativeQueryTiming = {
   inputDecodeNs: bigint;
   engineNs: bigint;
@@ -3181,6 +3241,7 @@ export enum NativeSyncError_Tags {
   SubscriptionCancelled = "SubscriptionCancelled",
   InvalidSubscription = "InvalidSubscription",
   Internal = "Internal",
+  QueueCapacity = "QueueCapacity",
 }
 export const NativeSyncError = (() => {
   type Closed__interface = {
@@ -3516,6 +3577,32 @@ export const NativeSyncError = (() => {
     }
   }
 
+  type QueueCapacity__interface = {
+    tag: NativeSyncError_Tags.QueueCapacity;
+  };
+  class QueueCapacity_ extends UniffiError implements QueueCapacity__interface {
+    /**
+     * @private
+     * This field is private and should not be used, use `tag` instead.
+     */
+    readonly [uniffiTypeNameSymbol] = "NativeSyncError";
+    readonly tag = NativeSyncError_Tags.QueueCapacity;
+    constructor() {
+      super("NativeSyncError", "QueueCapacity");
+    }
+
+    static new(): QueueCapacity_ {
+      return new QueueCapacity_();
+    }
+
+    static instanceOf(obj: any): obj is QueueCapacity_ {
+      return obj.tag === NativeSyncError_Tags.QueueCapacity;
+    }
+    static hasInner(obj: any): obj is QueueCapacity_ {
+      return false;
+    }
+  }
+
   function instanceOf(obj: any): obj is NativeSyncError {
     return obj[uniffiTypeNameSymbol] === "NativeSyncError";
   }
@@ -3534,6 +3621,7 @@ export const NativeSyncError = (() => {
     SubscriptionCancelled: SubscriptionCancelled_,
     InvalidSubscription: InvalidSubscription_,
     Internal: Internal_,
+    QueueCapacity: QueueCapacity_,
   });
 })();
 export type NativeSyncError = InstanceType<
@@ -3549,7 +3637,8 @@ export type NativeSyncError = InstanceType<
     | "PendingQuarantineRequired"
     | "SubscriptionCancelled"
     | "InvalidSubscription"
-    | "Internal"]
+    | "Internal"
+    | "QueueCapacity"]
 >;
 
 // FfiConverter for enum NativeSyncError
@@ -3583,6 +3672,8 @@ const FfiConverterTypeNativeSyncError = (() => {
           return new NativeSyncError.InvalidSubscription();
         case 12:
           return new NativeSyncError.Internal();
+        case 13:
+          return new NativeSyncError.QueueCapacity();
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
       }
@@ -3637,6 +3728,10 @@ const FfiConverterTypeNativeSyncError = (() => {
           ordinalConverter.write(12, into);
           return;
         }
+        case NativeSyncError_Tags.QueueCapacity: {
+          ordinalConverter.write(13, into);
+          return;
+        }
         default:
           // Throwing from here means that NativeSyncError_Tags hasn't matched an ordinal.
           throw new UniffiInternalError.UnexpectedEnumCase();
@@ -3679,6 +3774,9 @@ const FfiConverterTypeNativeSyncError = (() => {
         }
         case NativeSyncError_Tags.Internal: {
           return ordinalConverter.allocationSize(12);
+        }
+        case NativeSyncError_Tags.QueueCapacity: {
+          return ordinalConverter.allocationSize(13);
         }
         default:
           throw new UniffiInternalError.UnexpectedEnumCase();
@@ -4821,10 +4919,27 @@ export interface NativeSyncClientLike {
     commitJson: string,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<NativeSyncStatus>;
+  /**
+   * Atomically admit and persist one commit under caller-selected queue limits.
+   */
+  enqueueBounded(
+    commitJson: string,
+    maxPendingCommits: number,
+    maxPendingBytes: number,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeSyncStatus>;
   isClosed(): boolean;
   pendingJson(asyncOpts_?: {
     signal: AbortSignal;
   }) /*throws*/ : Promise<Array<string>>;
+  /**
+   * Borrow the FIFO under its lock; never falls back to all-pending output.
+   */
+  pendingWindow(
+    maxCommits: number,
+    maxBytes: number,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativePendingWindow>;
   readCapabilitiesJson(): string;
   readChangesJson(
     cursorJson: string,
@@ -5254,6 +5369,66 @@ export class NativeSyncClient
     }
   }
 
+  /**
+   * Atomically admit and persist one commit under caller-selected queue limits.
+   */
+  async enqueueBounded(
+    commitJson: string,
+    maxPendingCommits: number,
+    maxPendingBytes: number,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeSyncStatus> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_enqueue_bounded(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              commitJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterUInt32.lower(
+              maxPendingCommits,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterUInt32.lower(
+              maxPendingBytes,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
+          FfiConverterTypeNativeSyncStatus,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
   isClosed(): boolean {
     return FfiConverterBool.lift(
       uniffiCaller.rustCall(
@@ -5295,6 +5470,58 @@ export class NativeSyncClient
         // here using the per-callable return-type converter.
         /*liftFunc:*/ FfiConverterSequenceString.lift.bind(
           FfiConverterSequenceString,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  /**
+   * Borrow the FIFO under its lock; never falls back to all-pending output.
+   */
+  async pendingWindow(
+    maxCommits: number,
+    maxBytes: number,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativePendingWindow> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_pending_window(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterUInt32.lower(
+              maxCommits,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterUInt32.lower(maxBytes, nativeModule().rustbuffer_alloc),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativePendingWindow.lift.bind(
+          FfiConverterTypeNativePendingWindow,
         ),
         /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
         /*asyncOpts:*/ asyncOpts_,
@@ -7688,6 +7915,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_enqueue_bounded() !==
+    1973
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_enqueue_bounded",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_is_closed() !==
     58561
   ) {
@@ -7701,6 +7936,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_pending_json",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_pending_window() !==
+    63106
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_pending_window",
     );
   }
   if (
@@ -8020,6 +8263,7 @@ export default Object.freeze({
     FfiConverterTypeNativeBootstrapStageState,
     FfiConverterTypeNativeConflictPolicy,
     FfiConverterTypeNativeOutputEncoding,
+    FfiConverterTypeNativePendingWindow,
     FfiConverterTypeNativeProfiledQueryResult,
     FfiConverterTypeNativeQueryTiming,
     FfiConverterTypeNativeStorageInspection,
