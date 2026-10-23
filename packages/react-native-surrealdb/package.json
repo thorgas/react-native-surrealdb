@@ -1,6 +1,6 @@
 {
   "name": "react-native-surrealdb",
-  "version": "0.1.0-alpha.6.haus.20261020.1",
+  "version": "0.1.0-alpha.7.haus.20261023.1",
   "description": "Embedded and remote SurrealDB for React Native",
   "keywords": [
     "react-native",
@@ -32,6 +32,7 @@
     "*.podspec",
     "CHANGELOG.md",
     "LICENSE",
+    "LICENSE-APACHE-2.0",
     "THIRD_PARTY_NOTICES.md",
     "RELEASING.md",
     "!ios/build",

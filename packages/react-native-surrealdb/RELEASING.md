@@ -49,6 +49,28 @@ when npm accepts the GitHub OIDC attestation.
 
 ## Prepare a version
 
+### Private wrapper artifacts
+
+`0.1.0-alpha.7.haus.20261023.1` is an immutable private wrapper artifact. Its
+native libraries retain the Rust inputs from
+`fb1164ebf98469a64e41f0422938cb2bb23a5111`, including the existing
+`surrealdb-rn-core` version `0.1.0-alpha.4.haus.20261019.1`. The wrapper version
+distinguishes the package's source, generated bindings and matched binaries;
+it does not claim that the Rust crate was versioned or rebuilt. This packaging
+policy applies only to this private artifact. Do not replace alpha6, publish
+the wrapper to npm, or create a public SDK tag or branch for this delivery.
+
+Stage unchanged inputs without modifying their canonical bytes. Strip only
+independent Android library copies; preserve their raw input hashes and audit
+the staged library hashes, 16 KiB ELF alignment, all 72 UniFFI checksums and
+contract version 30 against the generated TypeScript. Keep the existing iOS
+device/simulator archive hashes and Apple link evidence. Hash the final tarball
+and every admitted regular file before the consuming app pins the archive.
+Static ABI checks and Android synthetic acceptance remain separate from rebuilt
+app acceptance, iOS execution, startup measurements and release delivery.
+
+### Public source releases
+
 Update the package and Rust crate versions together. For a prerelease, retain
 `publishConfig.tag: "next"`; for a stable version, change it to `"latest"`.
 Update the changelog and lockfiles, then commit the version change.

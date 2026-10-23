@@ -23,6 +23,15 @@ Filament, Mozilla, and LiveKit teams for making this bridge possible.
 
 ## Runtime and native dependencies
 
+The native libraries include `surrealdb-sync-client` and
+`surrealdb-sync-protocol`, deliberately copied from the private canonical
+`thorgas/surrealdb-sync-engine.dev` repository as recorded in
+`crates/SYNC_RUNTIME_ORIGIN.md` in the SDK source tree. Both crates declare
+`Apache-2.0`; their canonical license notice states Copyright 2026 Tim Horgas.
+The package retains the full Apache License 2.0 terms in
+[`LICENSE-APACHE-2.0`](./LICENSE-APACHE-2.0). This attribution does not change the
+MIT license of the original wrapper code or the UniFFI generator notices above.
+
 The published package also includes or links software from the SurrealDB Rust
 SDK, React Native, Hermes, and their transitive dependency trees. Refer to the
 exact release's `Cargo.lock`, `package.json`, and bundled artifacts for the

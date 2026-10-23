@@ -53,6 +53,7 @@ if (!isPrerelease && packageJson.publishConfig?.tag !== "latest")
 for (const path of [
   "README.md",
   "LICENSE",
+  "LICENSE-APACHE-2.0",
   "THIRD_PARTY_NOTICES.md",
   "CHANGELOG.md",
   "Surrealdb.podspec",

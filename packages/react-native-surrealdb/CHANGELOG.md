@@ -1,3 +1,13 @@
+## 0.1.0-alpha.7.haus.20261023.1 — private wrapper artifact
+
+- Package bounded native local-view count/page reads with matching generated
+  bindings and Android arm64/x86_64 plus iOS device/simulator arm64 libraries.
+- Retain the exact Rust inputs from `fb1164ebf98469a64e41f0422938cb2bb23a5111`
+  and the existing Rust crate version. This identifies an immutable private
+  wrapper package, not a new Rust source release or public SDK publication.
+- Android arm64 synthetic acceptance and cross-platform static ABI checks do not
+  establish consuming-app startup, iOS runtime acceptance or production readiness.
+
 ## 0.1.0-alpha.6.haus.20261020.1 — private artifact candidate
 
 - Add read-only native bootstrap request builders preserving independently bound
