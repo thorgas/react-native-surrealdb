@@ -51,6 +51,20 @@ when npm accepts the GitHub OIDC attestation.
 
 ### Private wrapper artifacts
 
+`0.1.0-alpha.8.haus.20261114.1` rebuilds all four native slices from merged
+main `a1a5723`, including bounded pending queue ABI and bigint CAS handling.
+The Rust crate version remains unchanged under the private wrapper scheme.
+Use Node 22.22.0, pnpm 11.5.0, the pinned Rust toolchain, Xcode and Android
+NDK 27.1.12297006. Set `ANDROID_HOME` to the SDK directory and
+`ANDROID_NDK_HOME` to that NDK directory, then run `pnpm install --frozen-lockfile`,
+`pnpm --filter react-native-surrealdb release:artifacts`,
+`pnpm --filter react-native-surrealdb release:check`, and
+`pnpm --filter react-native-surrealdb release:pack /absolute/private/output`.
+These commands build and pack locally; do not publish or create release tags.
+Verify `enqueue_bounded` and `pending_window` exports in all four slices and
+retain library SHA256 values and the tarball SHA512 integrity with the artifact.
+
+
 `0.1.0-alpha.7.haus.20261023.1` is an immutable private wrapper artifact. Its
 native libraries retain the Rust inputs from
 `fb1164ebf98469a64e41f0422938cb2bb23a5111`, including the existing

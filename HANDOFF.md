@@ -510,3 +510,24 @@ workspace/all-target Clippy, rustfmt, TypeScript and focused Prettier passed.
 Both inherited persistent reopen gates were run explicitly and passed (2/2).
 The authenticated external-server websocket test remains unexecuted. Diagnostic
 logs are local under `output/bigint-cas-20261023/` and excluded from publication.
+
+## 2026-11-14 Private alpha8 native rebuild
+
+PR #16 merged as a1a572347850d183eeaaedb5017cee94ff8f2d6e after strict all-target
+Clippy passed. All four mobile libraries rebuilt using release:artifacts,
+including bounded queue ABI and bigint CAS fix. Private wrapper version:
+0.1.0-alpha.8.haus.20261114.1. No public publication or release tag.
+
+Validation: 158 TS tests, lint, SDK build, five RN harness typechecks, rustfmt,
+release:check and defined enqueue_bounded/pending_window symbols on every slice.
+Rust tests were already validated on the exact PR head in the preceding run.
+Use Rust llvm-tools llvm-nm for iOS LLVM22 bitcode; Apple nm cannot parse it.
+The pack script now accepts npm 12 object reports as well as legacy arrays.
+Native consumer app/device execution is not claimed by these library builds.
+
+SHA256 of stripped packaged libraries:
+
+- `SurrealDbRnFramework.xcframework/ios-arm64-simulator/libsurrealdb_rn_core.a`: `dc27a5bce84db91def54611665c2c8f8a4c42cc9942dc3434625b3391f3b5b8f`
+- `SurrealDbRnFramework.xcframework/ios-arm64/libsurrealdb_rn_core.a`: `19345b1bd3a34db3ebc66ea30209f4f238189c8828fd5d695e120eef514fb461`
+- `android/src/main/jniLibs/arm64-v8a/libsurrealdb_rn_core.so`: `137c27fb00098f06afc4f0e13d11c2046de7bdc304842ae9bc03f47d27ea9691`
+- `android/src/main/jniLibs/x86_64/libsurrealdb_rn_core.so`: `28061d5018e4b1589212a1233c457ed7ae248714735fc5e2a4845dbde6ec5c01`
