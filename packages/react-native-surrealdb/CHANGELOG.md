@@ -1,3 +1,8 @@
+## 0.1.0-alpha.8.haus.20261114.1 — private artifact
+
+- Rebuild all four mobile native libraries from merged main, including bounded pending queue admission/read APIs and exact bigint CAS handling.
+- Private tarball only; no npm publication or public release tag.
+
 ## 0.1.0-alpha.7.haus.20261023.1 — private wrapper artifact
 
 - Package bounded native local-view count/page reads with matching generated

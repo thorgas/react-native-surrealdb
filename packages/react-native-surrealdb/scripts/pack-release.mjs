@@ -45,7 +45,10 @@ if (packed.status !== 0) {
   process.exit(packed.status ?? 1);
 }
 
-const report = JSON.parse(packed.stdout);
+const parsedReport = JSON.parse(packed.stdout);
+const report = Array.isArray(parsedReport)
+  ? parsedReport
+  : Object.values(parsedReport);
 if (report.length !== 1)
   throw new Error("npm pack returned an unexpected report");
 
