@@ -1,5 +1,7 @@
 import { encodeSurrealValue } from "../src/wire";
 import {
+  decodeSyncReadBootstrapV2,
+  decodeSyncReadChangesV2,
   decodeSyncReadBootstrap,
   decodeSyncReadChanges,
 } from "../src/sync-read-codec";
@@ -484,5 +486,59 @@ describe("adversarial read envelopes", () => {
         ),
       ).toThrow("Invalid sync read protocol");
     }
+  });
+});
+
+describe("explicit receipt read v2", () => {
+  it("preserves u64 coverage and rejects the status under v1", () => {
+    const initial = snapshot();
+    const entry = {
+      ...row("recipe:a"),
+      accepted: [
+        {
+          identity: { clientCommitId: "one", fingerprint: "fp" },
+          sequence: "18446744073709551615",
+          status: "covered_by_verified_pull",
+        },
+      ],
+    };
+    const payload = {
+      cursor: { processEpoch: "process", revision: initial.metadata.revision },
+      snapshot: { ...initial, protocolVersion: 2, rows: { "recipe:a": entry } },
+    };
+    const result = decodeSyncReadBootstrapV2(encodeSurrealValue(payload));
+    expect(result.snapshot.rows["recipe:a"]?.accepted[0]?.sequence).toBe(
+      "18446744073709551615",
+    );
+    expect(() =>
+      decodeSyncReadBootstrap(encodeSurrealValue(payload)),
+    ).toThrow();
+    expect(() =>
+      decodeSyncReadBootstrap(
+        encodeSurrealValue({
+          ...payload,
+          snapshot: { ...payload.snapshot, protocolVersion: 1 },
+        }),
+      ),
+    ).toThrow();
+    for (const bad of ["18446744073709551616", "01", "-1"]) {
+      entry.accepted[0]!.sequence = String(bad);
+      expect(() =>
+        decodeSyncReadBootstrapV2(encodeSurrealValue(payload)),
+      ).toThrow();
+    }
+  });
+  it("requires v2 for committed coverage batches", () => {
+    const initial = snapshot();
+    const change = batch(initial);
+    const payload = {
+      kind: "batches",
+      batches: [{ ...change, protocolVersion: 2 }],
+      cursor: { processEpoch: "process", revision: change.revision },
+    };
+    expect(decodeSyncReadChangesV2(encodeSurrealValue(payload)).kind).toBe(
+      "batches",
+    );
+    expect(() => decodeSyncReadChanges(encodeSurrealValue(payload))).toThrow();
   });
 });

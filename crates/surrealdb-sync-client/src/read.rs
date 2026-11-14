@@ -71,6 +71,8 @@ pub struct ReadConflictV1 {
 #[serde(rename_all = "snake_case")]
 pub enum ReadAcceptedStatusV1 {
     CoveredByAuthorizedReset,
+    CoveredByVerifiedPull,
+    AwaitingVerifiedPull,
     AwaitingPullEpochUnknown,
 }
 
@@ -200,7 +202,7 @@ fn empty_row<V>(record_id: RecordId, complete: bool) -> ReadRowV1<V> {
     }
 }
 
-fn snapshot<V: Clone + Eq>(state: &DurableClientState<V>) -> ReadSnapshotV1<V> {
+pub(crate) fn snapshot<V: Clone + Eq>(state: &DurableClientState<V>) -> ReadSnapshotV1<V> {
     let complete = state.reset_coverage.is_some();
     let mut rows = BTreeMap::new();
     for (id, confirmed) in &state.confirmed {
@@ -214,7 +216,7 @@ fn snapshot<V: Clone + Eq>(state: &DurableClientState<V>) -> ReadSnapshotV1<V> {
             .or_insert_with(|| empty_row(id, complete))
             .optimistic = Some(optimistic);
     }
-    for commit in &state.outbox {
+    for commit in state.outbox.iter().chain(&state.command_queue.deferred) {
         for operation in &commit.operations {
             let id = operation.record_id().clone();
             rows.entry(id.clone())
@@ -297,7 +299,7 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         {
             return ScopeTransitionDecisionV1::Unchanged;
         }
-        if !self.state.outbox.is_empty()
+        if (!self.state.outbox.is_empty() || !self.state.command_queue.deferred.is_empty())
             || self.state.outcomes.iter().any(|outcome| {
                 matches!(outcome.outcome, DurableOutcome::Conflict { .. })
                     && outcome.resolution.is_none()
@@ -314,11 +316,26 @@ pub(crate) fn committed_batch<V: Clone + Eq>(
     before: &DurableClientState<V>,
     after: &DurableClientState<V>,
 ) -> Option<CommittedReadBatchV1<V>> {
+    committed_batch_version(before, after, false)
+}
+pub(crate) fn committed_batch_version<V: Clone + Eq>(
+    before: &DurableClientState<V>,
+    after: &DurableClientState<V>,
+    v2: bool,
+) -> Option<CommittedReadBatchV1<V>> {
     if before.revision == after.revision {
         return None;
     }
-    let before = snapshot(before);
-    let after = snapshot(after);
+    let before = if v2 {
+        crate::receipt::snapshot_v2(before)
+    } else {
+        snapshot(before)
+    };
+    let after = if v2 {
+        crate::receipt::snapshot_v2(after)
+    } else {
+        snapshot(after)
+    };
     let ids = before
         .rows
         .keys()
@@ -335,7 +352,7 @@ pub(crate) fn committed_batch<V: Clone + Eq>(
         }
     }
     Some(CommittedReadBatchV1 {
-        protocol_version: READ_PROTOCOL_VERSION,
+        protocol_version: if v2 { 2 } else { READ_PROTOCOL_VERSION },
         before_revision: before.metadata.revision,
         revision: after.metadata.revision,
         metadata: after.metadata,

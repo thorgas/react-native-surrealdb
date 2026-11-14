@@ -1,0 +1,12 @@
+{
+  "engineRevision": "ca790a480a7838ba1d125f9eaebbc8b19fed4728",
+  "enginePr": "https://github.com/thorgas/surrealdb-sync-engine.dev/pull/8",
+  "baseSdk": "43648d2",
+  "packageVersion": "0.1.0-alpha.9.haus.20261114.1",
+  "libraries": {
+    "SurrealDbRnFramework.xcframework/ios-arm64-simulator/libsurrealdb_rn_core.a": "80cc0d28d4924548e3a5c59e6d0016bba5545eb77bb99aef37313fa706cb9c77",
+    "SurrealDbRnFramework.xcframework/ios-arm64/libsurrealdb_rn_core.a": "f1264f7d0fac9f93347ac7dfdd2e5cf28886636bf99d0265d632c2cd3ac84a02",
+    "android/src/main/jniLibs/arm64-v8a/libsurrealdb_rn_core.so": "9afea04ae43eb0391c2808bc341bd9de7e10a2aadcacd5ff147a1e3cf65a1869",
+    "android/src/main/jniLibs/x86_64/libsurrealdb_rn_core.so": "10b2566a221360c6ab5fd8ac4065dc577c0206f726f3ab3ac5e638188b9a4094"
+  }
+}

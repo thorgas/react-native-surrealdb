@@ -25,6 +25,8 @@ import {
 } from "./wire";
 
 import {
+  decodeSyncReadBootstrapV2,
+  decodeSyncReadChangesV2,
   decodeSyncReadBootstrap,
   decodeSyncReadChanges,
   decodeSyncReadCapabilities,
@@ -33,6 +35,8 @@ import {
   ExperimentalSyncReadStore,
   syncReadScopeError,
   readSyncRecord,
+  type SyncReadBootstrapV2,
+  type SyncReadChangesV2,
   type SyncReadBootstrap,
   type SyncReadChanges,
   type SyncReadCursor,
@@ -52,6 +56,12 @@ interface NativeReadPort {
   readCapabilitiesJson(): string;
   readSnapshotJson(options?: CallOptions): Promise<string>;
   readChangesJson(
+    cursorJson: string,
+    maxBatches: number,
+    options?: CallOptions,
+  ): Promise<string>;
+  readSnapshotV2Json(options?: CallOptions): Promise<string>;
+  readChangesV2Json(
     cursorJson: string,
     maxBatches: number,
     options?: CallOptions,
@@ -115,6 +125,16 @@ export interface ExperimentalPendingWindow {
   firstCommitTooLarge: boolean;
 }
 interface NativeQueuePort {
+  markTransmitted(
+    commitJson: string,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus>;
+  enqueueLatestBounded(
+    commit: string,
+    count: number,
+    bytes: number,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus>;
   pendingWindow(
     maxCommits: number,
     maxBytes: number,
@@ -258,6 +278,38 @@ export class ExperimentalSyncClient {
     const method = this.#native.readChangesJson;
     if (!method) return missingReadAbi();
     return decodeSyncReadChanges(
+      await method
+        .call(this.#native, JSON.stringify(cursor), maxBatches, options)
+        .catch((error) => {
+          throw this.#readFailure(error);
+        }),
+    );
+  }
+
+  async readSnapshotV2(options?: CallOptions): Promise<SyncReadBootstrapV2> {
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
+    this.readCapabilities();
+    const method = this.#native.readSnapshotV2Json;
+    if (!method) return missingReadAbi();
+    return decodeSyncReadBootstrapV2(
+      await method.call(this.#native, options).catch((error) => {
+        throw this.#readFailure(error);
+      }),
+    );
+  }
+
+  async readChangesV2(
+    cursor: SyncReadCursor,
+    maxBatches = 32,
+    options?: CallOptions,
+  ): Promise<SyncReadChangesV2> {
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
+    this.readCapabilities();
+    if (!Number.isInteger(maxBatches) || maxBatches < 1 || maxBatches > 128)
+      throw new RangeError("Sync read batch limit must be between 1 and 128");
+    const method = this.#native.readChangesV2Json;
+    if (!method) return missingReadAbi();
+    return decodeSyncReadChangesV2(
       await method
         .call(this.#native, JSON.stringify(cursor), maxBatches, options)
         .catch((error) => {
@@ -450,6 +502,47 @@ export class ExperimentalSyncClient {
     if (this.isClosed || options?.signal?.aborted)
       throw new Error("Bounded queue admission acknowledgement unavailable");
     return result;
+  }
+
+  async enqueueLatestBounded(
+    commit: SyncJsonValue,
+    maxPendingCommits: number,
+    maxPendingBytes: number,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus> {
+    queueLimits(maxPendingCommits, maxPendingBytes);
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
+    if (this.isClosed) throw new Error("Sync client is closed");
+    if (options?.signal?.aborted) throw new Error("Bounded queue call aborted");
+    const method = this.#native.enqueueLatestBounded;
+    if (!method) throw new Error("Bounded queue native ABI unavailable");
+    const result = await method
+      .call(
+        this.#native,
+        encodeProtocolJson(commit),
+        maxPendingCommits,
+        maxPendingBytes,
+        options,
+      )
+      .catch((error) => {
+        throw this.#readFailure(error);
+      });
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
+    if (this.isClosed || options?.signal?.aborted)
+      throw new Error("Bounded queue admission acknowledgement unavailable");
+    return result;
+  }
+
+  async markTransmitted(
+    commitJson: string,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus> {
+    if (this.#scopeBlocked) throw this.#scopeBlocked;
+    if (this.isClosed || options?.signal?.aborted)
+      throw new Error("Transmission unavailable");
+    const method = this.#native.markTransmitted;
+    if (!method) throw new Error("Transmission native ABI unavailable");
+    return method.call(this.#native, commitJson, options);
   }
 
   /** @internal Exact tagged JSON used by the native HTTP codec bridge. */

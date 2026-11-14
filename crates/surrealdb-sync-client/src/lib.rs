@@ -6,6 +6,10 @@
 //! correctness boundary compatible with asynchronous transactional stores
 //! without selecting an async runtime or persistence dependency.
 
+mod command_queue;
+pub use command_queue::*;
+mod receipt;
+pub use receipt::*;
 mod read;
 mod subscriptions;
 pub use read::*;
@@ -79,6 +83,10 @@ pub struct DurableClientState<V> {
     pub checkpoint: Option<Checkpoint>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reset_coverage: Option<ResetCoverage>,
+    #[serde(default)]
+    pub receipt_state: ReceiptState,
+    #[serde(default)]
+    pub command_queue: CommandQueue<V>,
     pub id_map: BTreeMap<RecordId, RecordId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subscriptions: Option<DurableSubscriptions<V>>,
@@ -102,6 +110,8 @@ impl<V> DurableClientState<V> {
             outcomes: Vec::new(),
             checkpoint: None,
             reset_coverage: None,
+            receipt_state: ReceiptState::default(),
+            command_queue: CommandQueue::default(),
             id_map: BTreeMap::new(),
             subscriptions: None,
         }
@@ -137,6 +147,8 @@ impl<V: Eq> DurableClientState<V> {
         validate_conflict_resolutions(self)?;
         validate_checkpoint(self)?;
         read::validate_coverage(self)?;
+        receipt::validate(self)?;
+        command_queue::validate(self)?;
         if let Some(subscriptions) = &self.subscriptions {
             subscriptions.validate(self)?;
         }
@@ -508,6 +520,7 @@ impl<V: Clone + Eq> ClientRuntime<V> {
             if !commits.is_empty() {
                 return Err(ClientError::InvalidPullFraming);
             }
+            next.receipt_state.frontier = None;
             next.checkpoint = Some(checkpoint);
             return self.prepare(next);
         }
@@ -524,6 +537,7 @@ impl<V: Clone + Eq> ClientRuntime<V> {
                 }
             }
         }
+        next.receipt_state.frontier = None;
         next.checkpoint = Some(checkpoint);
         self.prepare(next)
     }
@@ -596,7 +610,7 @@ impl<V: Clone + Eq> ClientRuntime<V> {
                 return Err(ClientError::ScopeMismatch);
             }
             if incoming.scope != current.scope {
-                if !self.state.outbox.is_empty()
+                if (!self.state.outbox.is_empty() || !self.state.command_queue.deferred.is_empty())
                     || self.state.outcomes.iter().any(|outcome| {
                         matches!(outcome.outcome, DurableOutcome::Conflict { .. })
                             && outcome.resolution.is_none()
@@ -637,6 +651,7 @@ impl<V: Clone + Eq> ClientRuntime<V> {
             cursor: checkpoint.cursor,
             scope: checkpoint.scope.clone(),
         });
+        next.receipt_state.frontier = None;
         next.checkpoint = Some(checkpoint);
         self.prepare(next)
     }
@@ -1008,7 +1023,12 @@ pub fn optimistic_operations<V>(
             .iter()
             .filter_map(move |resolved| match &resolved.outcome {
                 DurableOutcome::Accepted { sequence, .. }
-                    if !resolved.covered_by_reset && *sequence > applied_sequence =>
+                    if !resolved.covered_by_reset
+                        && !receipt::covered(state, &resolved.local_commit.identity)
+                        && (*sequence > applied_sequence
+                            || state.receipt_state.receipts.contains_key(
+                                &resolved.local_commit.identity.client_commit_id,
+                            )) =>
                 {
                     Some(&resolved.local_commit)
                 }
@@ -1018,6 +1038,7 @@ pub fn optimistic_operations<V>(
             });
     accepted_not_pulled
         .chain(&state.outbox)
+        .chain(&state.command_queue.deferred)
         .flat_map(|commit| &commit.operations)
 }
 

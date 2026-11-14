@@ -5,6 +5,8 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod receipt;
+pub use receipt::*;
 pub mod bootstrap;
 pub mod bootstrap_codec;
 pub mod canonical;

@@ -1,5 +1,10 @@
 import { decodeSurrealValue } from "./wire";
-import type { SyncReadBootstrap, SyncReadChanges } from "./sync-read";
+import type {
+  SyncReadBootstrap,
+  SyncReadChanges,
+  SyncReadBootstrapV2,
+  SyncReadChangesV2,
+} from "./sync-read";
 
 const MAX_READ_JSON_CHARS = 16 * 1024 * 1024;
 function invalid(): never {
@@ -74,7 +79,7 @@ function decodePayload(value: unknown): unknown {
   if (typeof encoded !== "string") invalid();
   return decodeSurrealValue(encoded);
 }
-function row(value: unknown, meta: unknown): void {
+function row(value: unknown, meta: unknown, version = 1): void {
   const entry = object(value),
     confirmed = object(entry.confirmed);
   text(entry.recordId);
@@ -111,9 +116,9 @@ function row(value: unknown, meta: unknown): void {
     } else if (optimistic.state === "deleted") counter(optimistic.baseVersion);
     else invalid();
   }
-  validateSyncReadSummary(entry);
+  validateSyncReadSummary(entry, version);
 }
-export function validateSyncReadSummary(value: unknown): void {
+export function validateSyncReadSummary(value: unknown, version = 1): void {
   const entry = object(value);
   for (const pending of array(entry.pending)) identity(pending);
   for (const value of array(entry.conflicts)) {
@@ -139,20 +144,25 @@ export function validateSyncReadSummary(value: unknown): void {
     counter(accepted.sequence);
     if (
       accepted.status !== "covered_by_authorized_reset" &&
-      accepted.status !== "awaiting_pull_epoch_unknown"
+      accepted.status !== "awaiting_pull_epoch_unknown" &&
+      !(
+        version === 2 &&
+        (accepted.status === "covered_by_verified_pull" ||
+          accepted.status === "awaiting_verified_pull")
+      )
     )
       invalid();
   }
 }
-function snapshot(value: unknown): void {
+function snapshot(value: unknown, version = 1): void {
   const result = object(value);
-  if (result.protocolVersion !== 1) invalid();
+  if (result.protocolVersion !== version) invalid();
   validateSyncReadMetadata(result.metadata);
   const rows = object(result.rows),
     entries = Object.entries(rows);
   if (entries.length > 100_000) invalid();
   for (const [id, value] of entries) {
-    row(value, result.metadata);
+    row(value, result.metadata, version);
     if (object(value).recordId !== id) invalid();
   }
 }
@@ -201,6 +211,47 @@ export function decodeSyncReadChanges(json: string): SyncReadChanges {
     }
   } else invalid();
   return value as SyncReadChanges;
+}
+export function decodeSyncReadBootstrapV2(json: string): SyncReadBootstrapV2 {
+  const value = object(decode(json));
+  snapshot(value.snapshot, 2);
+  cursor(value.cursor);
+  if (
+    object(value.cursor).revision !==
+    object(object(value.snapshot).metadata).revision
+  )
+    invalid();
+  return value as SyncReadBootstrapV2;
+}
+export function decodeSyncReadChangesV2(json: string): SyncReadChangesV2 {
+  const value = object(decode(json));
+  cursor(value.cursor);
+  if (value.kind === "reset_required") {
+    snapshot(value.snapshot, 2);
+    if (
+      object(value.cursor).revision !==
+      object(object(value.snapshot).metadata).revision
+    )
+      invalid();
+  } else if (value.kind === "batches") {
+    const batches = array(value.batches);
+    if (batches.length > 128) invalid();
+    for (const value of batches) {
+      const batch = object(value);
+      if (batch.protocolVersion !== 2) invalid();
+      counter(batch.beforeRevision);
+      counter(batch.revision);
+      validateSyncReadMetadata(batch.metadata);
+      if (batch.revision !== object(batch.metadata).revision) invalid();
+      for (const value of array(batch.changes)) {
+        const change = object(value);
+        if (change.kind === "upsert") row(change.row, batch.metadata, 2);
+        else if (change.kind === "remove") text(change.recordId);
+        else invalid();
+      }
+    }
+  } else invalid();
+  return value as SyncReadChangesV2;
 }
 
 export function decodeSyncReadCapabilities(

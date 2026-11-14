@@ -439,3 +439,50 @@ export type SyncReadCapabilities = Readonly<{
 }>;
 export type SyncScopeTransitionDecision =
   "unchanged" | "needs_new_scope_journal" | "pending_quarantine_required";
+
+/** Explicit v2 contract; v1 decoders reject this status and version. */
+export type SyncReadRowV2<T = SyncJsonValue> = Omit<
+  SyncReadRow<T>,
+  "accepted"
+> &
+  Readonly<{
+    accepted: readonly Readonly<{
+      identity: SyncReadIdentity;
+      sequence: SyncReadCounter;
+      status:
+        | "covered_by_authorized_reset"
+        | "awaiting_pull_epoch_unknown"
+        | "covered_by_verified_pull"
+        | "awaiting_verified_pull";
+    }>[];
+  }>;
+export type SyncReadSnapshotV2<T = SyncJsonValue> = Omit<
+  SyncReadSnapshot<T>,
+  "protocolVersion" | "rows"
+> &
+  Readonly<{
+    protocolVersion: 2;
+    rows: Readonly<Record<string, SyncReadRowV2<T>>>;
+  }>;
+export type SyncReadBootstrapV2<T = SyncJsonValue> = Readonly<{
+  snapshot: SyncReadSnapshotV2<T>;
+  cursor: SyncReadCursor;
+}>;
+export type SyncReadBatchV2<T = SyncJsonValue> = Omit<
+  SyncReadBatch<T>,
+  "protocolVersion" | "changes"
+> &
+  Readonly<{
+    protocolVersion: 2;
+    changes: readonly (
+      | Readonly<{ kind: "upsert"; row: SyncReadRowV2<T> }>
+      | Readonly<{ kind: "remove"; recordId: string }>
+    )[];
+  }>;
+export type SyncReadChangesV2<T = SyncJsonValue> =
+  | (SyncReadBootstrapV2<T> & Readonly<{ kind: "reset_required" }>)
+  | Readonly<{
+      kind: "batches";
+      batches: readonly SyncReadBatchV2<T>[];
+      cursor: SyncReadCursor;
+    }>;
