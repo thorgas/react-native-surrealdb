@@ -19,6 +19,10 @@ import {
   decodeSyncPushResponse as nativeDecodeSyncPushResponse,
   encodeSyncPullRequest as nativeEncodeSyncPullRequest,
   encodeSyncPushRequest as nativeEncodeSyncPushRequest,
+  decodeSyncPullResponseV2,
+  decodeSyncPushResponseV2,
+  encodeSyncPullRequestV2,
+  encodeSyncPushRequestV2,
   openSyncClient as nativeOpenSyncClient,
   type ConnectOptions,
   type LiveQueryLike,
@@ -75,6 +79,16 @@ export function createExperimentalCanonicalCborSyncHttpCodec(): ExperimentalSync
     encodeSyncPullRequest: nativeEncodeSyncPullRequest,
     decodeSyncPullResponse: nativeDecodeSyncPullResponse,
   });
+}
+/** Opt-in epoch-bound receipt codec. Requires the matching alpha.9 native ABI. */
+export function createExperimentalCanonicalCborSyncHttpCodecV2(): ExperimentalSyncHttpCodec {
+  const codec = experimentalCanonicalCborSyncHttpCodec({
+    encodeSyncPushRequest: encodeSyncPushRequestV2,
+    decodeSyncPushResponse: decodeSyncPushResponseV2,
+    encodeSyncPullRequest: encodeSyncPullRequestV2,
+    decodeSyncPullResponse: decodeSyncPullResponseV2,
+  });
+  return { ...codec, mediaType: "application/vnd.surrealdb-sync.v2+cbor" };
 }
 /** Create the separate one-shot native ordered-subscription transport. */
 export function createExperimentalCanonicalSubscriptionHttpTransport(

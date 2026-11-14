@@ -6,6 +6,18 @@ export function createNativeReadMocks() {
     throw new Error("Native subscription is not configured by this fixture");
   });
   return {
+    enqueueLatestBounded: vi.fn(async () => {
+      throw new Error("unused local-first queue");
+    }),
+    markTransmitted: vi.fn(async () => {
+      throw new Error("unused transmission");
+    }),
+    readSnapshotV2Json: vi.fn(async () => {
+      throw new Error("unused v2 read");
+    }),
+    readChangesV2Json: vi.fn(async () => {
+      throw new Error("unused v2 replay");
+    }),
     pendingWindow: vi.fn(async () => {
       throw new Error("Bounded queue native ABI unavailable");
     }),

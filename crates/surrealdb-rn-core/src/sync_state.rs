@@ -63,13 +63,13 @@ DEFINE FIELD IF NOT EXISTS revision ON _sync_client_state TYPE string;
 DEFINE FIELD IF NOT EXISTS payload ON _sync_client_state TYPE bytes;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_meta SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_meta TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_meta TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_meta TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_meta TYPE string;
 DEFINE FIELD IF NOT EXISTS payload ON _sync_client_meta TYPE bytes;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_confirmed SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_confirmed TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_confirmed TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_confirmed TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_confirmed TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_confirmed TYPE string;
@@ -77,7 +77,7 @@ DEFINE FIELD IF NOT EXISTS payload ON _sync_client_confirmed TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_confirmed FIELDS partition_id, client_id;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_outbox SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_outbox TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_outbox TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_outbox TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_outbox TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_outbox TYPE string;
@@ -85,7 +85,7 @@ DEFINE FIELD IF NOT EXISTS payload ON _sync_client_outbox TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_outbox FIELDS partition_id, client_id;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_outcome SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_outcome TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_outcome TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_outcome TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_outcome TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_outcome TYPE string;
@@ -93,14 +93,14 @@ DEFINE FIELD IF NOT EXISTS payload ON _sync_client_outcome TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_outcome FIELDS partition_id, client_id;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_id_map SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_id_map TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_id_map TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_id_map TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_id_map TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_id_map TYPE string;
 DEFINE FIELD IF NOT EXISTS payload ON _sync_client_id_map TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_id_map FIELDS partition_id, client_id;
 DEFINE TABLE IF NOT EXISTS _sync_client_subscription_record SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_subscription_record TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_subscription_record TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_subscription_record TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_subscription_record TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_subscription_record TYPE string;
@@ -219,6 +219,10 @@ struct StateMeta {
     checkpoint: Option<Checkpoint>,
     #[serde(default)]
     reset_coverage: Option<surrealdb_sync_client::ResetCoverage>,
+    #[serde(default)]
+    receipt_state: surrealdb_sync_client::ReceiptState,
+    #[serde(default)]
+    command_queue: surrealdb_sync_client::CommandQueue<JsonValue>,
     #[serde(default)]
     subscriptions: Option<surrealdb_sync_client::DurableSubscriptions<JsonValue>>,
     #[serde(default)]
@@ -650,6 +654,8 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
         revision: state.revision.to_string(),
         checkpoint: state.checkpoint.clone(),
         reset_coverage: state.reset_coverage.clone(),
+        receipt_state: state.receipt_state.clone(),
+        command_queue: state.command_queue.clone(),
         subscriptions: subscription_meta,
         subscription_record_keys: subscription_records.keys().cloned().collect(),
         confirmed_keys: state.confirmed.keys().cloned().collect(),
@@ -705,7 +711,12 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
         return Err(SyncStateError::StateTooLarge);
     }
     Ok(NormalizedRows {
-        format_version: if state.subscriptions.is_some() {
+        format_version: if state.receipt_state != Default::default()
+            || !state.command_queue.transmitted.is_empty()
+            || !state.command_queue.deferred.is_empty()
+        {
+            4
+        } else if state.subscriptions.is_some() {
             SUBSCRIPTION_FORMAT_VERSION
         } else {
             FORMAT_VERSION
@@ -1119,7 +1130,9 @@ async fn load_v2(
     };
     validate_meta_row(key, &row)?;
     let mut meta: StateMeta = decode_tagged(&row.payload)?;
-    if (row.format_version == SUBSCRIPTION_FORMAT_VERSION) != meta.subscriptions.is_some() {
+    if (row.format_version == SUBSCRIPTION_FORMAT_VERSION) != meta.subscriptions.is_some()
+        && row.format_version != 4
+    {
         return Err(SyncStateError::CorruptState);
     }
     if meta.partition_id != key.partition_id.0
@@ -1218,6 +1231,8 @@ async fn load_v2(
         outcomes,
         checkpoint: meta.checkpoint,
         reset_coverage: meta.reset_coverage,
+        receipt_state: meta.receipt_state,
+        command_queue: meta.command_queue,
         subscriptions: meta.subscriptions,
         id_map,
     };
@@ -1244,7 +1259,7 @@ async fn load_inventory(
         for row in rows {
             if !matches!(
                 row.format_version,
-                FORMAT_VERSION | SUBSCRIPTION_FORMAT_VERSION
+                FORMAT_VERSION | SUBSCRIPTION_FORMAT_VERSION | 4
             ) || row.partition_id != key.partition_id.0
                 || row.client_id != key.client_id.0
                 || row.payload.len() > MAX_SYNC_STATE_BYTES
@@ -1272,7 +1287,7 @@ fn take_component(
 }
 
 fn validate_meta_row(key: SyncStateKey<'_>, row: &StoredMetaRow) -> Result<(), SyncStateError> {
-    validate_meta_row_version(key, row, SUBSCRIPTION_FORMAT_VERSION)
+    validate_meta_row_version(key, row, 4)
 }
 
 fn validate_meta_row_version(
@@ -2912,5 +2927,59 @@ mod tests {
                 Err(SyncStateError::UnsupportedRecordId)
             ));
         }
+    }
+    #[tokio::test]
+    async fn receipt_format_upgrade_preserves_transmitted_and_deferred_intent_and_refuses_downgrade()
+     {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let database = surrealkv_database(directory.path()).await;
+        let store = SyncStateStore::new(&database);
+        store.define_schema().await.unwrap();
+        let initial = empty_state("receipt-upgrade", "client");
+        store.save_atomic(None, &initial).await.unwrap();
+        let queued = enqueue(initial, "old-pending", "probe:local", json!({"name":"old"}));
+        store.save_atomic(Some(0), &queued).await.unwrap();
+        let mut runtime = ClientRuntime::open(queued.clone()).unwrap();
+        let mark = runtime
+            .prepare_mark_transmitted(&queued.outbox[0].identity)
+            .unwrap();
+        store
+            .apply_transition_atomic(runtime.state(), mark.state())
+            .await
+            .unwrap();
+        runtime.install(mark).unwrap();
+        let mut successor = queued.outbox[0].clone();
+        successor.identity.client_commit_id.0 = "successor".into();
+        if let Operation::Upsert { value, .. } = &mut successor.operations[0] {
+            *value = json!({"name":"latest"});
+        }
+        let deferred = runtime
+            .prepare_enqueue_latest(successor, |_, c| Ok(c.identity.fingerprint.clone()))
+            .unwrap();
+        store
+            .apply_transition_atomic(runtime.state(), deferred.state())
+            .await
+            .unwrap();
+        runtime.install(deferred).unwrap();
+        let key = SyncStateKey::new(&queued.partition_id, &queued.client_id);
+        let metadata: StoredMetaRow = database
+            .client()
+            .await
+            .unwrap()
+            .select(meta_record_id(key))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(metadata.format_version, 4);
+        assert!(validate_meta_row_version(key, &metadata, SUBSCRIPTION_FORMAT_VERSION).is_err());
+        let restored = store.load(key).await.unwrap().unwrap();
+        assert_eq!(restored, *runtime.state());
+        assert_eq!(restored.command_queue.deferred.len(), 1);
+        assert!(
+            restored
+                .command_queue
+                .transmitted
+                .contains(&queued.outbox[0].identity.client_commit_id)
+        );
     }
 }

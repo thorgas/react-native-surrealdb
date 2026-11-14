@@ -222,6 +222,7 @@ impl RuntimeRegistry {
         let runtime = Arc::new(AsyncMutex::new(RuntimeState {
             runtime: None,
             journal: Default::default(),
+            journal_v2: crate::sync_read::ReadJournal::v2(),
             subscription_journal: Default::default(),
             recovery_required: false,
             scope_blocked: None,
@@ -413,7 +414,8 @@ impl NativeSyncClient {
             };
             let runtime = ClientRuntime::open(state).map_err(map_protocol_error)?;
             if shared_slot.recovery_required
-                && (shared_slot.journal.rotate().is_err()
+                && (shared_slot.journal_v2.rotate().is_err()
+                    || shared_slot.journal.rotate().is_err()
                     || shared_slot.subscription_journal.rotate().is_err())
             {
                 invalidate_runtime(&mut shared_slot);
@@ -504,6 +506,36 @@ impl NativeSyncClient {
         .await
     }
 
+    pub async fn enqueue_latest_bounded(
+        self: Arc<Self>,
+        commit_json: String,
+        max_pending_commits: u32,
+        max_pending_bytes: u32,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.run_mutation(move |owner| async move {
+            owner
+                .enqueue_latest_bounded_owned(commit_json, max_pending_commits, max_pending_bytes)
+                .await
+        })
+        .await
+    }
+
+    /// Persist before transport starts; retries may only transmit these exact bytes.
+    pub async fn mark_transmitted(
+        self: Arc<Self>,
+        commit_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.run_mutation(move |owner| async move {
+            let commit: ClientCommit<JsonValue> = decode_input(&commit_json)?;
+            let mut slot = owner.lock_runtime().await;
+            let prepared = slot
+                .client()?
+                .prepare_mark_transmitted(&commit.identity)
+                .map_err(map_protocol_error)?;
+            owner.persist_and_install(&mut slot, prepared).await
+        })
+        .await
+    }
     /// Borrow the FIFO under its lock; never falls back to all-pending output.
     pub async fn pending_window(
         &self,
@@ -751,6 +783,26 @@ impl NativeSyncClient {
         )?)
     }
 
+    pub async fn read_snapshot_v2_json(&self) -> Result<String, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        crate::sync_read::output(&slot.journal_v2.bootstrap(slot.read_client()?)?)
+    }
+
+    pub async fn read_changes_v2_json(
+        &self,
+        cursor_json: String,
+        max_batches: u32,
+    ) -> Result<String, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        crate::sync_read::output(&slot.journal_v2.changes(
+            slot.read_client()?,
+            &cursor_json,
+            max_batches,
+        )?)
+    }
+
     pub async fn requires_authorized_reset(&self) -> Result<bool, NativeSyncError> {
         let mut slot = self.lock_runtime().await;
         self.refresh_scope_barrier(&mut slot).await?;
@@ -813,12 +865,14 @@ fn invalidate_runtime(slot: &mut RuntimeState) {
     slot.runtime.take();
     slot.recovery_required = true;
     slot.journal.rotate().ok();
+    slot.journal_v2.rotate().ok();
     slot.subscription_journal.rotate().ok();
 }
 
 struct RuntimeState {
     runtime: Option<ClientRuntime<JsonValue>>,
     journal: crate::sync_read::ReadJournal,
+    journal_v2: crate::sync_read::ReadJournal,
     subscription_journal: crate::sync_subscription::SubscriptionJournal,
     recovery_required: bool,
     scope_blocked: Option<ScopeBlock>,
@@ -1054,11 +1108,48 @@ impl NativeSyncClient {
         self.persist_and_install(&mut slot, prepared).await
     }
 
+    async fn enqueue_latest_bounded_owned(
+        &self,
+        commit_json: String,
+        count: u32,
+        bytes: u32,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        crate::sync_queue::limits(count, bytes)?;
+        let commit = decode_client_commit(&commit_json)?;
+        let mut slot = self.lock_runtime().await;
+        let prepared = slot
+            .client()?
+            .prepare_enqueue_latest(commit, queue_fingerprint)
+            .map_err(map_protocol_error)?;
+        let state = prepared.state();
+        let pending = state
+            .outbox
+            .iter()
+            .chain(&state.command_queue.deferred)
+            .collect::<Vec<_>>();
+        let window = crate::sync_queue::window(state.revision, pending.iter(), count, bytes)?;
+        if window.remaining_count > 0 || window.first_commit_too_large {
+            return Err(NativeSyncError::QueueCapacity);
+        }
+        self.persist_and_install(&mut slot, prepared).await
+    }
     async fn record_push_response_with_policy_owned(
         &self,
         response_json: String,
         policy: NativeConflictPolicy,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let envelope: JsonValue = decode_input(&response_json)?;
+        if envelope.get("response").is_some() {
+            let response: surrealdb_sync_protocol::PushResponseV2<JsonValue> =
+                decode_input(&response_json)?;
+            validate_push_response_values(&response.response.outcome)?;
+            let mut slot = self.lock_runtime().await;
+            let prepared = slot
+                .client()?
+                .prepare_push_response_v2(response)
+                .map_err(map_protocol_error)?;
+            return self.persist_and_install(&mut slot, prepared).await;
+        }
         let response = decode_input::<PushResponse<JsonValue>>(&response_json)?;
         validate_push_response_values(&response.outcome)?;
         let mut slot = self.lock_runtime().await;
@@ -1073,7 +1164,18 @@ impl NativeSyncClient {
         &self,
         response_json: String,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
-        let response = decode_input::<PullResponse<JsonValue>>(&response_json)?;
+        let envelope: JsonValue = decode_input(&response_json)?;
+        let versioned: Option<surrealdb_sync_protocol::PullResponseV2<JsonValue>> =
+            if envelope.get("response").is_some_and(JsonValue::is_object) {
+                Some(decode_input(&response_json)?)
+            } else {
+                None
+            };
+        let response = if let Some(versioned) = &versioned {
+            versioned.response.clone()
+        } else {
+            decode_input::<PullResponse<JsonValue>>(&response_json)?
+        };
         validate_pull_response_values(&response)?;
         let mut slot = self.lock_runtime().await;
         let required_scope = match &response {
@@ -1085,7 +1187,12 @@ impl NativeSyncClient {
                 _ => None,
             }),
         };
-        let prepared = match slot.client()?.prepare_pull_response(response) {
+        let transition = if let Some(versioned) = versioned {
+            slot.client()?.prepare_pull_response_v2(versioned)
+        } else {
+            slot.client()?.prepare_pull_response(response)
+        };
+        let prepared = match transition {
             Ok(prepared) => prepared,
             Err(error) => {
                 match error {
@@ -1503,7 +1610,10 @@ impl NativeSyncClient {
                     invalidate_runtime(&mut slot);
                     return Err(NativeSyncError::RecoveryRequired);
                 };
-                if slot.journal.rotate().is_err() || slot.subscription_journal.rotate().is_err() {
+                if slot.journal_v2.rotate().is_err()
+                    || slot.journal.rotate().is_err()
+                    || slot.subscription_journal.rotate().is_err()
+                {
                     invalidate_runtime(&mut slot);
                     return Err(NativeSyncError::RecoveryRequired);
                 }
@@ -1520,6 +1630,10 @@ impl NativeSyncClient {
         slot: &mut RuntimeGuard<'_>,
         prepared: PreparedTransition<JsonValue>,
     ) -> Result<NativeSyncStatus, NativeSyncError> {
+        let prepared = slot
+            .client()?
+            .prepare_with_successors(prepared, queue_fingerprint)
+            .map_err(map_protocol_error)?;
         self.ensure_session()?;
         let before_revision = slot.client()?.state().revision;
         let next = prepared.state();
@@ -1572,6 +1686,7 @@ impl NativeSyncClient {
             invalidate_runtime(slot);
             return Err(NativeSyncError::RecoveryRequired);
         };
+        let batch_v2 = runtime.prepared_read_batch_v2(&prepared);
         let batch = match runtime.install_with_read_batch(prepared) {
             Ok(batch) => batch,
             Err(_) => {
@@ -1587,6 +1702,7 @@ impl NativeSyncClient {
             }
         };
         slot.journal.record(batch);
+        slot.journal_v2.record(batch_v2);
         // Query replay is installed only after the same durable transaction and runtime install.
         let RuntimeState {
             runtime,
@@ -1766,7 +1882,8 @@ fn encode_output<T: serde::Serialize>(value: &T) -> Result<String, NativeSyncErr
 
 fn status(runtime: &ClientRuntime<JsonValue>) -> Result<NativeSyncStatus, NativeSyncError> {
     let state = runtime.state();
-    let pending_count = u32::try_from(state.outbox.len()).map_err(|_| NativeSyncError::Internal)?;
+    let pending_count = u32::try_from(state.outbox.len() + state.command_queue.deferred.len())
+        .map_err(|_| NativeSyncError::Internal)?;
     let outcome_count =
         u32::try_from(state.outcomes.len()).map_err(|_| NativeSyncError::Internal)?;
     let conflict_count = u32::try_from(
@@ -5182,3 +5299,10 @@ mod tests {
 #[cfg(test)]
 #[path = "sync_client/bigint_tests.rs"]
 mod bigint_tests;
+
+fn queue_fingerprint(
+    state: &StoredSyncState,
+    commit: &ClientCommit<JsonValue>,
+) -> Result<Fingerprint, ClientError> {
+    canonical_fingerprint(state, commit).map_err(|_| ClientError::InvalidReadCoverage)
+}

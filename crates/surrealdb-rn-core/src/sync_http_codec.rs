@@ -472,3 +472,53 @@ mod tests {
         ));
     }
 }
+
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn encode_sync_push_request_v2(
+    partition_id: String,
+    client_id: String,
+    commit_json: String,
+) -> Result<Vec<u8>, NativeSyncError> {
+    let bytes = encode_sync_push_request(partition_id, client_id, commit_json).await?;
+    let request = surrealdb_sync_protocol::decode_push_request(&bytes)
+        .map_err(|_| NativeSyncError::Protocol)?;
+    surrealdb_sync_protocol::encode_push_request_v2(&request).map_err(|_| NativeSyncError::Protocol)
+}
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn decode_sync_push_response_v2(bytes: Vec<u8>) -> Result<String, NativeSyncError> {
+    let r = surrealdb_sync_protocol::decode_push_response_v2(&bytes)
+        .map_err(|_| NativeSyncError::Protocol)?;
+    encode_json(&surrealdb_sync_protocol::PushResponseV2 {
+        response: push_response_to_json(r.response)?,
+        receipt: r.receipt,
+    })
+}
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn encode_sync_pull_request_v2(
+    partition_id: String,
+    client_id: String,
+    checkpoint: Option<String>,
+    requested_scope: String,
+    subscription_revision: u64,
+) -> Result<Vec<u8>, NativeSyncError> {
+    let bytes = encode_sync_pull_request(
+        partition_id,
+        client_id,
+        checkpoint,
+        requested_scope,
+        subscription_revision,
+    )
+    .await?;
+    let r = surrealdb_sync_protocol::decode_pull_request(&bytes)
+        .map_err(|_| NativeSyncError::Protocol)?;
+    surrealdb_sync_protocol::encode_pull_request_v2(&r).map_err(|_| NativeSyncError::Protocol)
+}
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn decode_sync_pull_response_v2(bytes: Vec<u8>) -> Result<String, NativeSyncError> {
+    let r = surrealdb_sync_protocol::decode_pull_response_v2(&bytes)
+        .map_err(|_| NativeSyncError::Protocol)?;
+    encode_json(&surrealdb_sync_protocol::PullResponseV2 {
+        response: pull_response_to_json(r.response)?,
+        context: r.context,
+    })
+}

@@ -23,6 +23,7 @@ struct Batch {
 }
 #[derive(Default)]
 pub(crate) struct ReadJournal {
+    v2: bool,
     epoch: JournalEpoch,
     batches: VecDeque<Batch>,
     bytes: usize,
@@ -64,6 +65,12 @@ impl JournalEpoch {
     }
 }
 impl ReadJournal {
+    pub(crate) fn v2() -> Self {
+        Self {
+            v2: true,
+            ..Self::default()
+        }
+    }
     pub(crate) fn rotate(&mut self) -> Result<(), NativeSyncError> {
         self.epoch.advance()?;
         self.batches.clear();
@@ -95,8 +102,12 @@ impl ReadJournal {
         self.view_cursors.push_back(cursor);
     }
     pub fn bootstrap(&self, runtime: &ClientRuntime<Value>) -> Result<Value, NativeSyncError> {
-        let mut snapshot =
-            serde_json::to_value(runtime.read_snapshot()).map_err(|_| NativeSyncError::Internal)?;
+        let mut snapshot = serde_json::to_value(if self.v2 {
+            runtime.read_snapshot_v2()
+        } else {
+            runtime.read_snapshot()
+        })
+        .map_err(|_| NativeSyncError::Internal)?;
         snapshot_wire(&mut snapshot)?;
         Ok(json!({"snapshot":snapshot,"cursor":self.cursor(runtime.state().revision)}))
     }

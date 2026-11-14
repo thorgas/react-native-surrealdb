@@ -198,3 +198,40 @@ pnpm add react-native-surrealdb@next
 Do not publish from a workstation after adopting this process. Do not move
 `latest` to an alpha version, replace release assets after testing, reuse a
 published version, or delete and recreate release tags.
+
+## Private alpha.9 receipt build (2026-11-14)
+
+The local-only `0.1.0-alpha.9.haus.20261114.1` wrapper adds explicit v2 receipt
+codecs and v2 local read methods. V1 wire/read entry points retain their prior
+contracts. Rebuild both Apple slices and Android ABIs; generated bindings alone
+cannot activate these methods. No npm publication or release tag is part of this task.
+
+From the workspace root (Node 22, pnpm pinned by packageManager, Rust toolchain,
+Xcode and Android NDK 27.1.12297006 installed):
+
+```sh
+pnpm install --frozen-lockfile
+./scripts/verify-core.sh
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+pnpm --filter react-native-surrealdb run release:artifacts
+pnpm --filter react-native-surrealdb run release:check
+pnpm --filter react-native-surrealdb run release:pack /Users/timhorgas/git/sdk-artifacts
+```
+
+The journal upgrades additively to format 4 only when receipt/frontier,
+transmission or deferred-successor state requires it. It retains outbox, conflicts,
+outcomes, checkpoint and subscription state; prior format-2/3 readers refuse
+format 4 before loading or mutating it. Legacy acceptances remain epoch-unknown.
+The native boundary preserves raw protocol u64 JSON until Rust decoding and emits
+canonical decimal strings for local read counters, including values above 2^53.
+
+Applications opt into `createExperimentalCanonicalCborSyncHttpCodecV2`,
+`readSnapshotV2` / `readChangesV2`, `enqueueLatestBounded` and `markTransmitted`.
+Persist `markTransmitted` before HTTP; after that boundary the request bytes and
+fingerprint are immutable. Queued local edits remain immediately visible while
+network work is outstanding. Single-record upserts coalesce only before
+transmission; bounded deferred FIFO successors are rebased/admitted by the same
+persisted pull/outcome transition when coverage permits. Unresolved conflicts
+retain successor intent for explicit resolution. Consumers must keep local
+admission independent of HTTP waits. The ordinary bounded-queue API remains
+available with its existing behavior.
