@@ -1,3 +1,11 @@
+## 0.1.0-alpha.10.haus.20261115.1 — private artifact
+
+- Synchronize private engine ADR 0017: one record or commit may use 65,536
+  canonical items (was 4,096), while envelopes that pack several records or
+  commits keep the 4,096 bound. Rebuild all four native libraries; a consuming
+  app needs this build to receive a household record over 4,096 items.
+- Private tarball only; no npm publication or public release tag.
+
 ## 0.1.0-alpha.8.haus.20261114.1 — private artifact
 
 - Rebuild all four mobile native libraries from merged main, including bounded pending queue admission/read APIs and exact bigint CAS handling.

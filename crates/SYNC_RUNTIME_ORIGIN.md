@@ -30,3 +30,9 @@ ordering factored from `optimistic_projection`). Authored against private engine
 the runtime's existing private conflict-policy differences. No protocol or wire
 model changes or additional private modules are copied. The coordinating commit
 is `a6bb305a2cf58035165ff25e977934d83208f68e` after canonical verification.
+
+2026-11-15: `surrealdb-sync-protocol` synchronizes private engine ADR 0017
+(`312b1bd`, engine branch `fix/seed-datetime-large-groups`): one record or commit
+may use `MAX_TOTAL_ITEMS = 65,536` items, and envelopes that pack several stay
+within `PACKED_TOTAL_ITEMS = 4,096` (plus the additive `canonical_cbor_packed`). The patch and its `tests/item_bounds.rs` are
+copied verbatim; no wire grammar changed.
