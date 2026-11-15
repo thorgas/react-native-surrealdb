@@ -16,7 +16,14 @@ const FINGERPRINT_DOMAIN: &str = "surrealdb-sync/1/commit-fingerprint/sha256";
 
 pub const MAX_DEPTH: usize = 32;
 pub const MAX_CONTAINER_ITEMS: usize = 1_024;
-pub const MAX_TOTAL_ITEMS: usize = 4_096;
+/// Hard total-item bound for one value or one envelope that carries a single record or commit
+/// (ADR 0017). Sized for the largest household record the product schema admits: a fully
+/// referenced ingredient is about 1,130 items, so one recipe holds about 57 of them.
+pub const MAX_TOTAL_ITEMS: usize = 65_536;
+/// The original v1 total-item bound, which decoders before ADR 0017 enforce on every envelope.
+/// An envelope that packs more than one record or commit stays within it, so those decoders keep
+/// reading every page and batch that does not contain an oversized record.
+pub const PACKED_TOTAL_ITEMS: usize = 4_096;
 pub const MAX_STRING_BYTES: usize = 1_048_576;
 pub const MAX_ENCODED_BYTES: usize = 4_194_304;
 
@@ -103,9 +110,21 @@ impl std::error::Error for CodecError {}
 
 /// Encode one value with the deterministic v1 CBOR profile.
 pub fn canonical_cbor(value: &CanonicalValue) -> Result<Vec<u8>, CodecError> {
-    validate(value)?;
+    canonical_cbor_within(value, MAX_TOTAL_ITEMS)
+}
+
+/// Encode one value that packs several records within `PACKED_TOTAL_ITEMS` (ADR 0017), for
+/// callers that bound a multi-record envelope of their own, such as a batched database write.
+pub fn canonical_cbor_packed(value: &CanonicalValue) -> Result<Vec<u8>, CodecError> {
+    canonical_cbor_within(value, PACKED_TOTAL_ITEMS)
+}
+
+fn canonical_cbor_within(value: &CanonicalValue, item_bound: usize) -> Result<Vec<u8>, CodecError> {
+    let mut remaining_items = item_bound;
+    let mut remaining_bytes = MAX_ENCODED_BYTES;
+    validate_with_budget(value, 0, &mut remaining_items, &mut remaining_bytes)?;
     let bytes = encode_cbor_value(to_cbor(value)?)?;
-    preflight_canonical_cbor(&bytes)?;
+    preflight_canonical_cbor_within(&bytes, item_bound)?;
     Ok(bytes)
 }
 
@@ -458,8 +477,18 @@ fn validate_identifier(value: &str) -> Result<(), CodecError> {
 }
 
 pub(crate) fn preflight_canonical_cbor(bytes: &[u8]) -> Result<(), CodecError> {
+    preflight_canonical_cbor_within(bytes, MAX_TOTAL_ITEMS)
+}
+
+/// The byte preflight under an explicit item bound: `PACKED_TOTAL_ITEMS` reproduces exactly the
+/// check a pre-ADR-0017 decoder applies to an envelope.
+pub(crate) fn preflight_canonical_cbor_within(
+    bytes: &[u8],
+    item_bound: usize,
+) -> Result<(), CodecError> {
+    debug_assert!(item_bound == MAX_TOTAL_ITEMS || item_bound == PACKED_TOTAL_ITEMS);
     let mut cursor = 0;
-    let mut remaining_items = MAX_TOTAL_ITEMS;
+    let mut remaining_items = item_bound;
     scan_cbor_item(bytes, &mut cursor, 0, &mut remaining_items)?;
     if cursor != bytes.len() {
         return Err(CodecError::TrailingBytes);

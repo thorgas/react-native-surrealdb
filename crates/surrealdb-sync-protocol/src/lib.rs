@@ -15,7 +15,8 @@ pub mod subscription;
 pub mod subscription_codec;
 pub use canonical::{
     CanonicalFloat, CanonicalValue, CodecError, MAX_CONTAINER_ITEMS, MAX_DEPTH, MAX_ENCODED_BYTES,
-    MAX_STRING_BYTES, MAX_TOTAL_ITEMS, canonical_cbor, decode_canonical_cbor, fingerprint_commit,
+    MAX_STRING_BYTES, MAX_TOTAL_ITEMS, PACKED_TOTAL_ITEMS, canonical_cbor, canonical_cbor_packed,
+    decode_canonical_cbor, fingerprint_commit,
 };
 pub use http_codec::{
     HTTP_CONTENT_TYPE, MAX_CHECKPOINT_BYTES, MAX_IDENTITY_BYTES, decode_pull_request,

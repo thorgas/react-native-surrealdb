@@ -235,3 +235,13 @@ persisted pull/outcome transition when coverage permits. Unresolved conflicts
 retain successor intent for explicit resolution. Consumers must keep local
 admission independent of HTTP waits. The ordinary bounded-queue API remains
 available with its existing behavior.
+
+## Private alpha.10 single-record bound (2026-11-15)
+
+`0.1.0-alpha.10.haus.20261115.1` rebuilds all four native slices from this
+branch on top of alpha.9's merged main. Its only Rust change is the vendored
+`surrealdb-sync-protocol` item bound from private engine ADR 0017 (see
+`crates/SYNC_RUNTIME_ORIGIN.md`). JavaScript APIs and the journal format are
+unchanged. Build and pack exactly as for alpha.9 above, then record the four
+library SHA256 values and the tarball integrity in `docs/ALPHA10_NATIVE_RECEIPTS.json`.
+

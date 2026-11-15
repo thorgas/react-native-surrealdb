@@ -5,8 +5,8 @@ use std::io::Cursor;
 use ciborium::value::Value as Cbor;
 
 use crate::canonical::{
-    encode_cbor_value, from_cbor, preflight_canonical_cbor, take_bytes, to_cbor,
-    validate_with_budget,
+    PACKED_TOTAL_ITEMS, encode_cbor_value, from_cbor, preflight_canonical_cbor,
+    preflight_canonical_cbor_within, take_bytes, to_cbor, validate_with_budget,
 };
 use crate::{
     AppliedRecord, BaseVersion, CanonicalValue, Checkpoint, ClientCommit, ClientCommitId, ClientId,
@@ -65,7 +65,17 @@ pub fn decode_pull_request(bytes: &[u8]) -> Result<PullRequest, CodecError> {
 pub fn encode_pull_response(
     response: &PullResponse<CanonicalValue>,
 ) -> Result<Vec<u8>, CodecError> {
-    encode_message(PULL_RESPONSE, |encoder| encoder.pull_response(response))
+    let units = match response {
+        PullResponse::Batch(batch) => batch
+            .frames
+            .iter()
+            .filter(|frame| matches!(frame, PullFrame::Commit { .. }))
+            .count(),
+        PullResponse::Reset(reset) => reset.records.len(),
+    };
+    encode_packed_family_message(V1_NAME, PULL_RESPONSE, units, |encoder| {
+        encoder.pull_response(response)
+    })
 }
 
 pub fn decode_pull_response(bytes: &[u8]) -> Result<PullResponse<CanonicalValue>, CodecError> {
@@ -95,7 +105,36 @@ pub(crate) fn encode_family_message(
     kind: u64,
     payload: impl FnOnce(&mut Encoder) -> Result<Cbor, CodecError>,
 ) -> Result<Vec<u8>, CodecError> {
-    let mut encoder = Encoder::family(family)?;
+    encode_capped_family_message(family, kind, MAX_TOTAL_ITEMS, payload)
+}
+
+/// Encodes an envelope that carries `units` records or commits. Packing more than one unit keeps
+/// the whole envelope within `PACKED_TOTAL_ITEMS`, under both the encoder's own item accounting
+/// and the byte preflight: the two checks a pre-ADR-0017 decoder applies. Only an envelope with a
+/// single unit may use the full `MAX_TOTAL_ITEMS`. Decoders re-encode, so they enforce the same.
+pub(crate) fn encode_packed_family_message(
+    family: &str,
+    kind: u64,
+    units: usize,
+    payload: impl FnOnce(&mut Encoder) -> Result<Cbor, CodecError>,
+) -> Result<Vec<u8>, CodecError> {
+    let item_bound = if units > 1 {
+        PACKED_TOTAL_ITEMS
+    } else {
+        MAX_TOTAL_ITEMS
+    };
+    let bytes = encode_capped_family_message(family, kind, item_bound, payload)?;
+    preflight_canonical_cbor_within(&bytes, item_bound)?;
+    Ok(bytes)
+}
+
+fn encode_capped_family_message(
+    family: &str,
+    kind: u64,
+    item_bound: usize,
+    payload: impl FnOnce(&mut Encoder) -> Result<Cbor, CodecError>,
+) -> Result<Vec<u8>, CodecError> {
+    let mut encoder = Encoder::family_within(family, item_bound)?;
     let value = Cbor::Array(vec![
         Cbor::Text(family.to_owned()),
         integer(SCHEMA_V1),
@@ -137,14 +176,19 @@ pub(crate) struct Encoder {
 
 impl Encoder {
     pub(crate) fn new() -> Self {
+        Self::within(MAX_TOTAL_ITEMS)
+    }
+
+    fn within(item_bound: usize) -> Self {
+        assert!(item_bound == MAX_TOTAL_ITEMS || item_bound == PACKED_TOTAL_ITEMS);
         Self {
-            remaining_items: MAX_TOTAL_ITEMS,
+            remaining_items: item_bound,
             remaining_bytes: MAX_ENCODED_BYTES,
         }
     }
 
-    pub(crate) fn family(family: &str) -> Result<Self, CodecError> {
-        let mut encoder = Self::new();
+    pub(crate) fn family_within(family: &str, item_bound: usize) -> Result<Self, CodecError> {
+        let mut encoder = Self::within(item_bound);
         encoder.item(4)?;
         take_bytes(&mut encoder.remaining_bytes, family.len())?;
         Ok(encoder)

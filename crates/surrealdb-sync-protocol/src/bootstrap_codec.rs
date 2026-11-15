@@ -3,7 +3,7 @@ use crate::bootstrap::*;
 use crate::canonical::{encode_cbor_value, preflight_canonical_cbor};
 use crate::http_codec::{
     Decoder, Encoder, array, array_vec, decode_checkpoint, decode_family_message,
-    encode_family_message, identity, integer, unsigned,
+    encode_family_message, encode_packed_family_message, identity, integer, unsigned,
 };
 use crate::{
     CanonicalValue, ClientId, CodecError, Cursor, PartitionId, RecordId, RecordState,
@@ -286,15 +286,24 @@ fn validate_records(records: &[SnapshotRecord<CanonicalValue>]) -> Result<(), Co
 fn preflight_page(p: &BootstrapPage) -> Result<(), CodecError> {
     bounded_index(p.index)?;
     validate_records(&p.records)?;
-    let mut e = Encoder::family(BOOTSTRAP_NAME)?;
+    let mut e = Encoder::family_within(BOOTSTRAP_NAME, page_item_bound(p))?;
     e.item(5)?;
     e.preflight_identity(&p.session_id)?;
     e.preflight_digest()?;
     e.preflight_snapshot_records(&p.records, 5)
 }
+/// A page with several records stays within the packed v1 bound; a lone record may use the
+/// full single-record bound (ADR 0017).
+fn page_item_bound(p: &BootstrapPage) -> usize {
+    if p.records.len() > 1 {
+        crate::PACKED_TOTAL_ITEMS
+    } else {
+        crate::MAX_TOTAL_ITEMS
+    }
+}
 pub fn encode_bootstrap_page(p: &BootstrapPage) -> Result<Vec<u8>, CodecError> {
     preflight_page(p)?;
-    encode_message(3, |e| {
+    encode_packed_family_message(BOOTSTRAP_NAME, 3, p.records.len(), |e| {
         e.item(5)?;
         let id = e.identity_text(&p.session_id)?;
         let hash = e.digest(&p.manifest_digest.0)?;
@@ -551,7 +560,7 @@ mod tests {
             .collect::<Vec<_>>();
         assert!(
             encode_content(0, &records).is_ok(),
-            "content-only budget fits exactly at4096items"
+            "content-only budget stays within the full single-record bound"
         );
         let page = BootstrapPage {
             session_id: "s".into(),
