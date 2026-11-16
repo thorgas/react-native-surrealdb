@@ -1,4 +1,5 @@
 import { access, readFile, stat } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -100,6 +101,18 @@ for (const path of [
     const info = await stat(join(root, path));
     if (info.size === 0) failures.push(`${path} is empty`);
   }
+}
+
+if (process.platform === "darwin" && failures.length === 0) {
+  const linked = spawnSync(
+    "bash",
+    [join(root, "scripts/prepare-ios-release-artifacts.sh"), "--verify-only"],
+    { stdio: "inherit" },
+  );
+  if (linked.status !== 0)
+    failures.push(
+      "iOS static archive partial link failed; rebuild from unstripped native output",
+    );
 }
 
 if (failures.length > 0) {
