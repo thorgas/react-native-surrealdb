@@ -15,6 +15,7 @@ import type {
   NativeSyncClientLike,
   NativeSyncStatus,
   NativeSyncDiagnostics,
+  NativeRejectedEntry,
 } from "./generated/surrealdb_rn_core";
 import { NativeConflictPolicy } from "./generated/surrealdb_rn_core";
 import type { CallOptions } from "./client";
@@ -78,6 +79,13 @@ function missingReadAbi(): never {
     "Sync read protocol v1 requires matching rebuilt native binaries; update the native build and its runtime fingerprint",
   );
 }
+
+/** Metadata for a refused command; never includes its retained payload. */
+export type ExperimentalRejectedEntry = NativeRejectedEntry;
+export {
+  NativeRejectionCode as ExperimentalRejectionCode,
+  NativeRejectedOperation as ExperimentalRejectedOperation,
+} from "./generated/surrealdb_rn_core";
 
 /** Lossless values accepted by the experimental protocol boundary. */
 export type SyncJsonValue =
@@ -409,6 +417,42 @@ export class ExperimentalSyncClient {
       .catch((error) => {
         throw this.#readFailure(error);
       });
+  }
+
+  /** List unresolved refusals in durable order; continue after the last commitId.
+   * A full page may have a successor page. A resolved cursor remains valid.
+   */
+  rejectedEntries(
+    afterCommitId?: string,
+    limit = 64,
+    options?: CallOptions,
+  ): Promise<ExperimentalRejectedEntry[]> {
+    if (!Number.isInteger(limit) || limit < 1 || limit > 64)
+      throw new RangeError("Rejected entry limit must be between 1 and 64");
+    const method = this.#native.rejectedEntries;
+    if (!method)
+      throw new Error(
+        "Rejection resolution requires rebuilt alpha.14 native binaries",
+      );
+    return method.call(this.#native, afterCommitId, limit, options);
+  }
+
+  /** Close a refusal and rebase/promote retained successors in one durable write.
+   * Idempotent: call again after an uncertain result or restart. Never retries
+   * the rejected command itself. Refresh/pull through the normal scheduler.
+   */
+  resolveRejectedKeepServer(
+    rejectedCommitId: string,
+    options?: CallOptions,
+  ): Promise<ExperimentalSyncStatus> {
+    if (rejectedCommitId.length === 0)
+      throw new TypeError("Rejected commit ID is required");
+    const method = this.#native.resolveRejectedKeepServer;
+    if (!method)
+      throw new Error(
+        "Rejection resolution requires rebuilt alpha.14 native binaries",
+      );
+    return method.call(this.#native, rejectedCommitId, options);
   }
 
   /** Accept the current authority value and durably close a conflict. */

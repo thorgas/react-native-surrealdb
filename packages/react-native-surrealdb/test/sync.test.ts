@@ -6,7 +6,11 @@ import type {
   NativeSyncStatus,
 } from "../src/generated/surrealdb_rn_core";
 import { NativeConflictPolicy } from "../src/generated/surrealdb_rn_core";
-import { ExperimentalSyncClient } from "../src/sync";
+import {
+  ExperimentalSyncClient,
+  ExperimentalRejectionCode,
+  ExperimentalRejectedOperation,
+} from "../src/sync";
 import { NONE, SurrealRecordId } from "../src/wire";
 
 const initialStatus: NativeSyncStatus = {
@@ -52,6 +56,55 @@ function createNative() {
 }
 
 describe("ExperimentalSyncClient", () => {
+  it("exposes metadata-only rejection pages and idempotent keep-server resolution", async () => {
+    const entries = [
+      {
+        commitId: "refused",
+        rejectionCode: ExperimentalRejectionCode.Unauthorized,
+        records: [
+          {
+            recordId: "plan:one",
+            operation: ExperimentalRejectedOperation.Upsert,
+          },
+        ],
+      },
+    ];
+    const native = Object.assign(createNative(), {
+      rejectedEntries: vi.fn(async () => entries),
+      resolveRejectedKeepServer: vi.fn(async () => initialStatus),
+    });
+    const client = new ExperimentalSyncClient(native);
+    expect(await client.rejectedEntries()).toEqual(entries);
+    expect(native.rejectedEntries).toHaveBeenCalledWith(
+      undefined,
+      64,
+      undefined,
+    );
+    await client.rejectedEntries("refused", 1);
+    expect(native.rejectedEntries).toHaveBeenLastCalledWith(
+      "refused",
+      1,
+      undefined,
+    );
+    await client.resolveRejectedKeepServer("refused");
+    await client.resolveRejectedKeepServer("refused");
+    expect(native.resolveRejectedKeepServer).toHaveBeenCalledTimes(2);
+    expect(native.enqueue).not.toHaveBeenCalled();
+    for (const limit of [0, 65, 1.5, NaN])
+      expect(() => client.rejectedEntries(undefined, limit)).toThrow(
+        RangeError,
+      );
+    expect(() => client.resolveRejectedKeepServer("")).toThrow(TypeError);
+    const oldNative = createNative();
+    Reflect.deleteProperty(oldNative, "rejectedEntries");
+    Reflect.deleteProperty(oldNative, "resolveRejectedKeepServer");
+    const old = new ExperimentalSyncClient(oldNative);
+    expect(() => old.rejectedEntries()).toThrow("rebuilt alpha.14");
+    expect(() => old.resolveRejectedKeepServer("refused")).toThrow(
+      "rebuilt alpha.14",
+    );
+  });
+
   it("uses bounded native APIs and never the all-pending fallback", async () => {
     const native = createNative();
     const result = {

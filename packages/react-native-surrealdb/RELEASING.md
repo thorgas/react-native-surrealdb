@@ -245,3 +245,17 @@ branch on top of alpha.9's merged main. Its only Rust change is the vendored
 unchanged. Build and pack exactly as for alpha.9 above, then record the four
 library SHA256 values and the tarball integrity in `docs/ALPHA10_NATIVE_RECEIPTS.json`.
 
+
+
+### Private alpha.14 rejected-command recovery
+
+Alpha.14 adds native methods and requires new matching iOS/Android builds.
+Keep the original linkable iOS archives; `release:strip:ios` verifies every
+object with an all-load relocatable link and intentionally does not strip them.
+For the private Hauswirtschaft distribution, publish only to the private
+`thorgas/recipe-manager` prerelease asset (never npm or a public SDK release).
+The SDK receipt includes tarball bytes, SHA256, SHA512, npm integrity, per-file
+SHA256 values, and source commit. The app agent updates its own fixed version,
+release tag, hash manifest, dependency and lockfile; this SDK task does not edit
+the consuming repository. See `docs/REJECTED_COMMAND_RESOLUTION.md` in the SDK
+for the exact API, migration-free old-journal recovery and tests.

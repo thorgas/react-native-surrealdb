@@ -265,6 +265,10 @@ protected:
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
   jsi::Value
+  cpp_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_rejected_entries(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value
   cpp_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_requires_authorized_reset(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
@@ -278,6 +282,10 @@ protected:
       size_t count);
   jsi::Value
   cpp_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_resolve_conflict_merge(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value
+  cpp_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_resolve_rejected_keep_server(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
   jsi::Value
@@ -779,6 +787,10 @@ protected:
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
   jsi::Value
+  cpp_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_rejected_entries(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value
   cpp_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_requires_authorized_reset(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
@@ -792,6 +804,10 @@ protected:
       size_t count);
   jsi::Value
   cpp_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_merge(
+      jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
+      size_t count);
+  jsi::Value
+  cpp_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_rejected_keep_server(
       jsi::Runtime &rt, const jsi::Value &thisVal, const jsi::Value *args,
       size_t count);
   jsi::Value

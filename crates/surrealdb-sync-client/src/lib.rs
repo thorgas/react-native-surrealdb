@@ -162,6 +162,12 @@ fn validate_conflict_resolutions<V: Eq>(state: &DurableClientState<V>) -> Result
         let Some(resolution) = &resolved.resolution else {
             continue;
         };
+        // Rejections may only be explicitly closed with the existing keep-server marker.
+        if matches!(&resolved.outcome, DurableOutcome::Rejected { .. })
+            && matches!(resolution, ConflictResolution::KeepServer)
+        {
+            continue;
+        }
         if !matches!(&resolved.outcome, DurableOutcome::Conflict { .. }) {
             return Err(ClientError::InvalidConflictResolution);
         }

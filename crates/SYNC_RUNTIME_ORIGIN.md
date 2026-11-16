@@ -36,3 +36,11 @@ is `a6bb305a2cf58035165ff25e977934d83208f68e` after canonical verification.
 may use `MAX_TOTAL_ITEMS = 65,536` items, and envelopes that pack several stay
 within `PACKED_TOTAL_ITEMS = 4,096` (plus the additive `canonical_cbor_packed`). The patch and its `tests/item_bounds.rs` are
 copied verbatim; no wire grammar changed.
+
+2026-11-16: owner-approved SDK alpha.14 extends only the client-local keep-server
+marker to durable rejected outcomes and uses the existing atomic successor
+composition. No protocol type, canonical encoding, receipt proof or wire grammar
+changes. The native typed metadata query never exports rejected payloads.
+This deliberate adapter-side delta is covered by `tests/rejected_resolution.rs`
+and native SurrealKV process-crash tests; canonical formal models remain
+unchanged (see `docs/REJECTED_COMMAND_RESOLUTION.md` for their scope).

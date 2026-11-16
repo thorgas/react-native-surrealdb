@@ -1,5 +1,11 @@
 ## 0.1.0-alpha.13.haus.20261116.1 — private artifact
 
+## 0.1.0-alpha.14.haus.20261116.1
+
+- Add typed metadata-only rejected command pages and idempotent keep-server resolution.
+- Atomically close refused commands, rebase eligible aggregate successors and promote FIFO without losing later intent. Existing rejected journals require no reset or migration.
+- Keep receipt gates, queue bounds, v1/v2 wire compatibility and linkable iOS archives. Matching native binaries are required; see `docs/REJECTED_COMMAND_RESOLUTION.md` in the SDK repository.
+
 - Materialize tombstones safely when a fresh local application table does not
   exist. Guard projection deletion with pinned 3.2.4 record::exists inside
   the same transaction; keep confirmed tombstone versions and checkpoint,
