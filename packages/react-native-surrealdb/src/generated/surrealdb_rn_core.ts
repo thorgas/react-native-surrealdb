@@ -1760,6 +1760,183 @@ const FfiConverterTypeNativeProfiledQueryResult = (() => {
   return new FFIConverter();
 })();
 
+export enum NativeRejectionCode {
+  InvalidOperation,
+  CommitIdentityMismatch,
+  Unauthorized,
+  UnsupportedSchemaVersion,
+}
+
+const FfiConverterTypeNativeRejectionCode = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeRejectionCode;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return NativeRejectionCode.InvalidOperation;
+        case 2:
+          return NativeRejectionCode.CommitIdentityMismatch;
+        case 3:
+          return NativeRejectionCode.Unauthorized;
+        case 4:
+          return NativeRejectionCode.UnsupportedSchemaVersion;
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value) {
+        case NativeRejectionCode.InvalidOperation:
+          return ordinalConverter.write(1, into);
+        case NativeRejectionCode.CommitIdentityMismatch:
+          return ordinalConverter.write(2, into);
+        case NativeRejectionCode.Unauthorized:
+          return ordinalConverter.write(3, into);
+        case NativeRejectionCode.UnsupportedSchemaVersion:
+          return ordinalConverter.write(4, into);
+      }
+    }
+    allocationSize(value: TypeName): number {
+      return ordinalConverter.allocationSize(0);
+    }
+  }
+  return new FFIConverter();
+})();
+
+export enum NativeRejectedOperation {
+  Upsert,
+  Delete,
+}
+
+const FfiConverterTypeNativeRejectedOperation = (() => {
+  const ordinalConverter = FfiConverterInt32;
+  type TypeName = NativeRejectedOperation;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      switch (ordinalConverter.read(from)) {
+        case 1:
+          return NativeRejectedOperation.Upsert;
+        case 2:
+          return NativeRejectedOperation.Delete;
+        default:
+          throw new UniffiInternalError.UnexpectedEnumCase();
+      }
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      switch (value) {
+        case NativeRejectedOperation.Upsert:
+          return ordinalConverter.write(1, into);
+        case NativeRejectedOperation.Delete:
+          return ordinalConverter.write(2, into);
+      }
+    }
+    allocationSize(value: TypeName): number {
+      return ordinalConverter.allocationSize(0);
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type NativeRejectedRecord = {
+  recordId: string;
+  operation: NativeRejectedOperation;
+};
+
+/**
+ * Generated factory for {@link NativeRejectedRecord} record objects.
+ */
+export const NativeRejectedRecord = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<
+      NativeRejectedRecord,
+      ReturnType<typeof defaults>
+    >(defaults);
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<NativeRejectedRecord>,
+  });
+})();
+
+const FfiConverterTypeNativeRejectedRecord = (() => {
+  type TypeName = NativeRejectedRecord;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        recordId: FfiConverterString.read(from),
+        operation: FfiConverterTypeNativeRejectedOperation.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.recordId, into);
+      FfiConverterTypeNativeRejectedOperation.write(value.operation, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.recordId) +
+        FfiConverterTypeNativeRejectedOperation.allocationSize(value.operation)
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
+export type NativeRejectedEntry = {
+  commitId: string;
+  rejectionCode: NativeRejectionCode;
+  records: Array<NativeRejectedRecord>;
+};
+
+/**
+ * Generated factory for {@link NativeRejectedEntry} record objects.
+ */
+export const NativeRejectedEntry = (() => {
+  const defaults = () => ({});
+  const create = (() => {
+    return uniffiCreateRecord<NativeRejectedEntry, ReturnType<typeof defaults>>(
+      defaults,
+    );
+  })();
+  return Object.freeze({
+    create,
+    new: create,
+    defaults: () => Object.freeze(defaults()) as Partial<NativeRejectedEntry>,
+  });
+})();
+
+const FfiConverterTypeNativeRejectedEntry = (() => {
+  type TypeName = NativeRejectedEntry;
+  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+    read(from: RustBuffer): TypeName {
+      return {
+        commitId: FfiConverterString.read(from),
+        rejectionCode: FfiConverterTypeNativeRejectionCode.read(from),
+        records: FfiConverterSequenceTypeNativeRejectedRecord.read(from),
+      };
+    }
+    write(value: TypeName, into: RustBuffer): void {
+      FfiConverterString.write(value.commitId, into);
+      FfiConverterTypeNativeRejectionCode.write(value.rejectionCode, into);
+      FfiConverterSequenceTypeNativeRejectedRecord.write(value.records, into);
+    }
+    allocationSize(value: TypeName): number {
+      return (
+        FfiConverterString.allocationSize(value.commitId) +
+        FfiConverterTypeNativeRejectionCode.allocationSize(
+          value.rejectionCode,
+        ) +
+        FfiConverterSequenceTypeNativeRejectedRecord.allocationSize(
+          value.records,
+        )
+      );
+    }
+  }
+  return new FFIConverter();
+})();
+
 export type NativeSyncOpenOptions = {
   partitionId: string;
   clientId: string;
@@ -5181,6 +5358,15 @@ export interface NativeSyncClientLike {
     policy: NativeConflictPolicy,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<NativeSyncStatus>;
+  /**
+   * Metadata only; no retained payload, fingerprint or authority value crosses the bridge.
+   * Page in durable outcome order, using the last returned commit ID as cursor.
+   */
+  rejectedEntries(
+    afterCommitId: string | undefined,
+    limit: number,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<Array<NativeRejectedEntry>>;
   requiresAuthorizedReset(asyncOpts_?: {
     signal: AbortSignal;
   }) /*throws*/ : Promise<boolean>;
@@ -5196,6 +5382,13 @@ export interface NativeSyncClientLike {
   resolveConflictMerge(
     conflictedCommitId: string,
     replacementCommitJson: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ) /*throws*/ : Promise<NativeSyncStatus>;
+  /**
+   * Durable keep-server closure and successor promotion share one transaction.
+   */
+  resolveRejectedKeepServer(
+    rejectedCommitId: string,
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<NativeSyncStatus>;
   scopeTransitionDecision(
@@ -6207,6 +6400,59 @@ export class NativeSyncClient
     }
   }
 
+  /**
+   * Metadata only; no retained payload, fingerprint or authority value crosses the bridge.
+   * Page in durable outcome order, using the last returned commit ID as cursor.
+   */
+  async rejectedEntries(
+    afterCommitId: string | undefined,
+    limit: number,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<Array<NativeRejectedEntry>> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_rejected_entries(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterOptionalString.lower(
+              afterCommitId,
+              nativeModule().rustbuffer_alloc,
+            ),
+            FfiConverterUInt32.lower(limit, nativeModule().rustbuffer_alloc),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterSequenceTypeNativeRejectedEntry.lift.bind(
+          FfiConverterSequenceTypeNativeRejectedEntry,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
   async requiresAuthorizedReset(asyncOpts_?: {
     signal: AbortSignal;
   }): Promise<boolean> /*throws*/ {
@@ -6364,6 +6610,56 @@ export class NativeSyncClient
             ),
             FfiConverterString.lower(
               replacementCommitJson,
+              nativeModule().rustbuffer_alloc,
+            ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterTypeNativeSyncStatus.lift.bind(
+          FfiConverterTypeNativeSyncStatus,
+        ),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  /**
+   * Durable keep-server closure and successor promotion share one transaction.
+   */
+  async resolveRejectedKeepServer(
+    rejectedCommitId: string,
+    asyncOpts_?: { signal: AbortSignal },
+  ): Promise<NativeSyncStatus> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_resolve_rejected_keep_server(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
+            FfiConverterString.lower(
+              rejectedCommitId,
               nativeModule().rustbuffer_alloc,
             ),
           );
@@ -8013,6 +8309,11 @@ const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
+// FfiConverter for Array<NativeRejectedRecord>
+const FfiConverterSequenceTypeNativeRejectedRecord = new FfiConverterArray(
+  FfiConverterTypeNativeRejectedRecord,
+);
+
 // FfiConverter for NativeSyncOperationSpan | undefined
 const FfiConverterOptionalTypeNativeSyncOperationSpan =
   new FfiConverterOptional(FfiConverterTypeNativeSyncOperationSpan);
@@ -8025,6 +8326,11 @@ const FfiConverterSequenceTypeNativeTableOccupancy = new FfiConverterArray(
 // FfiConverter for LiveNotification | undefined
 const FfiConverterOptionalTypeLiveNotification = new FfiConverterOptional(
   FfiConverterTypeLiveNotification,
+);
+
+// FfiConverter for Array<NativeRejectedEntry>
+const FfiConverterSequenceTypeNativeRejectedEntry = new FfiConverterArray(
+  FfiConverterTypeNativeRejectedEntry,
 );
 
 // FfiConverter for Array<NativeBatchQuery>
@@ -8468,6 +8774,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_rejected_entries() !==
+    4698
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_rejected_entries",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_requires_authorized_reset() !==
     3352
   ) {
@@ -8497,6 +8811,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_conflict_merge",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_rejected_keep_server() !==
+    36859
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_resolve_rejected_keep_server",
     );
   }
   if (
@@ -8739,6 +9061,10 @@ export default Object.freeze({
     FfiConverterTypeNativePendingWindow,
     FfiConverterTypeNativeProfiledQueryResult,
     FfiConverterTypeNativeQueryTiming,
+    FfiConverterTypeNativeRejectedEntry,
+    FfiConverterTypeNativeRejectedOperation,
+    FfiConverterTypeNativeRejectedRecord,
+    FfiConverterTypeNativeRejectionCode,
     FfiConverterTypeNativeStorageInspection,
     FfiConverterTypeNativeStorageInspectionError,
     FfiConverterTypeNativeStorageInspectionOptions,

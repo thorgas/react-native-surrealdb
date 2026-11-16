@@ -293,3 +293,6 @@ async fn aggregate_capacity_refusal_leaves_native_store_and_queue_unchanged() {
     reopened.close().await;
     db.close().await.unwrap();
 }
+
+#[path = "rejection_tests.rs"]
+mod rejection_tests;

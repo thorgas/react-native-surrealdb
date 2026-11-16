@@ -6,6 +6,12 @@ export function createNativeReadMocks() {
     throw new Error("Native subscription is not configured by this fixture");
   });
   return {
+    rejectedEntries: vi.fn(async () => {
+      throw new Error("unused rejection metadata");
+    }),
+    resolveRejectedKeepServer: vi.fn(async () => {
+      throw new Error("unused rejection resolution");
+    }),
     enqueueLatestBounded: vi.fn(async () => {
       throw new Error("unused local-first queue");
     }),

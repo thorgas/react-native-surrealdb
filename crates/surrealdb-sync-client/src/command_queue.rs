@@ -35,7 +35,7 @@ fn blocked<V>(s: &DurableClientState<V>, id: &RecordId) -> bool {
                         !r.covered_by_reset && !crate::receipt::covered(s, &r.local_commit.identity)
                     }
                     DurableOutcome::Conflict { .. } => r.resolution.is_none(),
-                    DurableOutcome::Rejected { .. } => true,
+                    DurableOutcome::Rejected { .. } => r.resolution.is_none(),
                 }
         })
 }
@@ -91,6 +91,24 @@ pub(crate) fn validate<V: Eq>(s: &DurableClientState<V>) -> Result<(), ClientErr
     Ok(())
 }
 impl<V: Clone + Eq> ClientRuntime<V> {
+    /// Close a rejection, retaining the immutable outcome and successor intent.
+    /// Compose with `prepare_with_successors` before atomically persisting.
+    /// Old journals need no migration: a missing resolution means unresolved.
+    pub fn prepare_resolve_rejected_keep_server(
+        &self,
+        rejected_commit_id: &ClientCommitId,
+    ) -> Result<PreparedTransition<V>, ClientError> {
+        let Some(index) = self.state.outcomes.iter().position(|entry| {
+            entry.local_commit.identity.client_commit_id == *rejected_commit_id
+                && matches!(entry.outcome, DurableOutcome::Rejected { .. })
+        }) else {
+            return Err(ClientError::UnknownCommit(rejected_commit_id.clone()));
+        };
+        let mut next = self.state.clone();
+        next.outcomes[index].resolution = Some(crate::ConflictResolution::KeepServer);
+        self.prepare(next)
+    }
+
     pub fn prepare_with_successors(
         &self,
         prepared: PreparedTransition<V>,

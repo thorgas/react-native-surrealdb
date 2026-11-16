@@ -133,6 +133,30 @@ pub async fn inspect_sync_state(
     })
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum NativeRejectionCode {
+    InvalidOperation,
+    CommitIdentityMismatch,
+    Unauthorized,
+    UnsupportedSchemaVersion,
+}
+#[derive(Clone, Copy, Debug, Eq, PartialEq, uniffi::Enum)]
+pub enum NativeRejectedOperation {
+    Upsert,
+    Delete,
+}
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct NativeRejectedRecord {
+    pub record_id: String,
+    pub operation: NativeRejectedOperation,
+}
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct NativeRejectedEntry {
+    pub commit_id: String,
+    pub rejection_code: NativeRejectionCode,
+    pub records: Vec<NativeRejectedRecord>,
+}
+
 #[derive(Clone, Copy, Debug, uniffi::Enum)]
 pub enum NativeConflictPolicy {
     Manual,
@@ -577,6 +601,87 @@ impl NativeSyncClient {
     ) -> Result<NativeSyncStatus, NativeSyncError> {
         self.run_mutation(move |owner| async move {
             owner.apply_pull_response_owned(response_json).await
+        })
+        .await
+    }
+
+    /// Metadata only; no retained payload, fingerprint or authority value crosses the bridge.
+    /// Page in durable outcome order, using the last returned commit ID as cursor.
+    pub async fn rejected_entries(
+        &self,
+        after_commit_id: Option<String>,
+        limit: u32,
+    ) -> Result<Vec<NativeRejectedEntry>, NativeSyncError> {
+        if !(1..=64).contains(&limit) {
+            return Err(NativeSyncError::InvalidInput);
+        }
+        let slot = self.lock_runtime().await;
+        let outcomes = &slot.client()?.state().outcomes;
+        let start = match after_commit_id {
+            None => 0,
+            Some(id) => {
+                outcomes
+                    .iter()
+                    .position(|entry| entry.local_commit.identity.client_commit_id.0 == id)
+                    .ok_or(NativeSyncError::InvalidInput)?
+                    + 1
+            }
+        };
+        Ok(outcomes[start..]
+            .iter()
+            .filter_map(|entry| {
+                let DurableOutcome::Rejected { reason, .. } = &entry.outcome else {
+                    return None;
+                };
+                if entry.resolution.is_some() {
+                    return None;
+                }
+                Some(NativeRejectedEntry {
+                    commit_id: entry.local_commit.identity.client_commit_id.0.clone(),
+                    rejection_code: match reason {
+                        surrealdb_sync_protocol::RejectReason::InvalidOperation => {
+                            NativeRejectionCode::InvalidOperation
+                        }
+                        surrealdb_sync_protocol::RejectReason::CommitIdentityMismatch => {
+                            NativeRejectionCode::CommitIdentityMismatch
+                        }
+                        surrealdb_sync_protocol::RejectReason::Unauthorized => {
+                            NativeRejectionCode::Unauthorized
+                        }
+                        surrealdb_sync_protocol::RejectReason::UnsupportedSchemaVersion => {
+                            NativeRejectionCode::UnsupportedSchemaVersion
+                        }
+                    },
+                    records: entry
+                        .local_commit
+                        .operations
+                        .iter()
+                        .map(|operation| NativeRejectedRecord {
+                            record_id: operation.record_id().0.clone(),
+                            operation: match operation {
+                                Operation::Upsert { .. } => NativeRejectedOperation::Upsert,
+                                Operation::Delete { .. } => NativeRejectedOperation::Delete,
+                            },
+                        })
+                        .collect(),
+                })
+            })
+            .take(limit as usize)
+            .collect())
+    }
+
+    /// Durable keep-server closure and successor promotion share one transaction.
+    pub async fn resolve_rejected_keep_server(
+        self: Arc<Self>,
+        rejected_commit_id: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.run_mutation(move |owner| async move {
+            let mut slot = owner.lock_runtime().await;
+            let prepared = slot
+                .client()?
+                .prepare_resolve_rejected_keep_server(&ClientCommitId(rejected_commit_id))
+                .map_err(map_protocol_error)?;
+            owner.persist_and_install(&mut slot, prepared).await
         })
         .await
     }
