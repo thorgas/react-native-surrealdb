@@ -102,15 +102,20 @@ describe("ExperimentalSyncWebSocketHints", () => {
   });
 
   it("requires secure transport unless localhost is explicitly allowed", async () => {
+    vi.useFakeTimers();
     const onFailure = vi.fn();
     const factory = vi.fn(() => new FakeSocket() as unknown as WebSocket);
     const hints = new ExperimentalSyncWebSocketHints({
       url: () => "ws://sync.example.test/hints?ticket=redacted",
       webSocketFactory: factory,
+      random: () => 0.5,
     });
     const stop = hints.start(vi.fn(), onFailure);
-    await vi.waitFor(() => expect(onFailure).toHaveBeenCalledOnce());
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onFailure).toHaveBeenCalledOnce();
     expect(factory).not.toHaveBeenCalled();
     stop();
+    await vi.runAllTimersAsync();
+    expect(onFailure).toHaveBeenCalledOnce();
   });
 });

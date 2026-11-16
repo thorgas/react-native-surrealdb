@@ -1,3 +1,15 @@
+## 0.1.0-alpha.11.haus.20261116.1 — private artifact
+
+- Fingerprint multi-record commands and retain whole overlapping aggregates in
+  the durable successor queue. Promote after exact receipt/pull coverage and
+  rebase every parent/child version atomically. Preserve new-child absence,
+  tombstones, conflict intent, FIFO, count/byte limits and ID mappings.
+- Advertise the optional `atomic-aggregate-successors-v1` queue profile through
+  the existing read-capabilities ABI. Keep embedded SurrealDB pinned to 3.2.4
+  and the HTTP protocol unchanged. Requires matching native app builds.
+- Private artifact and reproducible source patch in the private consuming app;
+  no npm publication or public SDK push.
+
 ## 0.1.0-alpha.10.haus.20261115.1 — private artifact
 
 - Synchronize private engine ADR 0017: one record or commit may use 65,536
