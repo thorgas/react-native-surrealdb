@@ -1,4 +1,12 @@
-## 0.1.0-alpha.11.haus.20261116.1 — private artifact
+## 0.1.0-alpha.12.haus.20261116.1 — private artifact
+
+- Keep original iOS release archives without an additional strip pass.
+  Xcode 27's strip (including debug-only `-S`) corrupts AWS-LC assembly unwind relocations, causing
+  consumer app links to fail. Packaging now partially links every object in
+  both iOS archives before packing. Rust/queue code and embedded 3.2.4 stay
+  unchanged from alpha.11. Alpha.11 is rejected for iOS consumption.
+
+## 0.1.0-alpha.11.haus.20261116.1 — rejected for iOS
 
 - Fingerprint multi-record commands and retain whole overlapping aggregates in
   the durable successor queue. Promote after exact receipt/pull coverage and
