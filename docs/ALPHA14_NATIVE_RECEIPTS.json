@@ -1,0 +1,62 @@
+{
+  "version": "0.1.0-alpha.14.haus.20261116.1",
+  "sourceSha": "32ec9e55db6c84116fa1b65e6f8817f68d931301",
+  "repository": "thorgas/recipe-manager",
+  "releaseTag": "private-native-sdk-20261116-4",
+  "filename": "react-native-surrealdb-0.1.0-alpha.14.haus.20261116.1.tgz",
+  "bytes": 161329215,
+  "sha256": "b56533719dfa0e560f80809e28046de6e3df800c4cfe059f9bb43c3ab395e2f8",
+  "sha512": "5717fd0ec923ca986fa21410974fb91d95add05c20954d10d5bc70318a21497efae7b6a03f17f9fc6e17164a065c239cc16004b95fb82a90772b2635fe206733",
+  "integrity": "sha512-Vxf9DskjyphvohQQl0+5HZWt0FwglU0Q1bxwMYohSX7657agPxf5/G4XFkoGXCOcwWAEuV+4KpB3KyY1/iBnMw==",
+  "fileCount": 155,
+  "nativeFiles": {
+    "SurrealDbRnFramework.xcframework/ios-arm64-simulator/libsurrealdb_rn_core.a": {
+      "bytes": 234157352,
+      "sha256": "3244456bc383a3472df480db037cac46f344ec0e6765dad6ff6a56850f2640a2",
+      "sha512": "71d5d58d6c31f17922be58f2d67e8e73cd060696c1aecbb241786be964520a34280c7680c00e6a2cac4e980c204dd4bbc39fd902cd33a844fdc90ef692650dc8"
+    },
+    "SurrealDbRnFramework.xcframework/ios-arm64/libsurrealdb_rn_core.a": {
+      "bytes": 234238680,
+      "sha256": "cf8d2242ccf0ba256833a3f62cbda4e1dfbc6f4cca4c14fc5756c8c5628ffbaf",
+      "sha512": "4a29e10076ffafd5fb0254caba1d9eaaf26d99d48a1a60227569b5c1a688059c1cd291cb439701cf03f7e2247b47c35989fba213c6ec46f527ef0e69afc84e08"
+    },
+    "android/src/main/jniLibs/arm64-v8a/libsurrealdb_rn_core.so": {
+      "bytes": 21718320,
+      "sha256": "1ea336907e06408db76305778f3d80f75b49cda2dc3e393b874ae116e803ecaa",
+      "sha512": "287fc66e7b53cf992e0582333521fcbbf95b239fc283b740534c3d904f71212aa5858dcd2ee22d52eeaed4f3cd191afdbc2a7153bd8465c465cd54c2e516fe96"
+    },
+    "android/src/main/jniLibs/x86_64/libsurrealdb_rn_core.so": {
+      "bytes": 28322504,
+      "sha256": "3935020940e2ea28ab3bc4bc4d6f9514bc488a3d354a81b7bf4beab59a40dd1e",
+      "sha512": "be46f98af63422b7bb2abe5c1691f1892d47e4e37964fb8457a0dbcfa95dc0f4a6383fb0a2fcc177e2d8b3cdd0b0ee89b0e19f97662da2ee56150e27520d9716"
+    }
+  },
+  "toolchains": {
+    "node": "22.22.0",
+    "pnpm": "11.5.0",
+    "rust": "1.96.1",
+    "xcode": "27.2 (27B52)",
+    "ndk": "27.1.12297006"
+  },
+  "verification": {
+    "defaultRustTestsPassed": 273,
+    "optionalRustTestsPassed": 3,
+    "jsTestsPassed": 162,
+    "reactNativeHarnessTypechecks": 5,
+    "allSliceQueueAndRejectionExports": true,
+    "iosAllObjectRelocatableLinks": true,
+    "engineSpecSourceSha": "1b0f3c4f374b247e73d0b1eeeaaf95788eeada00",
+    "allSafety": {
+      "seed": "0x5eed",
+      "samplesEach": 1000,
+      "receiptSteps": 30,
+      "protocolSteps": 25,
+      "settlementSteps": 20
+    },
+    "traceTests": {
+      "receipt": 6,
+      "protocol": 43,
+      "settlement": 7
+    }
+  }
+}
