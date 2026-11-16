@@ -1426,9 +1426,16 @@ async fn apply_projection_diff(
                     .map_err(SyncStateError::Database)?;
             }
             Some(OptimisticRecord::Deleted { .. }) | None => {
-                let _: Option<Value> = transaction
-                    .delete(native_id)
+                // A fresh snapshot can begin with a tombstone for a table that
+                // has never had a local live row. SurrealDB 3.2.4 rejects DELETE
+                // on an undefined table. record::exists handles that exact case
+                // without poisoning the transaction or creating application schema.
+                transaction
+                    .query("IF record::exists($record) { DELETE $record; };")
+                    .bind(("record", native_id))
                     .await
+                    .map_err(SyncStateError::Database)?
+                    .check()
                     .map_err(SyncStateError::Database)?;
             }
         }
