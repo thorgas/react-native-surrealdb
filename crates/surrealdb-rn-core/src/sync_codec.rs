@@ -45,6 +45,12 @@ pub(crate) fn validate_state_codec(
     for commit in &state.outbox {
         validate_commit_identity(state, commit)?;
     }
+    // Deferred commands are never wire identities. Accepted ID mappings may
+    // rewrite their targets/references; promotion fingerprints the whole rebased
+    // aggregate afresh. Still validate every deferred payload on recovery.
+    for commit in &state.command_queue.deferred {
+        canonical_fingerprint(state, commit)?;
+    }
     for resolved in &state.outcomes {
         // Accepted ID mappings rewrite recoverable local intent while the durable
         // identity remains bound to the exact pre-remap commit sent to authority.

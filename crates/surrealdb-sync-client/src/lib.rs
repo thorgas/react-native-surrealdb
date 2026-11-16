@@ -1141,6 +1141,9 @@ fn apply_id_mapping<V: Clone + Eq>(
     for commit in &mut state.outbox {
         remap_commit(commit, mapping);
     }
+    for commit in &mut state.command_queue.deferred {
+        remap_commit(commit, mapping);
+    }
     for resolved in &mut state.outcomes {
         remap_commit(&mut resolved.local_commit, mapping);
         remap_outcome(&mut resolved.outcome, mapping);
