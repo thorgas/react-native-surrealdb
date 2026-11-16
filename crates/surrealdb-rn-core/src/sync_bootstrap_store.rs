@@ -1406,6 +1406,12 @@ mod tests {
             .into_state()
     }
     fn wire(session: &str) -> (Vec<u8>, Vec<u8>, BootstrapContext, Vec<Vec<u8>>) {
+        wire_with_tombstone(session, None)
+    }
+    fn wire_with_tombstone(
+        session: &str,
+        deleted_table: Option<&str>,
+    ) -> (Vec<u8>, Vec<u8>, BootstrapContext, Vec<Vec<u8>>) {
         let state = state();
         let context = BootstrapContext {
             authority_id: "authority".into(),
@@ -1433,11 +1439,22 @@ mod tests {
                 manifest_digest: BootstrapDigest([0; 32]),
                 index,
                 records: vec![SnapshotRecord {
-                    record_id: ProtocolId(format!("item:{index}")),
-                    state: RecordState::Present {
-                        value: CanonicalValue::Object(BTreeMap::new()),
-                        version: 1,
-                        reference: None,
+                    record_id: ProtocolId(format!(
+                        "{}:{index}",
+                        if index == 0 {
+                            deleted_table.unwrap_or("item")
+                        } else {
+                            "item"
+                        }
+                    )),
+                    state: if index == 0 && deleted_table.is_some() {
+                        RecordState::Tombstone { version: 1 }
+                    } else {
+                        RecordState::Present {
+                            value: CanonicalValue::Object(BTreeMap::new()),
+                            version: 1,
+                            reference: None,
+                        }
                     },
                 }],
             })
@@ -2407,6 +2424,67 @@ mod tests {
             .prepare_enqueue(commit)
             .unwrap()
             .into_state()
+    }
+
+    #[tokio::test]
+    async fn completion_materializes_a_tombstone_before_its_application_table_exists() {
+        for persistent in [false, true] {
+            for deleted_table in ["item", "absent"] {
+                let directory = temp_dir::TempDir::new().unwrap();
+                let db = if persistent {
+                    connect(ConnectOptions {
+                        endpoint: format!("surrealkv://{}", directory.path().display()),
+                        namespace: Some("bootstrap".into()),
+                        database: Some("bootstrap".into()),
+                    })
+                    .await
+                    .unwrap()
+                } else {
+                    database().await
+                };
+                let initial = state();
+                let state_store = SyncStateStore::new(&db);
+                state_store.define_schema().await.unwrap();
+                state_store.save_atomic(None, &initial).await.unwrap();
+                let (start, manifest, context, pages) =
+                    wire_with_tombstone("tombstone-first", Some(deleted_table));
+                let store = BootstrapStore::new(&db);
+                let handle = store.begin(&start, &manifest, &context).await.unwrap();
+                for page in pages {
+                    store.stage_page(&page, &context, handle).await.unwrap();
+                }
+                let receipt = completion_receipt(&manifest);
+                let Completion::Applied(installed) = store
+                    .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+                    .await
+                    .unwrap()
+                else {
+                    panic!("not installed")
+                };
+                assert!(matches!(
+                    installed
+                        .confirmed
+                        .get(&ProtocolId(format!("{deleted_table}:0"))),
+                    Some(RecordState::Tombstone { version: 1 })
+                ));
+                let present: Option<Value> = db
+                    .client()
+                    .await
+                    .unwrap()
+                    .select(("item", "1"))
+                    .await
+                    .unwrap();
+                assert!(present.is_some());
+                assert!(!schema(&db).await.contains("absent"));
+                assert!(matches!(
+                    store
+                        .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
+                        .await
+                        .unwrap(),
+                    Completion::HistoricalSuccess
+                ));
+            }
+        }
     }
 
     #[tokio::test]

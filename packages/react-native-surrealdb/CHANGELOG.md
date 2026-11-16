@@ -1,3 +1,15 @@
+## 0.1.0-alpha.13.haus.20261116.1 — private artifact
+
+- Materialize tombstones safely when a fresh local application table does not
+  exist. Guard projection deletion with pinned 3.2.4 record::exists inside
+  the same transaction; keep confirmed tombstone versions and checkpoint,
+  pending, outcome and ownership metadata. Do not create unused application
+  tables or suppress other database errors.
+- Add fresh memory/SurrealKV bootstrap cases without pre-created application
+  tables, including a tombstone before the first live row of the same family
+  and a family containing only a tombstone. Native ABI and wire protocol stay
+  unchanged. Rebuild native libraries; embedded SurrealDB remains 3.2.4.
+
 ## 0.1.0-alpha.12.haus.20261116.1 — private artifact
 
 - Keep original iOS release archives without an additional strip pass.
