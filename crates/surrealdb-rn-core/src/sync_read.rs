@@ -31,7 +31,7 @@ pub(crate) struct ReadJournal {
 }
 
 pub(crate) fn capabilities() -> String {
-    json!({"protocolVersion":1,"maxJournalBatches":MAX_BATCHES,"maxJournalBytes":MAX_JOURNAL_BYTES,"maxOutputBytes":MAX_OUTPUT_BYTES,"requiresMatchingNativeAbi":true,"predicateSubscriptions":false}).to_string()
+    json!({"protocolVersion":1,"maxJournalBatches":MAX_BATCHES,"maxJournalBytes":MAX_JOURNAL_BYTES,"maxOutputBytes":MAX_OUTPUT_BYTES,"requiresMatchingNativeAbi":true,"predicateSubscriptions":false,"commandQueueProfile":"atomic-aggregate-successors-v1"}).to_string()
 }
 
 /// Random prefix identifies a fresh cell/process; a checked counter guarantees

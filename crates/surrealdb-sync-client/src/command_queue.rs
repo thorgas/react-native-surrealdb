@@ -1,4 +1,4 @@
-//! Opt-in local-first single-record command admission. Transmission is a durable boundary.
+//! Opt-in local-first command admission. Aggregates are indivisible; transmission is durable.
 use crate::{ClientError, ClientRuntime, DurableClientState, PreparedTransition};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -39,6 +39,17 @@ fn blocked<V>(s: &DurableClientState<V>, id: &RecordId) -> bool {
                 }
         })
 }
+fn overlaps<V>(left: &ClientCommit<V>, right: &ClientCommit<V>) -> bool {
+    left.operations
+        .iter()
+        .any(|op| touches(right, op.record_id()))
+}
+fn waiting<V>(s: &DurableClientState<V>, commit: &ClientCommit<V>) -> bool {
+    commit
+        .operations
+        .iter()
+        .any(|op| blocked(s, op.record_id()))
+}
 pub(crate) fn validate<V: Eq>(s: &DurableClientState<V>) -> Result<(), ClientError> {
     if s.command_queue.deferred.len() > 64 {
         return Err(ClientError::InvalidReadCoverage);
@@ -55,7 +66,16 @@ pub(crate) fn validate<V: Eq>(s: &DurableClientState<V>) -> Result<(), ClientErr
         .collect::<BTreeSet<_>>();
     for c in &s.command_queue.deferred {
         crate::validate_commit(c)?;
-        if single_upsert(c).is_none() || !ids.insert(c.identity.client_commit_id.clone()) {
+        if !ids.insert(c.identity.client_commit_id.clone())
+            || c.operations.iter().any(|op| {
+                s.command_queue
+                    .deferred
+                    .iter()
+                    .filter(|other| touches(other, op.record_id()))
+                    .count()
+                    > 16
+            })
+        {
             return Err(ClientError::InvalidReadCoverage);
         }
     }
@@ -119,18 +139,19 @@ impl<V: Clone + Eq> ClientRuntime<V> {
                 commit.identity.client_commit_id,
             ));
         }
-        let Some(id) = single_upsert(&commit).cloned() else {
-            return self.prepare_enqueue(commit);
-        };
         let mut next = self.state.clone();
-        if let Some(index) = next.outbox.iter().position(|c| {
-            single_upsert(c) == Some(&id)
-                && !next.command_queue.deferred.iter().any(|d| touches(d, &id))
-                && !next
-                    .command_queue
-                    .transmitted
-                    .contains(&c.identity.client_commit_id)
-        }) {
+        // Only unsent one-record upserts may coalesce. Never merge or partially replace aggregates.
+        let coalescible = single_upsert(&commit).and_then(|id| {
+            next.outbox.iter().position(|c| {
+                single_upsert(c) == Some(id)
+                    && !next.command_queue.deferred.iter().any(|d| touches(d, id))
+                    && !next
+                        .command_queue
+                        .transmitted
+                        .contains(&c.identity.client_commit_id)
+            })
+        });
+        if let Some(index) = coalescible {
             let previous = &next.outbox[index];
             commit.identity.client_commit_id = previous.identity.client_commit_id.clone();
             if let (
@@ -144,16 +165,22 @@ impl<V: Clone + Eq> ClientRuntime<V> {
             }
             commit.identity.fingerprint = fingerprint(&next, &commit)?;
             next.outbox[index] = commit;
-        } else if blocked(&next, &id) || next.command_queue.deferred.iter().any(|c| touches(c, &id))
+        } else if waiting(&next, &commit)
+            || next
+                .command_queue
+                .deferred
+                .iter()
+                .any(|c| overlaps(c, &commit))
         {
             if next.command_queue.deferred.len() >= 64
-                || next
-                    .command_queue
-                    .deferred
-                    .iter()
-                    .filter(|c| touches(c, &id))
-                    .count()
-                    >= 16
+                || commit.operations.iter().any(|op| {
+                    next.command_queue
+                        .deferred
+                        .iter()
+                        .filter(|c| touches(c, op.record_id()))
+                        .count()
+                        >= 16
+                })
             {
                 return Err(ClientError::InvalidReadCoverage);
             }
@@ -176,32 +203,54 @@ impl<V: Clone + Eq> ClientRuntime<V> {
         let mut next = self.state.clone();
         let mut index = 0;
         while index < next.command_queue.deferred.len() {
-            let id = single_upsert(&next.command_queue.deferred[index])
-                .ok_or(ClientError::InvalidReadCoverage)?
-                .clone();
-            if blocked(&next, &id)
+            let candidate = &next.command_queue.deferred[index];
+            if waiting(&next, candidate)
                 || next.command_queue.deferred[..index]
                     .iter()
-                    .any(|c| touches(c, &id))
+                    .any(|c| overlaps(c, candidate))
             {
                 index += 1;
                 continue;
             }
             let mut commit = next.command_queue.deferred.remove(index);
-            let base = match next.confirmed.get(&id) {
-                Some(RecordState::Present { version, .. }) => BaseVersion::Exact(*version),
-                _ => {
-                    next.command_queue.deferred.insert(index, commit);
-                    index += 1;
-                    continue;
-                }
-            };
-            if let Operation::Upsert { base_version, .. } = &mut commit.operations[0] {
-                *base_version = base;
+            if !rebase(&next, &mut commit) {
+                next.command_queue.deferred.insert(index, commit);
+                index += 1;
+                continue;
             }
             commit.identity.fingerprint = fingerprint(&next, &commit)?;
             next.outbox.push(commit);
         }
         self.prepare(next)
     }
+}
+
+/// Rebase a private clone only. A failed child leaves the whole durable aggregate deferred.
+/// Preserve explicit new-record absence; updates/deletes may never resurrect tombstones.
+fn rebase<V>(state: &DurableClientState<V>, commit: &mut ClientCommit<V>) -> bool {
+    let legacy_single_upsert = single_upsert(commit).is_some();
+    for operation in &mut commit.operations {
+        let confirmed = state.confirmed.get(operation.record_id());
+        match operation {
+            Operation::Upsert {
+                base_version: BaseVersion::Absent,
+                ..
+            } if !legacy_single_upsert => {
+                if !matches!(confirmed, None | Some(RecordState::Absent)) {
+                    return false;
+                }
+            }
+            Operation::Upsert { base_version, .. } => match confirmed {
+                Some(RecordState::Present { version, .. }) => {
+                    *base_version = BaseVersion::Exact(*version)
+                }
+                _ => return false,
+            },
+            Operation::Delete { base_version, .. } => match confirmed {
+                Some(RecordState::Present { version, .. }) => *base_version = *version,
+                _ => return false,
+            },
+        }
+    }
+    true
 }

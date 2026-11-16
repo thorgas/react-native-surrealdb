@@ -4,6 +4,7 @@ import {
   decodeSyncReadChangesV2,
   decodeSyncReadBootstrap,
   decodeSyncReadChanges,
+  decodeSyncReadCapabilities,
 } from "../src/sync-read-codec";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -18,6 +19,37 @@ import {
   type SyncReadBootstrap,
   type SyncReadChanges,
 } from "../src/sync-read";
+
+describe("aggregate command queue capability", () => {
+  const base = {
+    protocolVersion: 1,
+    maxJournalBatches: 128,
+    maxJournalBytes: 4194304,
+    maxOutputBytes: 16777216,
+    requiresMatchingNativeAbi: true,
+    predicateSubscriptions: false,
+  };
+  it("keeps older native binaries distinguishable and exposes only the known profile", () => {
+    expect(
+      decodeSyncReadCapabilities(JSON.stringify(base)).commandQueueProfile,
+    ).toBeUndefined();
+    expect(
+      decodeSyncReadCapabilities(
+        JSON.stringify({
+          ...base,
+          commandQueueProfile: "atomic-aggregate-successors-v1",
+        }),
+      ).commandQueueProfile,
+    ).toBe("atomic-aggregate-successors-v1");
+    for (const commandQueueProfile of [true, 1, null, "unknown"]) {
+      expect(() =>
+        decodeSyncReadCapabilities(
+          JSON.stringify({ ...base, commandQueueProfile }),
+        ),
+      ).toThrow();
+    }
+  });
+});
 function snapshot(): SyncReadSnapshot {
   return {
     protocolVersion: 1,

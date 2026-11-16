@@ -278,7 +278,9 @@ export function decodeSyncReadCapabilities(
   }
   if (
     Number(value.maxJournalBatches) > 128 ||
-    Number(value.maxOutputBytes) > MAX_READ_JSON_CHARS
+    Number(value.maxOutputBytes) > MAX_READ_JSON_CHARS ||
+    (value.commandQueueProfile !== undefined &&
+      value.commandQueueProfile !== "atomic-aggregate-successors-v1")
   )
     invalid();
   return Object.freeze(value) as import("./sync-read").SyncReadCapabilities;

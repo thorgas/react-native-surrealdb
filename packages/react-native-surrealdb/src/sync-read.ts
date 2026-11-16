@@ -436,6 +436,8 @@ export type SyncReadCapabilities = Readonly<{
   maxOutputBytes: number;
   requiresMatchingNativeAbi: true;
   predicateSubscriptions: false;
+  /** Optional native behavior; absent on older binaries. No wire-protocol change. */
+  commandQueueProfile?: "atomic-aggregate-successors-v1";
 }>;
 export type SyncScopeTransitionDecision =
   "unchanged" | "needs_new_scope_journal" | "pending_quarantine_required";

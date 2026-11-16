@@ -5300,6 +5300,10 @@ mod tests {
 #[path = "sync_client/bigint_tests.rs"]
 mod bigint_tests;
 
+#[cfg(test)]
+#[path = "sync_client/aggregate_tests.rs"]
+mod aggregate_tests;
+
 fn queue_fingerprint(
     state: &StoredSyncState,
     commit: &ClientCommit<JsonValue>,
