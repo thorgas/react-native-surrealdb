@@ -30,3 +30,10 @@ ordering factored from `optimistic_projection`). Authored against private engine
 the runtime's existing private conflict-policy differences. No protocol or wire
 model changes or additional private modules are copied. The coordinating commit
 is `a6bb305a2cf58035165ff25e977934d83208f68e` after canonical verification.
+
+2026-11-21: `surrealdb-rn-core` now depends on the canonical Git client and
+protocol crates at exact commit `5f104c16e0d367b686fba6905550b38ef57653f4`.
+The historical local copies remain in the workspace for older code paths but
+are not the dependency selected by the native core. The canonical engine
+workspace declares Apache-2.0 for both crates; the package retains the Apache
+license and attribution in `packages/react-native-surrealdb/`.

@@ -1,3 +1,14 @@
+## 0.1.0-alpha.7.tdt.20261121.1 — private candidate
+
+- Add durable source-proof intent lanes, optimistic pending-record reads,
+  conflict resolution preparation and retained receipts through the native
+  engine pinned to `5f104c16e0d367b686fba6905550b38ef57653f4`.
+- Regenerate UniFFI bindings from SDK native input `eba56329`; the handwritten
+  runtime facade is `be42c754`. Full four-target native artifacts and a local
+  reviewable tarball remain required before this candidate can be consumed.
+- Keep the existing public protocol and package publication unchanged. This
+  private candidate is not a tag or npm release.
+
 ## 0.1.0-alpha.7.haus.20261023.1 — private wrapper artifact
 
 - Package bounded native local-view count/page reads with matching generated

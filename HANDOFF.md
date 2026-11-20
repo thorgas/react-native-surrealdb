@@ -955,8 +955,10 @@ targets, check the XCFramework has device and simulator identifiers, and
 confirm lock and manifest hashes are unchanged. Run package typecheck and
 Vitest, `node scripts/verify-package.mjs`, then the repository's Android and
 iOS strip scripts, recording binary hashes before and after stripping. Do not
-bump the package version, run `release:pack`, publish, or claim device
-acceptance from this matrix alone.
+publish, tag, or claim device acceptance from this matrix alone. Package
+metadata now names the separate private candidate described below; keep that
+version until its local archive is reviewed, and never overwrite the `haus`
+alpha7 artifact.
 
 The package verifier now requires nonempty iOS device and simulator archives,
 as well as their XCFramework metadata. With the current partial matrix,
@@ -964,3 +966,68 @@ as well as their XCFramework metadata. With the current partial matrix,
 Android x86_64 and iOS device binaries (plus unbuilt JS declarations). This
 is the expected state until both native platform commands and the package
 build finish.
+
+## Private TDT package candidate and vendored asset gate (2026-11-21)
+
+The new local candidate name is `0.1.0-alpha.7.tdt.20261121.1`. A worktree
+search and local/remote tag lookup found no collision; the npm version lookup
+returned E404 (the registry also uses this response for inaccessible versions).
+It is distinct from immutable `0.1.0-alpha.7.haus.20261023.1`. Only the package
+wrapper version changed; the Rust crate version, pnpm lock graph, Cargo lock
+graph, platform targets, and dependency versions did not. The package's
+`src/generated` and `cpp/generated` files come from the pinned UniFFI generator
+`0.31.0-3` and SDK native input `eba56329e744e65c1da674dcd1d316955d389aba`
+at engine `5f104c16e0d367b686fba6905550b38ef57653f4`. The handwritten
+runtime facade is commit `be42c754e4a8ac0eb17152b30285b296df26936d`;
+do not leave `runtimeSourceSha` null in the final package proof. The test-only
+rollback commit `77a9e7e` changes no production native input. The generated
+source commit is `39f38bd`; the package inventory fix is `3d257ed`.
+
+The package allowlist retains `LICENSE` (MIT wrapper),
+`LICENSE-APACHE-2.0` (engine client/protocol), and
+`THIRD_PARTY_NOTICES.md` (including MPL-2.0 UniFFI/generator attribution).
+The notice now identifies the canonical Git dependency SHA rather than the
+historical copied source as the native core's actual input. At the local pack
+gate, inspect the tarball's regular-file inventory and hashes, and confirm all
+three files and `RELEASING.md` are present. Compare the final compressed and
+unpacked bytes, file count, and per-slice sizes with immutable `haus` alpha7's
+152,993,844-byte/155-file archive; explain size changes before accepting the
+candidate. The generated TS increased 38,064 bytes and C++ increased 41,707
+bytes over their prior checked-in versions because of lane/source-profile
+bindings; the final binary and tarball deltas remain unmeasured until the
+four-target build.
+
+After both paired native commands above produce four matched slices, run from
+`packages/react-native-surrealdb`:
+
+```sh
+./node_modules/.bin/bob build
+./node_modules/.bin/tsc --noEmit
+./node_modules/.bin/vitest run
+node scripts/verify-package.mjs
+node scripts/pack-release.mjs /absolute/owned/output/directory
+```
+
+The pack helper uses `npm pack --ignore-scripts`, records `npm-pack.json`, and
+enforces a 180,000,000-byte compressed ceiling; the preceding commands are
+required because packing does not rebuild or retest. Check the tarball name,
+version, regular-file list and hashes, license/notice files, all four native
+slice hashes/checksums and generated ABI against the source manifest. Keep raw
+pre-strip and staged post-strip hashes separate. The Rust host suite and 158
+package Vitest tests passed before this metadata update; rerun package checks
+against the complete candidate. The app conflict adapter passed strict TS and
+24 adapter tests against the source facade, but it has not installed this
+tarball or exercised a rebuilt app. Consumer installation, RN compatibility
+typecheck/native host tests, and iOS/Android device behavior remain separate
+acceptance gates.
+
+After the metadata and notice edits, package-local `tsc --noEmit` passed and
+Vitest again passed 158/158 across 18 files. Prettier checked `package.json`,
+and `git diff --check` passed. These are source checks; the full native matrix,
+Bob declarations, tarball inventory, and consumer install are still pending.
+
+`packages/react-native-surrealdb/RELEASING.md` requires a separately authorized
+signed version tag, the Build release candidate workflow, and an approved
+`npm-production` deployment through the Publish tested package workflow for
+public npm publication. This task authorizes a local reviewable tarball only:
+no tag, GitHub release, npm publish, or version reuse.
