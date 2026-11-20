@@ -2,11 +2,10 @@ import { createNativeReadMocks } from "./helpers/native-read-mocks";
 import { describe, expect, it, vi } from "vitest";
 
 import type {
-  NativeSyncClientLike,
   NativeSyncStatus,
 } from "../src/generated/surrealdb_rn_core";
 import { NativeConflictPolicy } from "../src/generated/surrealdb_rn_core";
-import { ExperimentalSyncClient } from "../src/sync";
+import { ExperimentalSyncClient, type ExperimentalSyncNativePort } from "../src/sync";
 import { NONE, SurrealRecordId } from "../src/wire";
 
 const initialStatus: NativeSyncStatus = {
@@ -47,7 +46,7 @@ function createNative() {
       stateEncodingAttempts: 1n,
       stateEncodingNs: 1n,
     })),
-  } as NativeSyncClientLike;
+  } as ExperimentalSyncNativePort;
   return native;
 }
 

@@ -80,6 +80,12 @@ interface NativeLanePort {
   inspectLaneResolutionJson(snapshotJson: string, resolutionId?: string, requestJson?: string, options?: CallOptions): Promise<string>;
   materializeNextIntentWithCommitId(recordId: string, commitId: string, options?: CallOptions): Promise<NativeSyncStatus>;
 }
+/** Existing native clients may predate lane bindings; source proof checks them at runtime. */
+export type ExperimentalSyncNativePort =
+  Omit<NativeSyncClientLike, keyof NativeLanePort> &
+  Partial<NativeLanePort> &
+  Partial<NativeReadPort> &
+  Partial<NativeWindowPort>;
 export type ExperimentalLaneResolutionChoice =
   | Readonly<{ strategy: "keep_server" }>
   | Readonly<{ strategy: "keep_local" }>
@@ -156,10 +162,7 @@ const nativeConflictPolicy = (
  * prototype and is not release-ready.
  */
 export class ExperimentalSyncClient {
-  readonly #native: NativeSyncClientLike &
-    Partial<NativeReadPort> &
-    Partial<NativeLanePort> &
-    Partial<NativeWindowPort>;
+  readonly #native: ExperimentalSyncNativePort;
   #readCapabilities?: SyncReadCapabilities;
   readonly #readStores = new Set<ExperimentalSyncReadStore>();
   readonly #windowClients = new Set<ExperimentalSyncWindowClient>();
@@ -199,10 +202,7 @@ export class ExperimentalSyncClient {
   }
 
   constructor(
-    native: NativeSyncClientLike &
-      Partial<NativeReadPort> &
-      Partial<NativeLanePort> &
-      Partial<NativeWindowPort>,
+    native: ExperimentalSyncNativePort,
   ) {
     this.#native = native;
   }

@@ -1,5 +1,6 @@
 import * as bindings from "./generated/surrealdb_rn_core";
 import type { CallOptions } from "./client";
+import type { ExperimentalSyncNativePort } from "./sync";
 
 /** Independently supplied by authenticated transport, never inferred from wire bytes. */
 export type ExperimentalBootstrapContext =
@@ -168,7 +169,7 @@ export type ExperimentalBootstrapCompletion = "applied" | "historical_success";
 
 /** Internal composition entry; callers use ExperimentalSyncClient.bindBootstrapSession. */
 export async function bindExperimentalBootstrap(
-  client: bindings.NativeSyncClientLike,
+  client: ExperimentalSyncNativePort,
   closed: () => boolean,
   expected: ExperimentalBootstrapContext,
   options?: CallOptions,
@@ -179,7 +180,13 @@ export async function bindExperimentalBootstrap(
   if (options?.signal.aborted) return fail("Aborted");
   let native: bindings.NativeBootstrapSessionLike;
   try {
-    native = await bindings.bindBootstrapSession(client, independent, options);
+    // UniFFI lowers the opaque client handle here; the generated function's
+    // structural type also lists lane methods that bootstrap never calls.
+    native = await bindings.bindBootstrapSession(
+      client as bindings.NativeSyncClientLike,
+      independent,
+      options,
+    );
   } catch (error) {
     throw redacted(error, false);
   }

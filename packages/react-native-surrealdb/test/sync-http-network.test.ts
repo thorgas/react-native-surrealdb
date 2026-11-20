@@ -4,14 +4,13 @@ import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import type {
-  NativeSyncClientLike,
   NativeSyncStatus,
 } from "../src/generated/surrealdb_rn_core";
 import {
   ExperimentalSyncHttpAdapter,
   experimentalJsonSyncHttpCodec,
 } from "../src/sync-http";
-import { ExperimentalSyncClient } from "../src/sync";
+import { ExperimentalSyncClient, type ExperimentalSyncNativePort } from "../src/sync";
 
 const status: NativeSyncStatus = {
   revision: 1n,
@@ -123,7 +122,7 @@ describe("ExperimentalSyncHttpAdapter network boundary", () => {
         stateEncodingAttempts: 0n,
         stateEncodingNs: 0n,
       })),
-    } as NativeSyncClientLike;
+    } as ExperimentalSyncNativePort;
     const adapter = new ExperimentalSyncHttpAdapter({
       sync: new ExperimentalSyncClient(native),
       baseUrl,
