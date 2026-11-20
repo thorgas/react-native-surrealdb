@@ -22,8 +22,8 @@ futures = "0.3.32"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 surrealdb = { version = "=3.2.4", default-features = false }
-surrealdb-sync-client = { path = "../surrealdb-sync-client" }
-surrealdb-sync-protocol = { path = "../surrealdb-sync-protocol" }
+surrealdb-sync-client = { git = "https://github.com/thorgas/surrealdb-sync-engine.dev", rev = "5f104c16e0d367b686fba6905550b38ef57653f4" }
+surrealdb-sync-protocol = { git = "https://github.com/thorgas/surrealdb-sync-engine.dev", rev = "5f104c16e0d367b686fba6905550b38ef57653f4" }
 thiserror = "2.0.17"
 tokio = { version = "1.52.0", features = ["macros", "rt", "sync", "time"] }
 uniffi = { version = "0.31.0", features = ["tokio"] }

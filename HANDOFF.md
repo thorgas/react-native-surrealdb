@@ -385,3 +385,511 @@ Never replace alpha6 or push this private branch wholesale to the public origin.
 App integration/builds, physical Android/iOS execution and startup acceptance
 remain separate unfinished gates. Root SDK dependencies were previously removed
 under explicit permission; ordinary SDK development requires their restoration.
+
+## Offline intent adapter format migration (source WIP)
+
+The experimental normalized sync-state adapter now pins both engine crates to
+`surrealdb-sync-engine.dev` revision `c5c8c7b36b14210ef8a8cb6f42cc8c26abdf2541`
+and defines adapter format 4 for engine `state_version`, `local_intents`,
+`lanes`, and `last_reset_cursor`. Loading v2/v3 normalized rows remains
+read-only. Migration is lazy and occurs only on the next successful durable CAS
+save, which writes component rows and metadata in one transaction. Legacy
+accepted outcomes remain preserved; they do not gain causal proof from an ACK.
+
+The populated v2/v3 fixture now checks read-only load, wrong-revision CAS
+preservation of metadata and every component row, transaction cancellation
+after a component write, successful retry, and reopen after format-4 rewrite.
+The v2 fixture also omits `state_version` to exercise its conservative default.
+The fixture opens a legacy accepted receipt in `ClientRuntime`, checks that
+a dependent recipe intent is blocked with `LegacyHandoffPending`, then applies
+an authoritative reset and checks that the lane unblocks. The format-4
+roundtrip fixture includes a blocked lane and resolution revision. These tests
+remain source-only while the app owns the heavy compile slot; they need a
+focused compile and run before any commit. The Rust `NativeSyncClient` facade
+now exposes JSON edit observation, enqueue intent, materialize-next, blocked
+lane snapshot, and explicit resolution through the existing atomic transition
+path. UniFFI derives these declarations from the exported Rust impl; there is
+no UDL to hand edit. The blocked-lane roundtrip carries two pending intents
+and checks the snapshot's covered prefix after reopening. TypeScript adds
+optional lane ABI shapes and fail-closed wrappers without casting or editing
+generated interfaces. HTTP pull has explicit `pullSourceProof` opt-in: the v1
+request CBOR goes to `/v1/sync/pull/source-v2` with exact source-v2 Accept and
+response content type. Rust exports a dedicated source-v2 response decoder.
+Default pull stays v1. Opt-in requires a matching native decoder and fails at
+construction if absent. TypeScript check, focused tests, generated bindings,
+native binaries, and source-proof transport tests remain pending. No native
+build, app activation, or release artifact is claimed.
+
+The source-proof transport test now covers the exact route, v1 request type,
+source-v2 Accept and response type, and rejection of absent, v1, generic-v2,
+or JSON response types before native apply. Lane observation and conflict
+snapshots are opaque JSON strings in TypeScript so a JS parse cannot round
+large version numbers or discard covered-prefix fields. Lane enqueue and
+materialization require explicit source-proof adapter opt-in. The TS test run
+was attempted with the workspace `pnpm` command, but Corepack tried to fetch
+the pinned pnpm 11.5.0 distribution; it was interrupted to avoid installs.
+The existing top-down-todos Vitest 4.1.12 binary starts this test but cannot
+resolve SDK's `@ubjs/core`; its `tsc` cannot find SDK React/React Native types.
+The SDK's declared Vitest 3.2.4 and package links are absent here, so
+these borrowed binaries do not validate the source. The rollback fixture uses
+a real SurrealKV transaction, changes a component row, cancels before metadata,
+checks both row and metadata bytes, reloads legacy state, then retries CAS.
+The migration test now also runs `replace_v2_in_transaction` to Applied and
+cancels it, and uses a cfg(test)-only `save_atomic` hook to fail after its first
+component write. Both paths assert original metadata/component payloads and
+legacy reload before the normal CAS retry. Both v2 and v3 fixtures omit
+`state_version` and require conservative default zero.
+The hook returns a cfg(test)-only `InjectedAfterComponentWrite` error and the
+test asserts that exact variant, so a pre-write CAS conflict cannot satisfy
+the rollback test. Production error variants and generated ABI are unchanged.
+The save path now detects a pre-v4 metadata row inside its transaction and
+forces every component row rewrite even when its decoded payload is unchanged;
+the successful migration fixture checks every component's format version.
+CAS validation and `component_record_id(key, item)` remain the existing paths;
+the migration flag changes only whether equal decoded component payloads are
+skipped. Removed component keys still pass through the prior diff deletion.
+
+Pinned JS setup: `.node-version` is 22.22.0 (current Node matches), root
+`package.json` pins pnpm 11.5.0, and README/CI use `pnpm install
+--frozen-lockfile`. Existing Corepack pnpm executable is
+`/Users/timhorgas/.cache/node/corepack/v1/pnpm/11.5.0/dist/pnpm.mjs`;
+reproducible command from repository root is `node <that-path> install
+--frozen-lockfile --offline`. This has not been run. Read-only measurements:
+the local pnpm store is 8,215,872 KiB, this worktree's incomplete
+`node_modules/.pnpm` is 2,205,476 KiB with no `.bin` links, and free disk is
+7,807,872 KiB. The 8 GiB floor is already unmet, so no install headroom is
+available under that gate: at least 580,736 KiB must be reclaimed merely to
+reach the floor, plus the as-yet-unmeasured completion delta. Earlier `pnpm exec` unexpectedly began a partial
+workspace dependency link before interruption; preserve it for later review.
+
+Update: root authorized the bounded offline install. Ran cached pnpm 11.5.0
+with `install --frozen-lockfile --offline --ignore-scripts`; it completed in
+6.9 seconds with 1,291 packages added, 1,212 reused, zero downloads, and no
+manifest/lockfile change. Free disk moved from 7,755,796 KiB before install
+to 7,692,176 KiB after, a 63,620 KiB change below the 512 MiB cap; no native
+build ran. Package-local Vitest 3.2.7 passed `test/sync-http.test.ts` (23/23),
+and package-local `tsc --noEmit` passed. Typecheck sees optional source-only
+lane declarations; it does not verify generated UniFFI/native ABI alignment.
+The lane opt-in now checks all native methods plus a native capability document
+(`schemaVersion: 1`, `storageFormat: 4`, `pullSourceProfile: pull-source-v2`)
+before enabling queue mutation. Old native artifacts, partial ABI, malformed
+capability JSON, and mismatched storage/profile fail with the same explicit
+matching-native error; the legacy v1 transport remains available. Focused
+`sync-http.test.ts` and `sync.test.ts` pass together (30/30), and package
+`tsc --noEmit` passes. This is source-level verification only: generated
+bindings and platform binaries still need rebuilding after Rust compile.
+The lock lists 1,287 package entries; the incomplete virtual store has 1,291
+package directories, including TypeScript 5.9.3 and `@ubjs/core`, but no
+virtual-store lock, root `.bin`, or package links. That suggests fetching is
+mostly cached, not that offline install is guaranteed: pnpm must validate the
+content-addressed store. No exact completion delta can be measured without
+performing the frozen install. Rust registry sources for SurrealDB core/types
+3.2.4 and the pinned engine checkout are present. First native commands once
+the sole slot opens: `CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=<existing-engine-target>
+cargo +1.96.1 check --locked --offline -p surrealdb-rn-core`, then the same
+environment with `cargo +1.96.1 test --locked --offline -p surrealdb-rn-core
+--lib sync_state::tests::v2_v3_normalized_rows_migrate_populated_state_and_reopen_losslessly`.
+These should avoid downloads; they may still fail if another locked registry
+source is absent, and compilation may allocate substantial target output.
+
+Dependency lock audit (2026-11-20): SDK `Cargo.lock` already resolves
+`surrealdb`, `surrealdb-core`, `surrealdb-collections`, `surrealdb-types`, and
+`surrealdb-types-derive` at 3.2.4. The current lock diff only disambiguates
+the pinned engine git client/protocol from local workspace crates; no registry
+package or checksum changed. `surrealdb-protocol` is a separate 0.10.2 crate,
+not a SurrealDB 3.2.x package. Do not refresh this lock broadly: the app's
+fresh lock picked `surrealdb-core` 3.2.6 with `surrealdb` 3.2.4 and hit a
+`changefeed_process`/`CancellationToken` API mismatch. SDK compilation stays
+deferred while the app owns the existing engine target and 8 GiB floor.
+
+Original SDK engine lineage at d9c51e7: there was no Git dependency pin.
+`surrealdb-rn-core` depended on workspace paths
+`../surrealdb-sync-client` and `../surrealdb-sync-protocol`, last changed at
+SDK commit fb1164ebf98469a64e41f0422938cb2bb23a5111. The local crates
+began at 9667aec2adc1a1b739d3742df8fa4439237501ec and subsequently
+received SDK-owned read, subscription, bootstrap, conflict-policy, and
+canonical codec commits. The current c5c8c7b engine Git source descends from
+752e25a587d1a5d4ea4e239de21ad1144f96c537 (lanes), then
+b603331e1ece580195588fec6d8ea19ec31889f5 (pull scope),
+9d1fb14d04a8e31ec5b928baa30762530a5647ef (source profile),
+8a84bcf3e9b717994deea2f69d900097fb44e3bc (3.2.4 pins), and
+c5c8c7b36b14210ef8a8cb6f42cc8c26abdf2541 (type fix). These repositories
+have separate commit ancestry; the SDK baseline must be ported as source/API
+work into an engine integration branch, not cherry-picked across repositories.
+Minimal graph: SDK vendor baseline through fb1164e -> engine lane transition
+series (752e25a through b0a64b9) on the reviewed authority policy base
+(4e0d2a6) -> pull-scope/source-profile commits
+(b603331, 9d1fb14, c5c8c7b) with 3.2.4 authority pins (8a84bcf) ->
+compatibility tests for bootstrap/read/subscription/lanes together -> new
+engine integration SHA -> SDK pin/lock update. Preserve the SDK baseline
+`reset_coverage`, `subscriptions`, `covered_by_reset`, conflict policy and
+bootstrap modules while reconciling lane accepted-epoch/proof fields. Do not
+repin SDK to an arbitrary upstream SHA or delete these existing surfaces.
+`crates/surrealdb-rn-core/tests/engine_api_compat.rs` is the short compile-only
+contract for the combined engine API. The SDK library check remains the
+exhaustive gate. Engine-worker baseline cases to retain include bootstrap
+`completion_surrealkv_restart_and_lost_ack_never_reapplies_over_later_writes`,
+`complete_conflicts_with_enqueue_barrier_and_cancel_in_both_orders_memory_and_kv`,
+`complete_retains_same_epoch_accepted_and_conflict_but_rejects_unknown_or_other_epoch`,
+the subscription window tests, read metadata/snapshot tests, and the new SDK
+v2/v3 lazy migration/rollback and format-4 lane roundtrip. These require
+atomic state replacement, preserved reset coverage and subscription membership,
+no backward checkpoint or inferred ACK/pull proof, and source-v2 opt-in without
+altering canonical v1 bytes. The fixture is source-only until the integrated
+engine SHA is pinned and the SDK compile slot reopens.
+
+## Receipt integration staging (source only)
+
+Engine compatibility source commit
+dfa0374a9e88fcb2a823a0ebd5b2c3c16d2bf022 is uncompiled; receipt work in
+its worktree is not yet a validated commit. SDK pin stays at c5c8c7b. The
+planned SDK FFI resolver now accepts a caller-stable `resolution_id` and
+fails with Protocol before mutation under the old pin; it must never accept an
+ID and lose its durable association. The read-only receipt method currently
+returns opaque `unknown`. TS forwards the ID and opaque receipt JSON and
+requires capability schema version 2 plus the receipt method. Current Rust
+advertises version 1, so old binaries cannot enable the staged API. Once the
+engine receipt shape and validated full SHA arrive, wire the resolver to
+`prepare_resolve_lane_conflict(resolution_id, snapshot, request)`, project the
+engine receipt after reopen, add `resolution_receipts` to normalized storage
+with lazy migration and rollback coverage, then advance native capability.
+No generated binding edit or inferred pulled proof is allowed.
+
+## Matching native artifact plan (prepared, no build)
+
+Hold `package.json` and Rust crate versions until the integrated engine SHA,
+focused Rust tests, generated UniFFI, and both chosen devices agree. Current
+SDK source declares lane methods that are absent from checked-in generated
+bindings and old native artifacts; package typecheck and optional TS ports do
+not claim native ABI compatibility. The runtime capability guard refuses old
+artifacts. Never hand-edit `src/generated`, `cpp/generated`, or native slices.
+
+The repository scripts are `packages/react-native-surrealdb/package.json`:
+`ubrn:ios` builds iOS device+arm64 simulator and generates bindings;
+`ubrn:android` builds arm64+x86_64 and generates bindings;
+`ubrn:android:size` is arm64 only; `release:artifacts` runs both full scripts
+and strips output. `verify:package` requires both Android ABIs and iOS
+device+simulator slices, so a two-device smoke (Android arm64 and iOS arm64
+simulator) is deliberately not a publishable package. The scripts use
+`uniffi-bindgen-react-native` 0.31.0-3 and Rust UniFFI 0.31; iOS deployment
+target is 15.1. All four Rust targets are installed. This worktree has no
+matching native output yet. The shared engine target measured 12,848,136 KiB;
+free disk was 5,901,268 KiB at plan time, leaving about 0.9 GiB before the
+5 GiB stop. Do not start cross-target release builds at that headroom.
+
+After compatible engine pin and focused Rust checks pass, use the existing
+package-local executable from the package directory, one target at a time under the sole
+native slot (replace `<ENGINE_TARGET>` with the existing shared target):
+
+```sh
+export CARGO_TARGET_DIR=<ENGINE_TARGET>
+export CARGO_BUILD_JOBS=1
+export ANDROID_NDK_HOME=<installed-ndk-27-path>
+cd packages/react-native-surrealdb
+IPHONEOS_DEPLOYMENT_TARGET=15.1 ./node_modules/.bin/ubrn build ios --and-generate --release --targets aarch64-apple-ios-sim
+./node_modules/.bin/ubrn build android --and-generate --release --targets aarch64-linux-android
+node /Users/timhorgas/.cache/node/corepack/v1/pnpm/11.5.0/dist/pnpm.mjs run format:generated
+```
+
+The two one-target commands are a bounded device smoke, not the repository's
+full release scripts. Before using `verify:package` or `release:pack`, complete
+the actual script-supported full set via `ubrn:ios`, `release:strip:ios`,
+`ubrn:android`, and `release:strip:android` in package.json, then run
+`release:check`. Use the exact cached pnpm executable above to invoke scripts;
+never let Corepack choose a new version. `release:pack` calls `npm pack
+--ignore-scripts`, writes `npm-pack.json`, and enforces 180,000,000 bytes.
+
+Bind one provenance manifest to the SDK wrapper HEAD, Rust source HEAD,
+integrated engine Git SHA, Cargo.lock SHA256, generated TS/C++ SHA256, each
+raw native input SHA256, each stripped staged slice SHA256, and final tarball
+SHA256. Record `git rev-parse HEAD`, `shasum -a 256` on those exact files,
+and `shasum -a 256 <tarball> > SHA256SUMS` only after packing. Verify generated
+UniFFI checksum table/contract version against every built slice, 16 KiB
+Android ELF alignment, iOS arm64 simulator/device entries, and package file
+inventory. No package signing is performed by local scripts; public release
+signing uses `git tag -s` and trusted-publishing provenance, which are outside
+this private source-preparation task. Do not reuse an old signature or claim
+that an unsigned local tarball is signed. No publishing is authorized here.
+
+## Locked check retry and resolution observation (source WIP)
+
+Root authorized a locked online retry for declared crates. Cargo downloaded
+locked archives, then began compiling a broad cold dependency graph in the
+shared target, so the run was interrupted at the unexpected-expansion stop.
+Target grew from 11,940,040 to 12,015,700 KiB; free disk stayed at 7,433,404
+KiB, above the 5 GiB stop. No SDK compile diagnostic was reached.
+
+The SDK now has source-only `laneResolutionObservationJson`. A durable
+resolution head with the supplied replacement identity and exact snapshot
+covered prefix yields queued, accepted, or conflict, with decimal-string
+sequence and resolution revision. Any missing binding yields `unknown`.
+After completed pull, the engine clears the head; retained `ready_proof` has
+identity and sequence but no association to the original snapshot prefix.
+Thus this query does not claim a pulled proof. True pulled reentry requires an
+engine-owned durable snapshot-attempt association before a supplemental state
+design. TS focused tests passed 30/30 and package typecheck passed; Rust source
+remains uncompiled.
+
+First authorized shared-target Rust check (2026-11-20): with one job, `--locked
+--offline`, and the existing engine authority target, Cargo stopped before
+compilation because the `affinitypool 0.7.0` registry archive is absent. Its
+unpacked source exists in the local registry source cache, but the `.crate`
+archive was not found in the Cargo registry cache. Target size stayed
+11,940,040 KiB; free disk moved from 7,527,124 to 7,524,492 KiB, well above
+the 5 GiB stop. No second build or test was started. The focused migration
+test remains queued until the exact locked crate cache is available.
+
+Resolution observation contract: pinned engine lanes durably retain
+`resolution_revision`, pending intent IDs, head identity and role, accepted
+epoch/sequence, pull proof, ready proof, blocked state, and outcomes. The app
+conflict core expects opaque commit ID, sequence, and resolution revision for
+reentry. SDK `resolveLaneConflict` currently returns only status; no durable
+per-record phase/proof query exists. A future read-only SDK projection must
+derive queued/accepted/pulled/conflict from those engine fields after reopen,
+and keep all u64 values as decimal strings. The engine snapshot binds blocking
+identity, remote/observed state, reason, local latest, and exact covered prefix;
+it does not include resolution revision itself. Do not expose an app-owned
+queue or treat ACK alone as pull proof.
+
+Proposed smallest engine change: retain a bounded resolution receipt in
+`RecordIntentLane` when `prepare_resolve_lane_conflict` accepts a snapshot.
+It binds the original blocking identity and exact covered intent prefix (plus
+the snapshot's observed/remote state or canonical fingerprint) to the
+replacement `CommitIdentity` and incremented `resolution_revision`. Advance
+the same receipt with accepted epoch/sequence from the durable outcome, then
+with exact `LanePullProof` from a complete source-aware pull. Retain it after
+`head` clears until safely superseded/consumed. An engine read API can return
+queued/accepted/pulled/conflict only for a matching snapshot and replacement,
+otherwise unknown. This avoids SDK or app ownership of a second queue.
+
+The resumed locked Cargo check reached `surrealdb-rn-core` and failed with 64
+source errors. The pinned engine c5c8c7b lacks existing SDK dependencies:
+protocol `bootstrap`, `bootstrap_codec`, `subscription`, and
+`subscription_codec`; client `AutomaticConflictPolicy`, read metadata/batch
+APIs, subscription APIs, reset coverage/subscriptions state, and the old
+`covered_by_reset` field. These are baseline SDK/engine API incompatibilities,
+not a SurrealDB 3.2.4 graph failure. The complete short diagnostic list is
+`/tmp/sdk-check-errors-f6b5.txt` (local temporary, not committed). Cargo.lock
+remained locked. Free disk after the run was 7,038,396 KiB, above the 5 GiB
+stop. The new lane observation query produced no isolated diagnostic in this
+run, but its compilation is unproven until the pinned engine also supplies
+the SDK's preexisting bootstrap/subscription/read contract. Do not remove
+existing SDK capabilities or switch pins just to satisfy this check; align the
+engine source contract first.
+
+## Integrated engine receipt slice (2026-11-20, in progress)
+
+The SDK manifests and lockfile now pin validated engine commit
+`383cb224c51382b591deb9079c0a48190f367047` from
+`integration/sdk-compatible-client`; the existing SurrealDB, core, types,
+and protocol registry versions remain `3.2.4`. The first cached check reached
+SDK code and reported only the missing `resolution_receipts` field in normalized
+reconstruction. That check has ended; the app temporarily owns the Rust slot
+for its cached binary rebuild. No subsequent SDK Rust check or migration test
+has run yet.
+
+The SDK source now uses the engine's caller-generated `LaneResolutionId` for
+`prepare_resolve_lane_conflict`, reads the retained `LaneResolutionReceipt`
+from durable state, and exposes the engine's nondeleting receipt acknowledgment
+transition. Unknown is returned only when no receipt exists for that ID.
+Native lane capability schema 2 requires normalized storage format 5 and
+`pull-source-v2`; the TS opt-in checks every method before lane queue mutation.
+Format 5 adds a required `resolution_receipts` metadata map. Formats 2/3/4
+read without mutation and rewrite all component rows plus metadata on the
+next successful CAS save. A missing receipt map in a format 5 row or an
+unexpected map in an older format is corruption. Tests cover retained
+keep-server receipt and format 4 lazy migration; Rust execution is pending.
+
+After the app releases the slot, run this exact first command from this SDK
+worktree, checking `df -k .` before and during the run and stopping at 5 GiB
+free:
+
+```sh
+CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/Users/timhorgas/.t3/worktrees/roadmap-engine/feat-laptop-workspace-a-8bf94ffcab161fd7/crates/surrealdb-sync-surrealdb-authority/target cargo +1.96.1 check --locked --offline -p surrealdb-rn-core --tests
+```
+
+Then run focused migration and compatibility tests in the same target:
+
+```sh
+CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/Users/timhorgas/.t3/worktrees/roadmap-engine/feat-laptop-workspace-a-8bf94ffcab161fd7/crates/surrealdb-sync-surrealdb-authority/target cargo +1.96.1 test --locked --offline -p surrealdb-rn-core receiptless_format_four_migrates_only_on_successful_cas_save
+CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/Users/timhorgas/.t3/worktrees/roadmap-engine/feat-laptop-workspace-a-8bf94ffcab161fd7/crates/surrealdb-sync-surrealdb-authority/target cargo +1.96.1 test --locked --offline -p surrealdb-rn-core v2_v3_normalized_rows_migrate_populated_state_and_reopen_losslessly
+CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/Users/timhorgas/.t3/worktrees/roadmap-engine/feat-laptop-workspace-a-8bf94ffcab161fd7/crates/surrealdb-sync-surrealdb-authority/target cargo +1.96.1 test --locked --offline -p surrealdb-rn-core lane_format_roundtrips_all_engine_lane_fields_and_rejects_bad_versions
+CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/Users/timhorgas/.t3/worktrees/roadmap-engine/feat-laptop-workspace-a-8bf94ffcab161fd7/crates/surrealdb-sync-surrealdb-authority/target cargo +1.96.1 test --locked --offline -p surrealdb-rn-core sdk_engine_api_surface_compiles
+```
+
+Focused TS `vitest` passed 30/30 and package `tsc --noEmit` passed after the
+schema 2/format 5 guard and acknowledgment wrapper changes. Matching UniFFI
+bindings and platform binaries must be regenerated from this one verified
+source tree after Rust is green; existing packaged native artifacts do not
+claim these methods yet. No package publication is authorized.
+
+## Enrolled-note intent read contract (source WIP)
+
+`ExperimentalSyncClient.readIntentRecord(recordId)` returns one native-locked
+`ExperimentalIntentRecord`:
+
+- `record: SyncReadRecord` from the engine `read_snapshot()` projection,
+  including `metadata.revision`, `row.optimistic` (or `null` for a local delete),
+  confirmed state and the existing wire pending/accepted/conflict lists;
+- `lane.pendingIntentIds: string[]`, the durable local intent prefix and suffix
+  even before any wire commit is materialized;
+- `lane.blockedReason: string | null` and `blockedSnapshotJson: string | null`
+  for conflict editing; `lane.headIdentityJson: string | null` for an in-flight
+  materialized head; `lane.resolutionRevision: string` as an exact decimal.
+
+The native implementation takes one runtime lock, obtains an engine read
+snapshot, narrows rows to the requested record, and reads lane fields from the
+same installed state. It reuses the v1 read decoder and sends the view as an
+opaque JSON string inside the lane envelope, avoiding JSON-number conversion
+in the wrapper. A record can have `record.row.optimistic === null` and still
+have pending intent IDs: that means a local delete of an absent or formerly
+present record, not a proven server absence. The app should use this API as
+its enrolled-note save/read authority, not write SQL first and enqueue later.
+No app-owned intent queue or projection rules are added.
+
+A Rust contract test covers a new-record intent before materialization, a
+suffix intent while the head is pending, a conflict and local delete, and
+reopen persistence. It passed on the validated engine pin; see the current
+checkpoint below. The native binary and generated bindings remain pending.
+
+## Historical Rust gate and engine read regression (2026-11-20)
+
+`cargo +1.96.1 check --locked --offline -p surrealdb-rn-core --tests` passed
+with `CARGO_BUILD_JOBS=1` and the shared engine target after downloading only
+the already locked `temp-dir 0.1.16` crate during a locked online retry.
+Focused tests passed: `v2_v3_normalized_rows_migrate_populated_state_and_reopen_losslessly`,
+`receiptless_format_four_migrates_only_on_successful_cas_save`,
+`lane_format_roundtrips_all_engine_lane_fields_and_rejects_bad_versions`,
+`receipt_format_rejects_missing_map_and_mixed_component_versions`, and
+`sdk_engine_api_surface_compiles`. The v2/v3 reset fixture now uses a complete
+absence proof; a tombstone for a previously absent observation correctly left
+a stale-observation block. Test binaries were built with one job; the final
+focused command ended and the SDK released the Rust slot for engine tests.
+
+`intent_read_projects_unmaterialized_suffix_delete_conflict_and_reopen`
+currently fails at its first optimistic value assertion on engine commit
+`383cb224`: the SDK baseline local engine declares `OptimisticRecord` with
+`#[serde(tag = "state", rename_all = "snake_case", rename_all_fields =
+"camelCase")]`, while the integrated engine omitted that attribute. Engine
+`read_snapshot()` therefore emits an externally tagged `Present` object where
+the existing SDK read wire/TS decoder expects `state: "present"` and
+`baseVersion`. This is an engine integration regression, sent to the root for
+engine ownership and golden tests. Keep the SDK test; repin the exact corrected
+engine SHA after validation, then rerun the native intent/resolve/reopen test.
+
+## Measured mobile cache and artifact gate
+
+The package's `ubrn:android` and `ubrn:ios` scripts build four release targets:
+Android arm64 and x86_64 plus iOS device arm64 and simulator arm64. The
+package verifier requires all four and generated TS/C++ files. A two-target
+Android arm64/iOS simulator build is only current-device evidence, not a
+package release. `ubrn.config.yaml` writes to `src/generated`, `cpp/generated`,
+`android/src/main/jniLibs`, and `SurrealDbRnFramework.xcframework`.
+
+The current shared authority target contains host artifacts only (about 15GiB)
+and no mobile triple directories. The clean older SDK checkout at
+`/Users/timhorgas/git/worktrees/sync-receipt-sdk` has a 6.0GiB release target
+with SurrealDB 3.2.4: `target/aarch64-linux-android` is 1.6GiB and
+`target/aarch64-apple-ios-sim` is 1.4GiB. Its older 43MiB Android `.so` and
+223MiB simulator `.a` are source-incompatible and cannot be packaged. The
+other two target caches are 1.5GiB Android x86_64 and 1.4GiB iOS device.
+Reusing that target for a bounded mobile build would retain cached registry
+objects but the integrated Git engine and SDK source must rebuild; estimate
+another 1-3GiB plus transient link space. Measure `df -k .` before and during
+each target, stop below 5GiB free, and avoid simultaneous targets. Do not
+remove this worktree or its cache without confirming ownership and preserving
+its branch/ref. No mobile build has started in this SDK checkout.
+
+A read-only `ubrn build --help` unexpectedly began bootstrapping the local Rust
+command binary and was interrupted. It created about 536MiB under the package
+manager's `uniffi-bindgen-react-native/target` cache; no generated bindings or
+native libraries resulted. Do not use the CLI just to inspect help. After the
+corrected engine SHA and host tests pass, use the repository's explicit
+`--and-generate --release --targets` commands and record exact source SHA,
+engine SHA, generated checksums, native binary checksums, and package inventory.
+
+## Historical validated engine serde repin before SDK test slot
+
+The SDK manifests and lockfile now point to validated/pushed engine commit
+`5f104c16e0d367b686fba6905550b38ef57653f4`, which restores the baseline
+optimistic read JSON shape and adds engine golden tests. This was an exact SHA
+replacement only; the SurrealDB 3.2.4 registry graph remains unchanged. Cargo
+has not run against the new pin yet because the Android verifier owns the
+brief build slot and free space temporarily fell below the 5GiB stop. Wait for
+its cleanup/readback and explicit slot return. Then run the locked `--tests`
+check and `intent_read_projects_unmaterialized_suffix_delete_conflict_and_reopen`
+first, followed by the previously passing migration/receipt tests. Do not
+start UniFFI/native artifacts until those tests pass and mobile disk headroom
+is remeasured.
+
+## Current source and verification checkpoint (2026-11-20)
+
+The SDK pin is the validated engine `5f104c16e0d367b686fba6905550b38ef57653f4`.
+On that pin, `cargo +1.96.1 check --locked --offline -p surrealdb-rn-core
+--tests` passed using the shared authority target and one Cargo job. Focused
+Rust tests passed:
+
+- `intent_read_projects_unmaterialized_suffix_delete_conflict_and_reopen`
+- `prepared_merge_preserves_large_numbers_across_replay_and_receipt`
+
+The latter covers native merge preparation with versions and replacement
+values above JavaScript's safe integer range, exact persisted request replay
+after reopen, retained receipt identity, changed-request rejection, and an
+accepted sequence above the safe integer range in the retained receipt. The
+test passed with the final assertion. Four focused format 5 migration/receipt
+tests and `--test engine_api_compat` also passed. The full cached Rust unit
+suite passed with 175 passed, 3 intentional ignored, 0 failed. No generated
+ABI or mobile binary has been produced for this source.
+
+The public source facade in `src/sync.ts` now exposes
+`prepareLaneResolution(snapshotJson, choice)` returning a native-generated
+`{ resolutionId, requestJson }`, `submitPreparedLaneResolution` for exact opaque
+replay, `inspectLaneResolution(snapshotJson, attempt)` for validated phase and
+opaque receipt, and `projectLaneConflictSnapshot` for domain-only editor
+values. The source-profile adapter must establish schema 2, format 5 and
+pull-source-v2 capability with matching native methods before any lane
+mutation. Supported exact lookup returns `absent` only while the original
+blocked snapshot remains current; unsupported bindings or transport fail, and
+stale missing evidence is `unknown`. `docs/SYNC_INTENT_LANES.md` documents
+the prepare/persist/replay contract. The conflict adapter worker typechecked
+`ExperimentalSyncClient` against its `ConflictSdkFacade` and reported 24
+adapter tests plus 88 core/storage tests passing; that is source compatibility,
+not a matching native artifact or device result. SDK source-profile Vitest
+passed 27/27; the full package Vitest suite passed 158/158 across 18 files;
+package `tsc --noEmit` passed after the facade changes.
+
+The SDK released the Cargo slot after host tests. To reclaim only audited
+old SDK host outputs, six paths under the shared authority target were removed
+after a no-compiler and no-open-handle recheck; the exact path/size manifest is
+`/tmp/sdk-obsolete-host-output-cleanup-20261120.json`. Current passing test
+binary, current incrementals, dependencies, authority binary and native caches
+were preserved. Free space after cleanup was 5,451,476 KiB, still short of
+the Android diagnostic forecast. No more SDK build may start until the root
+explicitly returns the sole slot and the agreed 5 GiB stop floor is viable.
+
+The storage worker subsequently removed the separately verified inactive
+`engine-authority-4` worktree with its branch and remote refs preserved;
+the root measured 7,280,060 KiB free. The app authority then ran its bounded
+Cargo test/build/Clippy slot and released it. The SDK completed the host tests
+above and immediately released the slot for the next authority diagnostic
+rebuild; free space at release was 7,002,984 KiB. The host verification
+command was:
+
+```sh
+CARGO_BUILD_JOBS=1 CARGO_TARGET_DIR=/Users/timhorgas/.t3/worktrees/roadmap-engine/feat-laptop-workspace-a-8bf94ffcab161fd7/crates/surrealdb-sync-surrealdb-authority/target \
+  cargo +1.96.1 test --locked --offline -p surrealdb-rn-core \
+  prepared_merge_preserves_large_numbers_across_replay_and_receipt -- --nocapture
+```
+
+The four focused migration/receipt commands used the same environment and
+respective test-name filters. The full cached suite used `cargo +1.96.1 test
+--locked --offline -p surrealdb-rn-core --lib --quiet` and exposed one stale
+test assertion: `subscription_format_upgrade_preserves_pending_and_refuses_v2_downgrade`
+was creating a new format 5 state with `save_atomic`, then asserting format 2.
+It is now named `subscription_state_preserves_pending_and_refuses_v2_reader_or_state_downgrade`
+and asserts format 5 before and after subscription operations; it still checks
+that a format 2 reader and a subscription-dropping save fail closed. The
+separate populated v2/v3 fixture still proves read-only legacy load followed
+by rewrite on the first successful CAS save. The affected test and full suite
+passed after correction. The older `sync-receipt-sdk` mobile cache remains
+untouched. Native generation awaits explicit slot and headroom assessment.

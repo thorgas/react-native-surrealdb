@@ -4155,8 +4155,8 @@ dependencies = [
  "serde",
  "serde_json",
  "surrealdb",
- "surrealdb-sync-client",
- "surrealdb-sync-protocol",
+ "surrealdb-sync-client 0.1.0 (git+https://github.com/thorgas/surrealdb-sync-engine.dev?rev=5f104c16e0d367b686fba6905550b38ef57653f4)",
+ "surrealdb-sync-protocol 0.1.0 (git+https://github.com/thorgas/surrealdb-sync-engine.dev?rev=5f104c16e0d367b686fba6905550b38ef57653f4)",
  "temp-dir",
  "thiserror",
  "tokio",
@@ -4179,12 +4179,31 @@ name = "surrealdb-sync-client"
 version = "0.1.0"
 dependencies = [
  "serde",
- "surrealdb-sync-protocol",
+ "surrealdb-sync-protocol 0.1.0",
+]
+
+[[package]]
+name = "surrealdb-sync-client"
+version = "0.1.0"
+source = "git+https://github.com/thorgas/surrealdb-sync-engine.dev?rev=5f104c16e0d367b686fba6905550b38ef57653f4#5f104c16e0d367b686fba6905550b38ef57653f4"
+dependencies = [
+ "serde",
+ "surrealdb-sync-protocol 0.1.0 (git+https://github.com/thorgas/surrealdb-sync-engine.dev?rev=5f104c16e0d367b686fba6905550b38ef57653f4)",
 ]
 
 [[package]]
 name = "surrealdb-sync-protocol"
 version = "0.1.0"
+dependencies = [
+ "ciborium",
+ "serde",
+ "sha2",
+]
+
+[[package]]
+name = "surrealdb-sync-protocol"
+version = "0.1.0"
+source = "git+https://github.com/thorgas/surrealdb-sync-engine.dev?rev=5f104c16e0d367b686fba6905550b38ef57653f4#5f104c16e0d367b686fba6905550b38ef57653f4"
 dependencies = [
  "ciborium",
  "serde",

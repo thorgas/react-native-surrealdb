@@ -33,8 +33,27 @@ const commit = {
   operations: [],
 } as const;
 
-function createSync() {
+function createSync(laneCapable = false) {
   const native = {
+    ...(laneCapable ? {
+      laneCapabilitiesJson: vi.fn(() => JSON.stringify({ schemaVersion: 2, storageFormat: 5, pullSourceProfile: "pull-source-v2" })),
+      observeRecordJson: vi.fn(async () => "{}"),
+      enqueueIntentJson: vi.fn(async () => status),
+      materializeNextIntent: vi.fn(async () => status),
+      laneConflictSnapshotJson: vi.fn(async () => undefined),
+      laneResolutionObservationJson: vi.fn(async () => JSON.stringify({ phase: "unknown" })),
+      laneResolutionReceiptJson: vi.fn(async () => JSON.stringify({ status: "unknown" })),
+      acknowledgeLaneResolutionReceipt: vi.fn(async () => status),
+      readIntentRecordJson: vi.fn(async (_recordId: string): Promise<string> => { throw new Error("Intent read fixture not configured"); }),
+      prepareLaneResolutionJson: vi.fn(async (_snapshot: string, _choice: string) => ({ resolutionId: "stable", requestJson: '{"replacement_identity":{"sequence":18446744073709551615}}' })),
+      projectLaneConflictSnapshotJson: vi.fn(() => JSON.stringify({
+        recordId: "recipe:one", coveredIntentPrefixJson: '["intent-1"]',
+        localJson: JSON.stringify({ title: "local" }), remoteJson: JSON.stringify({ title: "remote" }), observedJson: null,
+      })),
+      inspectLaneResolutionJson: vi.fn(async (_snapshot: string, _resolutionId?: string, _requestJson?: string) => JSON.stringify({ state: "absent", receiptJson: null })),
+      materializeNextIntentWithCommitId: vi.fn(async () => status),
+      resolveLaneConflictJson: vi.fn(async () => status),
+    } : {}),
     ...createNativeReadMocks(),
     readCapabilitiesJson: vi.fn(() =>
       JSON.stringify({
@@ -130,6 +149,180 @@ function createAdapter(
 }
 
 describe("ExperimentalSyncHttpAdapter", () => {
+  const v1 = "application/vnd.surrealdb-sync.v1+cbor";
+  const sourceV2 = "application/vnd.surrealdb-sync.pull-source-v2+cbor";
+  const sourceCodec: ExperimentalSyncHttpCodec = {
+    mediaType: v1,
+    encodePushRequest: vi.fn(async () => new ArrayBuffer(0)),
+    decodePushResponse: vi.fn(async () => "{}"),
+    encodePullRequest: vi.fn(async () => new ArrayBuffer(1)),
+    decodePullResponse: vi.fn(async () => "legacy"),
+    decodePullResponseWithSource: vi.fn(async () => JSON.stringify(pullResponse())),
+  };
+
+  it("uses exact source-v2 route and headers while keeping the request v1", async () => {
+    const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+      new Response(new Uint8Array(1), { headers: { "Content-Type": sourceV2 } }),
+    );
+    const { native, sync } = createSync(true);
+    const adapter = new ExperimentalSyncHttpAdapter({
+      sync, baseUrl: "https://sync.example.test", partitionId: "p", clientId: "c",
+      requestedScope: "all", subscriptionRevision: 7n, accessToken: () => "token",
+      codec: sourceCodec, fetch, pullSourceProof: true,
+    });
+    await adapter.pull();
+    expect(fetch.mock.calls[0]?.[0]).toBe("https://sync.example.test/v1/sync/pull/source-v2");
+    const headers = fetch.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    expect(headers.Accept).toBe(sourceV2);
+    expect(headers["Content-Type"]).toBe(v1);
+    expect(sourceCodec.decodePullResponseWithSource).toHaveBeenCalled();
+    expect(sourceCodec.decodePullResponse).not.toHaveBeenCalled();
+    expect(native.pendingJson).not.toHaveBeenCalled();
+    await sync.resolveLaneConflict("resolution-1", "opaque-snapshot", { strategy: "keep_server" });
+    expect(native.resolveLaneConflictJson).toHaveBeenCalledWith(
+      "resolution-1", "opaque-snapshot", JSON.stringify({ strategy: "keep_server" }), undefined,
+    );
+    await expect(sync.laneResolutionReceipt("resolution-1"))
+      .resolves.toBe(JSON.stringify({ status: "unknown" }));
+    await sync.acknowledgeLaneResolutionReceipt("resolution-1");
+    expect(native.acknowledgeLaneResolutionReceipt).toHaveBeenCalledWith("resolution-1", undefined);
+  });
+
+  it("decodes one native intent revision with opaque high-precision counters", async () => {
+    const { native, sync } = createSync(true);
+    new ExperimentalSyncHttpAdapter({
+      sync, baseUrl: "https://sync.example.test", partitionId: "p", clientId: "c",
+      requestedScope: "all", subscriptionRevision: 7n, accessToken: () => "token",
+      codec: sourceCodec, pullSourceProof: true,
+    });
+    native.readIntentRecordJson?.mockResolvedValue(JSON.stringify({
+      viewJson: JSON.stringify({
+        snapshot: {
+          protocolVersion: 1,
+          metadata: {
+            revision: "9007199254740993",
+            scope: { partitionId: "p", scopeIdentity: "all", subscriptionRevision: "7", authorizationRevision: null },
+            asOf: null, readiness: "local_available_awaiting_coverage", coverage: { kind: "unknown" },
+          },
+          rows: {},
+        },
+        cursor: { processEpoch: "test", revision: "9007199254740993" },
+      }),
+      lane: {
+        pendingIntentIds: ["intent-1"], blockedSnapshotJson: "opaque",
+        blockedReason: "conflict", headIdentityJson: null,
+        resolutionRevision: "9007199254740995",
+      },
+    }));
+    const result = await sync.readIntentRecord("recipe:one");
+    expect(result.record.metadata.revision).toBe("9007199254740993");
+    expect(result.lane.resolutionRevision).toBe("9007199254740995");
+    expect(result.lane.pendingIntentIds).toEqual(["intent-1"]);
+    expect(result.lane.blockedReason).toBe("conflict");
+    expect(native.readIntentRecordJson).toHaveBeenCalledWith("recipe:one", undefined);
+  });
+
+  it("prepares and replays opaque lane requests without parsing protocol counters", async () => {
+    const { native, sync } = createSync(true);
+    new ExperimentalSyncHttpAdapter({
+      sync, baseUrl: "https://sync.example.test", partitionId: "p", clientId: "c",
+      requestedScope: "all", subscriptionRevision: 7n, accessToken: () => "token",
+      codec: sourceCodec, pullSourceProof: true,
+    });
+    const snapshot = '{"remote_state":{"version":18446744073709551615}}';
+    const choice = { strategy: "merge" as const, value: { count: 9007199254740993n } };
+    const prepared = await sync.prepareLaneResolution(snapshot, choice);
+    expect(prepared.resolutionId).toBe("stable");
+    expect(native.prepareLaneResolutionJson).toHaveBeenCalledWith(snapshot, expect.any(String), undefined);
+    expect(native.prepareLaneResolutionJson?.mock.calls[0]?.[1]).toContain("9007199254740993");
+    await sync.submitPreparedLaneResolution(prepared.resolutionId, snapshot, prepared.requestJson);
+    expect(native.resolveLaneConflictJson).toHaveBeenCalledWith("stable", snapshot, prepared.requestJson, undefined);
+    const receiptJson = '{"accepted":{"sequence":18446744073709551615}}';
+    native.inspectLaneResolutionJson?.mockResolvedValue(JSON.stringify({ state: "awaiting_pull", receiptJson }));
+    const inspected = await sync.inspectLaneResolution(snapshot, prepared);
+    expect(inspected).toEqual({ state: "awaiting_pull", receiptJson });
+    expect(native.inspectLaneResolutionJson).toHaveBeenCalledWith(snapshot, "stable", prepared.requestJson, undefined);
+    expect(sync.projectLaneConflictSnapshot(snapshot)).toMatchObject({
+      recordId: "recipe:one", coveredIntentPrefixJson: '["intent-1"]',
+      local: { title: "local" }, remote: { title: "remote" }, observed: null,
+    });
+  });
+
+  it("distinguishes supported absence from unsupported or invalid receipt projections", async () => {
+    const { native, sync } = createSync(true);
+    const snapshot = '{"remote_state":{"version":9007199254740993}}';
+    const attempt = { resolutionId: "stable", requestJson: '{"strategy":"keep_server"}' };
+    await expect(sync.inspectLaneResolution(snapshot, attempt)).rejects.toThrow(/matching native source-proof bindings/);
+    expect(native.inspectLaneResolutionJson).not.toHaveBeenCalled();
+    new ExperimentalSyncHttpAdapter({
+      sync, baseUrl: "https://sync.example.test", partitionId: "p", clientId: "c",
+      requestedScope: "all", subscriptionRevision: 7n, accessToken: () => "token",
+      codec: sourceCodec, pullSourceProof: true,
+    });
+    await expect(sync.inspectLaneResolution(snapshot, attempt))
+      .resolves.toEqual({ state: "absent", receiptJson: null });
+    native.inspectLaneResolutionJson?.mockResolvedValueOnce(JSON.stringify({ state: "unknown", receiptJson: null }));
+    await expect(sync.inspectLaneResolution(snapshot, attempt))
+      .resolves.toEqual({ state: "unknown", receiptJson: null });
+    native.inspectLaneResolutionJson?.mockResolvedValueOnce(JSON.stringify({ state: "absent", receiptJson: "{}" }));
+    await expect(sync.inspectLaneResolution(snapshot, attempt)).rejects.toThrow(/Invalid native lane receipt projection/);
+    native.inspectLaneResolutionJson?.mockRejectedValueOnce(new Error("native read failed"));
+    await expect(sync.inspectLaneResolution(snapshot, attempt)).rejects.toThrow("native read failed");
+    expect(native.resolveLaneConflictJson).not.toHaveBeenCalled();
+  });
+
+  it.each(["", v1, "application/vnd.surrealdb-sync.v2+cbor", "application/json"])(
+    "rejects wrong source response profile %s without changing pending state", async (contentType) => {
+      const fetch = vi.fn<typeof globalThis.fetch>().mockResolvedValue(
+        new Response(new Uint8Array(1), { headers: contentType ? { "Content-Type": contentType } : {} }),
+      );
+      const { native, sync } = createSync(true);
+      const adapter = new ExperimentalSyncHttpAdapter({
+        sync, baseUrl: "https://sync.example.test", partitionId: "p", clientId: "c",
+        requestedScope: "all", subscriptionRevision: 7n, accessToken: () => "token",
+        codec: sourceCodec, fetch, pullSourceProof: true,
+      });
+      await expect(adapter.pull()).rejects.toMatchObject({ kind: "content_type" });
+      expect(native.applyPullResponse).not.toHaveBeenCalled();
+      expect(native.pendingJson).not.toHaveBeenCalled();
+    },
+  );
+
+  it("refuses source-proof opt-in without decoder and leaves legacy v1 as default", async () => {
+    const { sync } = createSync();
+    expect(() => new ExperimentalSyncHttpAdapter({
+      sync, baseUrl: "https://sync.example.test", partitionId: "p", clientId: "c",
+      requestedScope: "all", subscriptionRevision: 7n, accessToken: () => "token",
+      codec: { ...sourceCodec, decodePullResponseWithSource: undefined }, pullSourceProof: true,
+    })).toThrow(/source-v2 CBOR decoder/);
+    expect(() => new ExperimentalSyncHttpAdapter({
+      sync, baseUrl: "https://sync.example.test", partitionId: "p", clientId: "c",
+      requestedScope: "all", subscriptionRevision: 7n, accessToken: () => "token",
+      codec: { ...sourceCodec, mediaType: "application/vnd.surrealdb-sync.v2+cbor" },
+      pullSourceProof: true,
+    })).toThrow(/source-v2 CBOR decoder/);
+    await expect(sync.enqueueIntent({ id: "x" }, "{}"))
+      .rejects.toThrow(/source-proof pull capability/);
+  });
+
+  it("refuses old native artifacts and mismatched lane storage before queue mutation", () => {
+    const old = createSync();
+    const options = {
+      baseUrl: "https://sync.example.test", partitionId: "p", clientId: "c",
+      requestedScope: "all", subscriptionRevision: 7n, accessToken: () => "token",
+      codec: sourceCodec, pullSourceProof: true,
+    };
+    expect(() => new ExperimentalSyncHttpAdapter({ ...options, sync: old.sync }))
+      .toThrow(/matching rebuilt native source-proof bindings/);
+    expect(old.native.enqueue).not.toHaveBeenCalled();
+    const wrong = createSync(true);
+    wrong.native.laneCapabilitiesJson?.mockReturnValue(JSON.stringify({
+      schemaVersion: 2, storageFormat: 3, pullSourceProfile: "pull-source-v2",
+    }));
+    expect(() => new ExperimentalSyncHttpAdapter({ ...options, sync: wrong.sync }))
+      .toThrow(/matching rebuilt native source-proof bindings/);
+    expect(wrong.native.enqueue).not.toHaveBeenCalled();
+  });
   it("bootstraps legacy read coverage without deleting or dispatching pending intent", async () => {
     const fetch = vi
       .fn<typeof globalThis.fetch>()

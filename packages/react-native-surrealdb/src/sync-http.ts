@@ -12,6 +12,7 @@ import {
 
 export type ExperimentalSyncHttpCodec = {
   readonly mediaType: string;
+  readonly decodePullResponseWithSource?: (bytes: ArrayBuffer, options?: CallOptions) => Promise<string>;
   encodePushRequest(
     request: ExperimentalSyncPushRequest,
     options?: CallOptions,
@@ -62,6 +63,7 @@ export type ExperimentalSyncPullRequest = {
 };
 
 export type ExperimentalSyncHttpNativeBridge = {
+  decodeSyncPullResponseWithSource?: (bytes: ArrayBuffer, options?: CallOptions) => Promise<string>;
   encodeSyncPushRequest(
     partitionId: string,
     clientId: string,
@@ -87,6 +89,8 @@ export type ExperimentalSyncHttpNativeBridge = {
 };
 
 export type ExperimentalSyncHttpOptions = {
+  /** Required for lane intents: source identity is never inferred from v1 pull. */
+  pullSourceProof?: boolean;
   sync: ExperimentalSyncClient;
   telemetry?: ExperimentalSyncTelemetry;
   /** Defaults to manual; only an explicit opt-in changes local conflict disposition. */
@@ -182,6 +186,7 @@ export function experimentalCanonicalCborSyncHttpCodec(
     async decodePullResponse(bytes, options) {
       return native.decodeSyncPullResponse(bytes, options);
     },
+    decodePullResponseWithSource: native.decodeSyncPullResponseWithSource?.bind(native),
   };
 }
 
@@ -192,6 +197,7 @@ export function experimentalCanonicalCborSyncHttpCodec(
  * and WebSockets may only trigger a later `pull`; they do not carry state.
  */
 export class ExperimentalSyncHttpAdapter {
+  readonly #pullSourceProof: boolean;
   readonly #sync: ExperimentalSyncClient;
   readonly #conflictPolicy: ExperimentalConflictPolicy;
   readonly #baseUrl: string;
@@ -224,6 +230,12 @@ export class ExperimentalSyncHttpAdapter {
     this.#subscriptionRevision = options.subscriptionRevision;
     this.#accessToken = options.accessToken;
     this.#codec = options.codec;
+    this.#pullSourceProof = options.pullSourceProof === true;
+    if (this.#pullSourceProof && (
+      this.#codec.mediaType !== "application/vnd.surrealdb-sync.v1+cbor" ||
+      !this.#codec.decodePullResponseWithSource
+    )) throw new TypeError("source-proof pull requires the native source-v2 CBOR decoder");
+    if (this.#pullSourceProof) this.#sync.enableLaneSourceProof();
     this.#fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
   }
 
@@ -358,7 +370,7 @@ export class ExperimentalSyncHttpAdapter {
         ? undefined
         : await this.#sync.checkpointToken(options);
       const responseJson = await this.#postPull(
-        "/v1/sync/pull",
+        this.#pullSourceProof ? "/v1/sync/pull/source-v2" : "/v1/sync/pull",
         {
           partitionId: this.#partitionId,
           clientId: this.#clientId,
@@ -417,8 +429,11 @@ export class ExperimentalSyncHttpAdapter {
               this.#codec.encodePullRequest(request, boundedOptions),
             )
           : this.#codec.encodePullRequest(request, boundedOptions)),
-        (response) => this.#codec.decodePullResponse(response, boundedOptions),
+        (response) => this.#pullSourceProof
+          ? this.#codec.decodePullResponseWithSource!(response, boundedOptions)
+          : this.#codec.decodePullResponse(response, boundedOptions),
         boundedOptions,
+        this.#pullSourceProof ? "application/vnd.surrealdb-sync.pull-source-v2+cbor" : undefined,
       ),
     );
   }
@@ -428,6 +443,7 @@ export class ExperimentalSyncHttpAdapter {
     body: ExperimentalSyncHttpBody,
     decode: (bytes: ArrayBuffer) => Promise<string>,
     options?: CallOptions,
+    acceptType = this.#codec.mediaType,
   ): Promise<string> {
     const token = await this.#accessToken(options);
     if (token.trim().length === 0) {
@@ -455,7 +471,7 @@ export class ExperimentalSyncHttpAdapter {
       const response = await this.#fetch(`${this.#baseUrl}${path}`, {
         method: "POST",
         headers: {
-          Accept: this.#codec.mediaType,
+          Accept: acceptType,
           Authorization: `Bearer ${token}`,
           "Content-Type": this.#codec.mediaType,
         },
@@ -474,7 +490,7 @@ export class ExperimentalSyncHttpAdapter {
         .get("Content-Type")
         ?.split(";", 1)[0]
         ?.trim();
-      if (contentType !== this.#codec.mediaType) {
+      if (contentType !== acceptType) {
         throw new ExperimentalSyncHttpError(
           "sync HTTP response has an unexpected content type",
           "content_type",

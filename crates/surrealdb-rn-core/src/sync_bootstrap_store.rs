@@ -2917,6 +2917,7 @@ mod tests {
                         id_mappings: vec![],
                     },
                     local_commit: commit,
+                    accepted_epoch: epoch,
                     resolution: None,
                     covered_by_reset: false,
                 });
@@ -2939,6 +2940,7 @@ mod tests {
                         authoritative: RecordState::Tombstone { version: 1 },
                     },
                     local_commit: conflict,
+                    accepted_epoch: None,
                     resolution: None,
                     covered_by_reset: false,
                 });

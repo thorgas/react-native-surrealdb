@@ -24,6 +24,8 @@ use crate::{SurrealDatabase, SurrealRnError};
 const LEGACY_FORMAT_VERSION: i64 = 1;
 const FORMAT_VERSION: i64 = 2;
 const SUBSCRIPTION_FORMAT_VERSION: i64 = 3;
+const LANE_FORMAT_VERSION: i64 = 4;
+const RECEIPT_FORMAT_VERSION: i64 = 5;
 const STATE_TABLE: &str = "_sync_client_state";
 const META_TABLE: &str = "_sync_client_meta";
 const CONFIRMED_TABLE: &str = "_sync_client_confirmed";
@@ -63,13 +65,13 @@ DEFINE FIELD IF NOT EXISTS revision ON _sync_client_state TYPE string;
 DEFINE FIELD IF NOT EXISTS payload ON _sync_client_state TYPE bytes;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_meta SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_meta TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_meta TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4 OR $value = 5;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_meta TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_meta TYPE string;
 DEFINE FIELD IF NOT EXISTS payload ON _sync_client_meta TYPE bytes;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_confirmed SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_confirmed TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_confirmed TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4 OR $value = 5;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_confirmed TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_confirmed TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_confirmed TYPE string;
@@ -77,7 +79,7 @@ DEFINE FIELD IF NOT EXISTS payload ON _sync_client_confirmed TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_confirmed FIELDS partition_id, client_id;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_outbox SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_outbox TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_outbox TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4 OR $value = 5;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_outbox TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_outbox TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_outbox TYPE string;
@@ -85,7 +87,7 @@ DEFINE FIELD IF NOT EXISTS payload ON _sync_client_outbox TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_outbox FIELDS partition_id, client_id;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_outcome SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_outcome TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_outcome TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4 OR $value = 5;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_outcome TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_outcome TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_outcome TYPE string;
@@ -93,14 +95,14 @@ DEFINE FIELD IF NOT EXISTS payload ON _sync_client_outcome TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_outcome FIELDS partition_id, client_id;
 
 DEFINE TABLE IF NOT EXISTS _sync_client_id_map SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_id_map TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_id_map TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4 OR $value = 5;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_id_map TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_id_map TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_id_map TYPE string;
 DEFINE FIELD IF NOT EXISTS payload ON _sync_client_id_map TYPE bytes;
 DEFINE INDEX IF NOT EXISTS by_client ON _sync_client_id_map FIELDS partition_id, client_id;
 DEFINE TABLE IF NOT EXISTS _sync_client_subscription_record SCHEMAFULL PERMISSIONS NONE;
-DEFINE FIELD OVERWRITE format_version ON _sync_client_subscription_record TYPE int ASSERT $value = 2 OR $value = 3;
+DEFINE FIELD OVERWRITE format_version ON _sync_client_subscription_record TYPE int ASSERT $value = 2 OR $value = 3 OR $value = 4 OR $value = 5;
 DEFINE FIELD IF NOT EXISTS partition_id ON _sync_client_subscription_record TYPE string;
 DEFINE FIELD IF NOT EXISTS client_id ON _sync_client_subscription_record TYPE string;
 DEFINE FIELD IF NOT EXISTS component_key ON _sync_client_subscription_record TYPE string;
@@ -144,6 +146,10 @@ pub enum SyncStateError {
 
     #[error("sync state storage revision changed")]
     RevisionConflict,
+
+    #[cfg(test)]
+    #[error("test-only failure after first component write")]
+    InjectedAfterComponentWrite,
 
     #[error("stored sync state is corrupt")]
     CorruptState,
@@ -211,6 +217,8 @@ struct StoredComponentRow {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 struct StateMeta {
+    #[serde(default)]
+    state_version: u16,
     partition_id: String,
     client_id: String,
     requested_scope: String,
@@ -227,6 +235,24 @@ struct StateMeta {
     outbox_keys: Vec<String>,
     outcome_keys: Vec<String>,
     id_map_keys: Vec<ProtocolRecordId>,
+    #[serde(default)]
+    local_intents: Option<
+        BTreeMap<
+            surrealdb_sync_client::LocalIntentId,
+            surrealdb_sync_client::LocalIntent<JsonValue>,
+        >,
+    >,
+    #[serde(default)]
+    lanes: Option<BTreeMap<ProtocolRecordId, surrealdb_sync_client::RecordIntentLane<JsonValue>>>,
+    #[serde(default)]
+    resolution_receipts: Option<
+        BTreeMap<
+            surrealdb_sync_client::LaneResolutionId,
+            surrealdb_sync_client::LaneResolutionReceipt<JsonValue>,
+        >,
+    >,
+    #[serde(default)]
+    last_reset_cursor: Option<surrealdb_sync_protocol::Cursor>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -267,6 +293,8 @@ pub struct SyncStateStore<'a> {
     diagnostics: Option<&'a crate::sync_diagnostics::SyncDiagnostics>,
     #[cfg(test)]
     pause: Option<PersistencePause>,
+    #[cfg(test)]
+    fail_after_components: bool,
     session_generation: Option<u64>,
 }
 
@@ -277,6 +305,8 @@ impl<'a> SyncStateStore<'a> {
             diagnostics: None,
             #[cfg(test)]
             pause: None,
+            #[cfg(test)]
+            fail_after_components: false,
             session_generation: None,
         }
     }
@@ -284,6 +314,11 @@ impl<'a> SyncStateStore<'a> {
     #[cfg(test)]
     pub(crate) fn with_pause(mut self, pause: Option<PersistencePause>) -> Self {
         self.pause = pause;
+        self
+    }
+    #[cfg(test)]
+    fn fail_after_components(mut self) -> Self {
+        self.fail_after_components = true;
         self
     }
     pub(crate) fn with_session_generation(mut self, generation: u64) -> Self {
@@ -467,8 +502,17 @@ impl<'a> SyncStateStore<'a> {
         let client = self.database.client().await.map_err(SyncStateError::Core)?;
         let transaction = client.begin().await.map_err(SyncStateError::Database)?;
         let operation =
-            replace_v2_in_transaction(&transaction, key, expected_revision, None, state, &rows)
-                .await;
+            replace_v2_in_transaction(&transaction, key, expected_revision, None, state, &rows, {
+                #[cfg(test)]
+                {
+                    self.fail_after_components
+                }
+                #[cfg(not(test))]
+                {
+                    false
+                }
+            })
+            .await;
 
         self.finish(transaction, operation).await
     }
@@ -513,6 +557,7 @@ impl<'a> SyncStateStore<'a> {
                 Some(current),
                 next,
                 &rows,
+                false,
             )
             .await?;
             if disposition == SyncStateWrite::Applied {
@@ -552,7 +597,7 @@ impl<'a> SyncStateStore<'a> {
             if decode_record(key, legacy)? != *state {
                 return Err(SyncStateError::RevisionConflict);
             }
-            write_row_diff(&transaction, key, None, &rows).await?;
+            write_row_diff(&transaction, key, None, &rows, false, false).await?;
             apply_projection_diff(&transaction, &BTreeMap::new(), &projection).await?;
             let sentinel = StoredRecord {
                 format_version: FORMAT_VERSION,
@@ -643,6 +688,7 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
         validate_component_key(key)?;
     }
     let meta = encode_tagged(&StateMeta {
+        state_version: state.state_version,
         partition_id: state.partition_id.0.clone(),
         client_id: state.client_id.0.clone(),
         requested_scope: state.requested_scope.0.clone(),
@@ -664,6 +710,10 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
             .map(|outcome| outcome.local_commit.identity.client_commit_id.0.clone())
             .collect(),
         id_map_keys: state.id_map.keys().cloned().collect(),
+        local_intents: Some(state.local_intents.clone()),
+        lanes: Some(state.lanes.clone()),
+        resolution_receipts: Some(state.resolution_receipts.clone()),
+        last_reset_cursor: state.last_reset_cursor.clone(),
     })?;
     let mut components = BTreeMap::new();
     for (key, value) in subscription_records {
@@ -705,11 +755,7 @@ fn normalize_state(state: &StoredSyncState) -> Result<NormalizedRows, SyncStateE
         return Err(SyncStateError::StateTooLarge);
     }
     Ok(NormalizedRows {
-        format_version: if state.subscriptions.is_some() {
-            SUBSCRIPTION_FORMAT_VERSION
-        } else {
-            FORMAT_VERSION
-        },
+        format_version: RECEIPT_FORMAT_VERSION,
         meta,
         components,
     })
@@ -746,6 +792,7 @@ pub(crate) async fn apply_transition_in_transaction(
         Some(current),
         next,
         &rows,
+        false,
     )
     .await?;
     if disposition == SyncStateWrite::Applied {
@@ -791,6 +838,7 @@ async fn replace_v2_in_transaction(
     expected_state: Option<&StoredSyncState>,
     state: &StoredSyncState,
     rows: &NormalizedRows,
+    fail_after_components: bool,
 ) -> Result<SyncStateWrite, SyncStateError> {
     let current = load_v2(Connection::Transaction(transaction), key).await?;
     if let Some(expected_state) = expected_state
@@ -821,7 +869,20 @@ async fn replace_v2_in_transaction(
         return Err(SyncStateError::CorruptState);
     }
     let current_rows = current.as_ref().map(normalize_state).transpose()?;
-    write_row_diff(transaction, key, current_rows.as_ref(), rows).await?;
+    let stored_meta: Option<StoredMetaRow> = transaction
+        .select(meta_record_id(key))
+        .await
+        .map_err(SyncStateError::Database)?;
+    let force_rewrite = stored_meta.is_some_and(|row| row.format_version < RECEIPT_FORMAT_VERSION);
+    write_row_diff(
+        transaction,
+        key,
+        current_rows.as_ref(),
+        rows,
+        fail_after_components,
+        force_rewrite,
+    )
+    .await?;
     Ok(SyncStateWrite::Applied)
 }
 
@@ -830,6 +891,8 @@ async fn write_row_diff(
     key: SyncStateKey<'_>,
     current: Option<&NormalizedRows>,
     next: &NormalizedRows,
+    fail_after_components: bool,
+    force_rewrite: bool,
 ) -> Result<(), SyncStateError> {
     let bootstrap_fence =
         crate::sync_bootstrap_store::guard_state_write(transaction, key, normalized_budget(next)?)
@@ -845,7 +908,7 @@ async fn write_row_diff(
         }
     }
     for (item, payload) in &next.components {
-        if current.and_then(|value| value.components.get(item)) == Some(payload) {
+        if !force_rewrite && current.and_then(|value| value.components.get(item)) == Some(payload) {
             continue;
         }
         let row = StoredComponentRow {
@@ -860,7 +923,13 @@ async fn write_row_diff(
             .content(row)
             .await
             .map_err(SyncStateError::Database)?;
+        #[cfg(test)]
+        if fail_after_components {
+            return Err(SyncStateError::InjectedAfterComponentWrite);
+        }
     }
+    #[cfg(not(test))]
+    let _ = fail_after_components;
     let row = StoredMetaRow {
         format_version: next.format_version,
         partition_id: key.partition_id.0.clone(),
@@ -1109,8 +1178,14 @@ async fn load_v2(
     connection: Connection<'_>,
     key: SyncStateKey<'_>,
 ) -> Result<Option<StoredSyncState>, SyncStateError> {
-    let mut inventory = load_inventory(&connection, key).await?;
-    let Some(row) = connection.meta(meta_record_id(key)).await? else {
+    let stored_meta = connection.meta(meta_record_id(key)).await?;
+    let mut inventory = load_inventory(
+        &connection,
+        key,
+        stored_meta.as_ref().map(|row| row.format_version),
+    )
+    .await?;
+    let Some(row) = stored_meta else {
         return if inventory.is_empty() {
             Ok(None)
         } else {
@@ -1119,7 +1194,12 @@ async fn load_v2(
     };
     validate_meta_row(key, &row)?;
     let mut meta: StateMeta = decode_tagged(&row.payload)?;
-    if (row.format_version == SUBSCRIPTION_FORMAT_VERSION) != meta.subscriptions.is_some() {
+    if (row.format_version == SUBSCRIPTION_FORMAT_VERSION) != meta.subscriptions.is_some()
+        && row.format_version < LANE_FORMAT_VERSION
+        || row.format_version >= LANE_FORMAT_VERSION
+            && (meta.local_intents.is_none() || meta.lanes.is_none())
+        || (row.format_version >= RECEIPT_FORMAT_VERSION) != meta.resolution_receipts.is_some()
+    {
         return Err(SyncStateError::CorruptState);
     }
     if meta.partition_id != key.partition_id.0
@@ -1208,6 +1288,7 @@ async fn load_v2(
         return Err(SyncStateError::CorruptState);
     }
     let state = StoredSyncState {
+        state_version: meta.state_version,
         partition_id: PartitionId(meta.partition_id),
         client_id: ClientId(meta.client_id),
         requested_scope: ScopeIdentity(meta.requested_scope),
@@ -1220,6 +1301,10 @@ async fn load_v2(
         reset_coverage: meta.reset_coverage,
         subscriptions: meta.subscriptions,
         id_map,
+        local_intents: meta.local_intents.unwrap_or_default(),
+        lanes: meta.lanes.unwrap_or_default(),
+        resolution_receipts: meta.resolution_receipts.unwrap_or_default(),
+        last_reset_cursor: meta.last_reset_cursor,
     };
     state.validate().map_err(SyncStateError::InvalidState)?;
     Ok(Some(state))
@@ -1228,6 +1313,7 @@ async fn load_v2(
 async fn load_inventory(
     connection: &Connection<'_>,
     key: SyncStateKey<'_>,
+    meta_format: Option<i64>,
 ) -> Result<BTreeMap<ComponentAddress, Bytes>, SyncStateError> {
     let mut inventory = BTreeMap::new();
     for table in [
@@ -1244,8 +1330,15 @@ async fn load_inventory(
         for row in rows {
             if !matches!(
                 row.format_version,
-                FORMAT_VERSION | SUBSCRIPTION_FORMAT_VERSION
-            ) || row.partition_id != key.partition_id.0
+                FORMAT_VERSION
+                    | SUBSCRIPTION_FORMAT_VERSION
+                    | LANE_FORMAT_VERSION
+                    | RECEIPT_FORMAT_VERSION
+            ) || (meta_format == Some(RECEIPT_FORMAT_VERSION)
+                && row.format_version != RECEIPT_FORMAT_VERSION)
+                || (meta_format != Some(RECEIPT_FORMAT_VERSION)
+                    && row.format_version == RECEIPT_FORMAT_VERSION)
+                || row.partition_id != key.partition_id.0
                 || row.client_id != key.client_id.0
                 || row.payload.len() > MAX_SYNC_STATE_BYTES
             {
@@ -1272,7 +1365,7 @@ fn take_component(
 }
 
 fn validate_meta_row(key: SyncStateKey<'_>, row: &StoredMetaRow) -> Result<(), SyncStateError> {
-    validate_meta_row_version(key, row, SUBSCRIPTION_FORMAT_VERSION)
+    validate_meta_row_version(key, row, RECEIPT_FORMAT_VERSION)
 }
 
 fn validate_meta_row_version(
@@ -1691,11 +1784,15 @@ fn scope_barrier_record_id(key: SyncStateKey<'_>) -> NativeRecordId {
 #[cfg(test)]
 mod tests {
     use serde_json::json;
-    use surrealdb_sync_client::{ClientRuntime, OptimisticRecord};
+    use surrealdb_sync_client::{
+        ClientRuntime, LaneBlock, LaneBlockReason, LaneConflictResolutionRequest, LaneHead,
+        LaneHeadRole, LaneResolutionId, LocalIntent, LocalIntentId, LocalIntentValue,
+        OptimisticRecord, RecordIntentLane,
+    };
     use surrealdb_sync_protocol::{
         BaseVersion, Checkpoint, ClientCommit, ClientCommitId, CommitIdentity, Cursor,
-        DurableOutcome, Fingerprint, OpaqueCheckpoint, Operation, RecordId, RecordState,
-        RejectReason, ScopeIdentity, ScopeSnapshot,
+        DurableOutcome, Fingerprint, OpaqueCheckpoint, Operation, PullResponse, RecordId,
+        RecordState, RejectReason, ResetReason, ResetSnapshot, ScopeIdentity, ScopeSnapshot,
     };
 
     use super::*;
@@ -2085,7 +2182,7 @@ mod tests {
         let client = database.client().await.unwrap();
         let transaction = client.begin().await.unwrap();
         assert_eq!(
-            replace_v2_in_transaction(&transaction, key, Some(0), None, &queued, &rows)
+            replace_v2_in_transaction(&transaction, key, Some(0), None, &queued, &rows, false)
                 .await
                 .unwrap(),
             SyncStateWrite::Applied
@@ -2094,7 +2191,7 @@ mod tests {
         assert_eq!(store.load(key).await.unwrap(), Some(initial));
 
         let transaction = client.begin().await.unwrap();
-        replace_v2_in_transaction(&transaction, key, Some(0), None, &queued, &rows)
+        replace_v2_in_transaction(&transaction, key, Some(0), None, &queued, &rows, false)
             .await
             .unwrap();
         transaction.commit().await.unwrap();
@@ -2102,7 +2199,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subscription_format_upgrade_preserves_pending_and_refuses_v2_downgrade() {
+    async fn subscription_state_preserves_pending_and_refuses_v2_reader_or_state_downgrade() {
         let directory = temp_dir::TempDir::new().unwrap();
         let database = surrealkv_database(directory.path()).await;
         let store = SyncStateStore::new(&database);
@@ -2125,7 +2222,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(before.format_version, FORMAT_VERSION);
+        assert_eq!(before.format_version, RECEIPT_FORMAT_VERSION);
         let mut runtime = surrealdb_sync_client::ClientRuntime::open(queued.clone()).unwrap();
         let start = runtime
             .prepare_start_subscription(
@@ -2167,7 +2264,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(metadata.format_version, SUBSCRIPTION_FORMAT_VERSION);
+        assert_eq!(metadata.format_version, RECEIPT_FORMAT_VERSION);
         // Models the prior V2 reader's exact version check, before decode or mutation.
         assert!(matches!(
             validate_meta_row_version(key, &metadata, FORMAT_VERSION),
@@ -2264,7 +2361,7 @@ mod tests {
         let client = database.client().await.unwrap();
         let transaction = client.begin().await.unwrap();
         let rows = normalize_state(&uncommitted).unwrap();
-        replace_v2_in_transaction(&transaction, key, Some(1), None, &uncommitted, &rows)
+        replace_v2_in_transaction(&transaction, key, Some(1), None, &uncommitted, &rows, false)
             .await
             .unwrap();
         drop(transaction);
@@ -2526,6 +2623,7 @@ mod tests {
                 identity: resolved.identity,
                 reason: RejectReason::InvalidOperation,
             },
+            accepted_epoch: None,
             resolution: None,
             covered_by_reset: false,
         });
@@ -2552,6 +2650,585 @@ mod tests {
         );
         let key = SyncStateKey::new(&state.partition_id, &state.client_id);
         assert_eq!(store.load(key).await.unwrap(), Some(state.clone()));
+    }
+
+    #[tokio::test]
+    async fn v2_v3_normalized_rows_migrate_populated_state_and_reopen_losslessly() {
+        for version in [FORMAT_VERSION, SUBSCRIPTION_FORMAT_VERSION] {
+            let directory = temp_dir::TempDir::new().unwrap();
+            let database = surrealkv_database(directory.path()).await;
+            let store = SyncStateStore::new(&database);
+            store.define_schema().await.unwrap();
+            let mut state = enqueue(
+                empty_state("migration", &format!("client-{version}")),
+                "pending",
+                "recipe:local",
+                json!({"title": "kept"}),
+            );
+            state.confirmed.insert(
+                RecordId("recipe:deleted".into()),
+                RecordState::Tombstone { version: 12 },
+            );
+            state.outcomes.push(ResolvedCommit {
+                local_commit: ClientCommit {
+                    identity: CommitIdentity {
+                        client_commit_id: ClientCommitId("outcome".into()),
+                        fingerprint: Fingerprint("outcome-fp".into()),
+                    },
+                    operations: vec![Operation::Delete {
+                        record_id: RecordId("recipe:outcome".into()),
+                        base_version: 4,
+                    }],
+                },
+                outcome: DurableOutcome::Rejected {
+                    identity: CommitIdentity {
+                        client_commit_id: ClientCommitId("outcome".into()),
+                        fingerprint: Fingerprint("outcome-fp".into()),
+                    },
+                    reason: RejectReason::InvalidOperation,
+                },
+                accepted_epoch: None,
+                resolution: None,
+                covered_by_reset: false,
+            });
+            let accepted = ClientCommit {
+                identity: CommitIdentity {
+                    client_commit_id: ClientCommitId("accepted-legacy".into()),
+                    fingerprint: Fingerprint("accepted-legacy-fp".into()),
+                },
+                operations: vec![Operation::Delete {
+                    record_id: RecordId("recipe:accepted".into()),
+                    base_version: 8,
+                }],
+            };
+            state.outcomes.push(ResolvedCommit {
+                outcome: DurableOutcome::Accepted {
+                    identity: accepted.identity.clone(),
+                    sequence: 22,
+                    id_mappings: Vec::new(),
+                },
+                local_commit: accepted,
+                accepted_epoch: None,
+                resolution: None,
+                covered_by_reset: false,
+            });
+            state.id_map.insert(
+                RecordId("recipe:temporary".into()),
+                RecordId("recipe:canonical".into()),
+            );
+            state.checkpoint = Some(Checkpoint {
+                token: OpaqueCheckpoint("cursor-token".into()),
+                cursor: Cursor {
+                    epoch: 9,
+                    sequence: 41,
+                },
+                scope: ScopeSnapshot {
+                    identity: ScopeIdentity("all".into()),
+                    authorization_revision: 3,
+                    subscription_revision: 1,
+                },
+            });
+            if version == SUBSCRIPTION_FORMAT_VERSION {
+                state.subscriptions = Some(surrealdb_sync_client::DurableSubscriptions {
+                    cancelled: BTreeMap::from([("sub-1".into(), 1)]),
+                    ..Default::default()
+                });
+            }
+            let old_rows = normalize_state(&state).unwrap();
+            let mut old_meta: StateMeta = decode_tagged(&old_rows.meta).unwrap();
+            old_meta.local_intents = None;
+            old_meta.lanes = None;
+            old_meta.last_reset_cursor = None;
+            old_meta.resolution_receipts = None;
+            let mut old_meta = encode_tagged(&old_meta).unwrap();
+            let mut without_state_version: JsonValue = decode_tagged(&old_meta).unwrap();
+            without_state_version
+                .as_object_mut()
+                .unwrap()
+                .remove("state_version");
+            old_meta = encode_tagged(&without_state_version).unwrap();
+            state.state_version = 0;
+            let key = SyncStateKey::new(&state.partition_id, &state.client_id);
+            let client = database.client().await.unwrap();
+            let _: Option<Value> = client
+                .upsert(meta_record_id(key))
+                .content(StoredMetaRow {
+                    format_version: version,
+                    partition_id: state.partition_id.0.clone(),
+                    client_id: state.client_id.0.clone(),
+                    payload: old_meta.into(),
+                })
+                .await
+                .unwrap();
+            for (address, payload) in &old_rows.components {
+                let _: Option<Value> = client
+                    .upsert(component_record_id(key, address))
+                    .content(StoredComponentRow {
+                        format_version: version,
+                        partition_id: state.partition_id.0.clone(),
+                        client_id: state.client_id.0.clone(),
+                        component_key: address.key.clone(),
+                        payload: payload.clone().into(),
+                    })
+                    .await
+                    .unwrap();
+            }
+            let loaded = store.load(key).await.unwrap().unwrap();
+            assert_eq!(loaded, state, "legacy format {version}");
+            let still_legacy: StoredMetaRow =
+                client.select(meta_record_id(key)).await.unwrap().unwrap();
+            assert_eq!(still_legacy.format_version, version);
+            let mut original_component_rows = Vec::new();
+            for address in old_rows.components.keys() {
+                let row: StoredComponentRow = client
+                    .select(component_record_id(key, address))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                original_component_rows.push((address.clone(), row));
+            }
+            let mut migrated = loaded.clone();
+            migrated.revision += 1;
+            let mut wrong_revision = migrated.clone();
+            wrong_revision.revision += 1;
+            assert!(matches!(
+                store
+                    .save_atomic(Some(loaded.revision + 1), &wrong_revision)
+                    .await,
+                Err(SyncStateError::RevisionConflict)
+            ));
+            let after_conflict: StoredMetaRow =
+                client.select(meta_record_id(key)).await.unwrap().unwrap();
+            assert_eq!(after_conflict.format_version, still_legacy.format_version);
+            assert_eq!(after_conflict.payload, still_legacy.payload);
+            for (address, original) in &original_component_rows {
+                let after: StoredComponentRow = client
+                    .select(component_record_id(key, address))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(after.format_version, original.format_version);
+                assert_eq!(after.partition_id, original.partition_id);
+                assert_eq!(after.client_id, original.client_id);
+                assert_eq!(after.component_key, original.component_key);
+                assert_eq!(after.payload, original.payload);
+            }
+            assert_eq!(store.load(key).await.unwrap(), Some(loaded.clone()));
+
+            let rows = normalize_state(&migrated).unwrap();
+            let transaction = client.clone().begin().await.unwrap();
+            assert_eq!(
+                replace_v2_in_transaction(
+                    &transaction,
+                    key,
+                    Some(loaded.revision),
+                    None,
+                    &migrated,
+                    &rows,
+                    false,
+                )
+                .await
+                .unwrap(),
+                SyncStateWrite::Applied
+            );
+            transaction.cancel().await.unwrap();
+            let meta_after_applied_cancel: StoredMetaRow =
+                client.select(meta_record_id(key)).await.unwrap().unwrap();
+            assert_eq!(
+                meta_after_applied_cancel.format_version,
+                still_legacy.format_version
+            );
+            assert_eq!(meta_after_applied_cancel.payload, still_legacy.payload);
+            for (address, original) in &original_component_rows {
+                let after: StoredComponentRow = client
+                    .select(component_record_id(key, address))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(after.format_version, original.format_version);
+                assert_eq!(after.payload, original.payload);
+            }
+            assert_eq!(store.load(key).await.unwrap(), Some(loaded.clone()));
+
+            // Exercise the real save_atomic transaction after its component
+            // rewrites, before the metadata upsert. The error must cancel it.
+            let injected = SyncStateStore::new(&database).fail_after_components();
+            assert!(matches!(
+                injected.save_atomic(Some(loaded.revision), &migrated).await,
+                Err(SyncStateError::InjectedAfterComponentWrite)
+            ));
+            let meta_after_injection: StoredMetaRow =
+                client.select(meta_record_id(key)).await.unwrap().unwrap();
+            assert_eq!(
+                meta_after_injection.format_version,
+                still_legacy.format_version
+            );
+            assert_eq!(meta_after_injection.payload, still_legacy.payload);
+            for (address, original) in &original_component_rows {
+                let after: StoredComponentRow = client
+                    .select(component_record_id(key, address))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(after.format_version, original.format_version);
+                assert_eq!(after.payload, original.payload);
+            }
+            assert_eq!(store.load(key).await.unwrap(), Some(loaded.clone()));
+
+            // The legacy accepted receipt has no epoch or reset proof. Opening
+            // it cannot turn an ACK into causal permission for a dependent edit.
+            let runtime = ClientRuntime::open(loaded.clone()).unwrap();
+            let accepted_id = RecordId("recipe:accepted".into());
+            let observation = runtime.observe_record(&accepted_id);
+            let prepared = runtime
+                .prepare_enqueue_intent(
+                    LocalIntent {
+                        id: LocalIntentId(format!("post-legacy-{version}")),
+                        record_id: accepted_id.clone(),
+                        value: LocalIntentValue::Deleted,
+                        observation: None,
+                    },
+                    observation,
+                )
+                .unwrap();
+            let reopened = ClientRuntime::open(prepared.state().clone()).unwrap();
+            assert_eq!(
+                reopened.state().lanes[&accepted_id]
+                    .blocked
+                    .as_ref()
+                    .unwrap()
+                    .reason,
+                surrealdb_sync_client::LaneBlockReason::LegacyHandoffPending
+            );
+            let reset = ResetSnapshot {
+                reason: ResetReason::EpochChanged,
+                checkpoint: loaded.checkpoint.clone().unwrap(),
+                records: vec![],
+            };
+            let refreshed = reopened
+                .prepare_pull_response(PullResponse::Reset(reset))
+                .unwrap();
+            assert!(refreshed.state().lanes[&accepted_id].blocked.is_none());
+
+            // An interrupted migration after a component write must roll back
+            // before the metadata row is replaced.
+            let transaction = client.clone().begin().await.unwrap();
+            let (first_address, _) = &original_component_rows[0];
+            let mut partial: StoredComponentRow = transaction
+                .select(component_record_id(key, first_address))
+                .await
+                .unwrap()
+                .unwrap();
+            partial.format_version = LANE_FORMAT_VERSION;
+            let _: Option<Value> = transaction
+                .upsert(component_record_id(key, first_address))
+                .content(partial)
+                .await
+                .unwrap();
+            transaction.cancel().await.unwrap();
+            let after_rollback: StoredComponentRow = client
+                .select(component_record_id(key, first_address))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                after_rollback.format_version,
+                original_component_rows[0].1.format_version
+            );
+            assert_eq!(after_rollback.payload, original_component_rows[0].1.payload);
+            let meta_after_rollback: StoredMetaRow =
+                client.select(meta_record_id(key)).await.unwrap().unwrap();
+            assert_eq!(
+                meta_after_rollback.format_version,
+                still_legacy.format_version
+            );
+            assert_eq!(meta_after_rollback.payload, still_legacy.payload);
+            assert_eq!(store.load(key).await.unwrap(), Some(loaded.clone()));
+            // Normalized v2/v3 migration is deliberately lazy: the next
+            // successful save rewrites all components and metadata atomically.
+            store
+                .save_atomic(Some(loaded.revision), &migrated)
+                .await
+                .unwrap();
+            let upgraded: StoredMetaRow =
+                client.select(meta_record_id(key)).await.unwrap().unwrap();
+            assert_eq!(upgraded.format_version, RECEIPT_FORMAT_VERSION);
+            for address in old_rows.components.keys() {
+                let upgraded_component: StoredComponentRow = client
+                    .select(component_record_id(key, address))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                assert_eq!(upgraded_component.format_version, RECEIPT_FORMAT_VERSION);
+            }
+            drop(client);
+            database.close().await.unwrap();
+            drop(database);
+            let reopened = surrealkv_database(directory.path()).await;
+            assert_eq!(
+                SyncStateStore::new(&reopened).load(key).await.unwrap(),
+                Some(migrated)
+            );
+            reopened.close().await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn lane_format_roundtrips_all_engine_lane_fields_and_rejects_bad_versions() {
+        let database = memory_database().await;
+        let store = SyncStateStore::new(&database);
+        store.define_schema().await.unwrap();
+        let mut state = empty_state("lane", "client");
+        state.state_version = 2;
+        let id = LocalIntentId("intent-1".into());
+        state.local_intents.insert(
+            id.clone(),
+            LocalIntent {
+                id: id.clone(),
+                record_id: RecordId("recipe:one".into()),
+                value: LocalIntentValue::Present {
+                    value: json!({"title":"one"}),
+                    reference: None,
+                },
+                observation: None,
+            },
+        );
+        let second_id = LocalIntentId("intent-2".into());
+        state.local_intents.insert(
+            second_id.clone(),
+            LocalIntent {
+                id: second_id.clone(),
+                record_id: RecordId("recipe:one".into()),
+                value: LocalIntentValue::Deleted,
+                observation: None,
+            },
+        );
+        let mut lane = RecordIntentLane::default();
+        lane.intent_history.push(id.clone());
+        lane.intent_history.push(second_id.clone());
+        lane.pending_intents.push(id.clone());
+        lane.pending_intents.push(second_id);
+        lane.resolution_revision = 7;
+        let identity = CommitIdentity {
+            client_commit_id: ClientCommitId("head".into()),
+            fingerprint: Fingerprint("head-fp".into()),
+        };
+        lane.head = Some(LaneHead {
+            intent_id: id.clone(),
+            identity: identity.clone(),
+            accepted_epoch: None,
+            accepted_sequence: None,
+            pull_proof: None,
+            role: LaneHeadRole::Intent,
+        });
+        lane.blocked = Some(LaneBlock {
+            identity: identity.clone(),
+            remote_state: RecordState::Tombstone { version: 6 },
+            observed_state: Some(RecordState::Absent),
+            reason: LaneBlockReason::Conflict,
+            remote_source: None,
+            checkpoint: Some(Cursor {
+                epoch: 2,
+                sequence: 5,
+            }),
+        });
+        state.outcomes.push(ResolvedCommit {
+            local_commit: ClientCommit {
+                identity: identity.clone(),
+                operations: vec![Operation::Upsert {
+                    record_id: RecordId("recipe:one".into()),
+                    base_version: BaseVersion::Absent,
+                    value: json!({"title":"one"}),
+                    reference: None,
+                }],
+            },
+            outcome: DurableOutcome::Conflict {
+                identity,
+                record_id: RecordId("recipe:one".into()),
+                authoritative: RecordState::Tombstone { version: 6 },
+            },
+            accepted_epoch: None,
+            resolution: None,
+            covered_by_reset: false,
+        });
+        state.lanes.insert(RecordId("recipe:one".into()), lane);
+        state.last_reset_cursor = Some(Cursor {
+            epoch: 2,
+            sequence: 5,
+        });
+        let key = SyncStateKey::new(&state.partition_id, &state.client_id);
+        store.save_atomic(None, &state).await.unwrap();
+        assert_eq!(store.load(key).await.unwrap(), Some(state.clone()));
+        let reopened = ClientRuntime::open(store.load(key).await.unwrap().unwrap()).unwrap();
+        let snapshot = reopened
+            .lane_conflict_snapshot(&RecordId("recipe:one".into()))
+            .unwrap();
+        assert_eq!(snapshot.covered_intents().len(), 2);
+        let resolution_id = LaneResolutionId("resolved-one".into());
+        let resolved = reopened
+            .prepare_resolve_lane_conflict(
+                resolution_id.clone(),
+                &snapshot,
+                LaneConflictResolutionRequest::KeepServer,
+            )
+            .unwrap();
+        store
+            .save_atomic(Some(state.revision), resolved.state())
+            .await
+            .unwrap();
+        let reloaded = store.load(key).await.unwrap().unwrap();
+        let receipt = &reloaded.resolution_receipts[&resolution_id];
+        assert_eq!(receipt.snapshot, snapshot);
+        assert_eq!(
+            receipt.status,
+            surrealdb_sync_client::LaneResolutionStatus::KeepServerApplied
+        );
+        assert_eq!(
+            reloaded.lanes[&RecordId("recipe:one".into())].resolution_revision,
+            8
+        );
+
+        let client = database.client().await.unwrap();
+        let mut row: StoredMetaRow = client.select(meta_record_id(key)).await.unwrap().unwrap();
+        row.format_version = RECEIPT_FORMAT_VERSION + 1;
+        assert!(matches!(
+            validate_meta_row(key, &row),
+            Err(SyncStateError::CorruptState)
+        ));
+        row.format_version = RECEIPT_FORMAT_VERSION;
+        let mut meta: JsonValue = decode_tagged(&row.payload).unwrap();
+        meta.as_object_mut().unwrap().remove("lanes");
+        row.payload = encode_tagged(&meta).unwrap().into();
+        let _: Option<Value> = client
+            .upsert(meta_record_id(key))
+            .content(row)
+            .await
+            .unwrap();
+        assert!(matches!(
+            store.load(key).await,
+            Err(SyncStateError::CorruptState)
+        ));
+    }
+
+    #[tokio::test]
+    async fn receiptless_format_four_migrates_only_on_successful_cas_save() {
+        let database = memory_database().await;
+        let store = SyncStateStore::new(&database);
+        store.define_schema().await.unwrap();
+        let mut legacy = empty_state("format-four", "client");
+        legacy.state_version = 3;
+        legacy.confirmed.insert(
+            RecordId("recipe:one".into()),
+            RecordState::Tombstone { version: 4 },
+        );
+        let rows = normalize_state(&legacy).unwrap();
+        let mut meta: StateMeta = decode_tagged(&rows.meta).unwrap();
+        meta.resolution_receipts = None;
+        let key = SyncStateKey::new(&legacy.partition_id, &legacy.client_id);
+        let client = database.client().await.unwrap();
+        let _: Option<Value> = client
+            .upsert(meta_record_id(key))
+            .content(StoredMetaRow {
+                format_version: LANE_FORMAT_VERSION,
+                partition_id: legacy.partition_id.0.clone(),
+                client_id: legacy.client_id.0.clone(),
+                payload: encode_tagged(&meta).unwrap().into(),
+            })
+            .await
+            .unwrap();
+        for (address, payload) in &rows.components {
+            let _: Option<Value> = client
+                .upsert(component_record_id(key, address))
+                .content(StoredComponentRow {
+                    format_version: LANE_FORMAT_VERSION,
+                    partition_id: legacy.partition_id.0.clone(),
+                    client_id: legacy.client_id.0.clone(),
+                    component_key: address.key.clone(),
+                    payload: payload.clone().into(),
+                })
+                .await
+                .unwrap();
+        }
+        assert_eq!(store.load(key).await.unwrap(), Some(legacy.clone()));
+        let mut next = legacy.clone();
+        next.revision += 1;
+        let mut wrong_revision = next.clone();
+        wrong_revision.revision = 100;
+        assert!(matches!(
+            store.save_atomic(Some(99), &wrong_revision).await,
+            Err(SyncStateError::RevisionConflict)
+        ));
+        let before: StoredMetaRow = client.select(meta_record_id(key)).await.unwrap().unwrap();
+        assert_eq!(before.format_version, LANE_FORMAT_VERSION);
+        store
+            .save_atomic(Some(legacy.revision), &next)
+            .await
+            .unwrap();
+        let after: StoredMetaRow = client.select(meta_record_id(key)).await.unwrap().unwrap();
+        assert_eq!(after.format_version, RECEIPT_FORMAT_VERSION);
+        for address in rows.components.keys() {
+            let row: StoredComponentRow = client
+                .select(component_record_id(key, address))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.format_version, RECEIPT_FORMAT_VERSION);
+        }
+        assert_eq!(store.load(key).await.unwrap(), Some(next));
+    }
+
+    #[tokio::test]
+    async fn receipt_format_rejects_missing_map_and_mixed_component_versions() {
+        let database = memory_database().await;
+        let store = SyncStateStore::new(&database);
+        store.define_schema().await.unwrap();
+        let mut state = empty_state("receipt-format", "client");
+        state.confirmed.insert(
+            RecordId("recipe:one".into()),
+            RecordState::Tombstone { version: 4 },
+        );
+        let key = SyncStateKey::new(&state.partition_id, &state.client_id);
+        store.save_atomic(None, &state).await.unwrap();
+        let client = database.client().await.unwrap();
+        let mut meta_row: StoredMetaRow =
+            client.select(meta_record_id(key)).await.unwrap().unwrap();
+        let original_meta = meta_row.payload.clone();
+        let mut meta: JsonValue = decode_tagged(&meta_row.payload).unwrap();
+        meta.as_object_mut().unwrap().remove("resolution_receipts");
+        meta_row.payload = encode_tagged(&meta).unwrap().into();
+        let _: Option<Value> = client
+            .upsert(meta_record_id(key))
+            .content(meta_row)
+            .await
+            .unwrap();
+        assert!(matches!(
+            store.load(key).await,
+            Err(SyncStateError::CorruptState)
+        ));
+        let mut meta_row: StoredMetaRow =
+            client.select(meta_record_id(key)).await.unwrap().unwrap();
+        meta_row.payload = original_meta;
+        let _: Option<Value> = client
+            .upsert(meta_record_id(key))
+            .content(meta_row)
+            .await
+            .unwrap();
+        let address = address(CONFIRMED_TABLE, "recipe:one".into());
+        let mut component: StoredComponentRow = client
+            .select(component_record_id(key, &address))
+            .await
+            .unwrap()
+            .unwrap();
+        component.format_version = LANE_FORMAT_VERSION;
+        let _: Option<Value> = client
+            .upsert(component_record_id(key, &address))
+            .content(component)
+            .await
+            .unwrap();
+        assert!(matches!(
+            store.load(key).await,
+            Err(SyncStateError::CorruptState)
+        ));
     }
 
     #[tokio::test]

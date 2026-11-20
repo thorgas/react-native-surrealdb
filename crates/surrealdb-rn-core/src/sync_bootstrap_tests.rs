@@ -924,6 +924,7 @@ async fn authorization_advance_complete_keeps_canonical_pending_outcome_and_subs
                 state.outcomes.push(ResolvedCommit {
                     local_commit: local,
                     outcome,
+                    accepted_epoch: None,
                     resolution: None,
                     covered_by_reset: false,
                 });

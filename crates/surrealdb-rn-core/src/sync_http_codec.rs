@@ -13,7 +13,8 @@ use surrealdb_sync_protocol::{
     AppliedRecord, CanonicalValue, ClientCommit, ClientId, DurableOutcome, OpaqueCheckpoint,
     PartitionId, PullBatch, PullCommit, PullFrame, PullRequest, PullResponse, PushRequest,
     PushResponse, RecordState, ResetSnapshot, SchemaVersion, ScopeIdentity, SnapshotRecord,
-    decode_pull_response, decode_push_response, encode_pull_request, encode_push_request,
+    decode_pull_response, decode_pull_response_with_source, decode_push_response,
+    encode_pull_request, encode_push_request,
 };
 
 use crate::sync_client::NativeSyncError;
@@ -73,6 +74,16 @@ pub async fn encode_sync_pull_request(
 #[uniffi::export(async_runtime = "tokio")]
 pub async fn decode_sync_pull_response(bytes: Vec<u8>) -> Result<String, NativeSyncError> {
     let response = decode_pull_response(&bytes).map_err(|_| NativeSyncError::Protocol)?;
+    encode_json(&pull_response_to_json(response)?)
+}
+
+/// Decode only the opt-in source-proof pull response envelope.
+#[uniffi::export(async_runtime = "tokio")]
+pub async fn decode_sync_pull_response_with_source(
+    bytes: Vec<u8>,
+) -> Result<String, NativeSyncError> {
+    let response =
+        decode_pull_response_with_source(&bytes).map_err(|_| NativeSyncError::Protocol)?;
     encode_json(&pull_response_to_json(response)?)
 }
 

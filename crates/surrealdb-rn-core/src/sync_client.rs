@@ -13,11 +13,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Instant;
 
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value as JsonValue;
 use surrealdb_sync_client::{
     AutomaticConflictPolicy, ClientError, ClientRuntime, ConflictResolutionRequest,
-    PreparedTransition,
+    LaneConflictResolutionRequest, LaneConflictSnapshot, LaneHeadRole, LaneResolutionDecision,
+    LaneResolutionId, LocalIntent, LocalIntentValue, PreparedTransition, RecordObservation,
 };
 use surrealdb_sync_protocol::{
     BaseVersion, ClientCommit, ClientCommitId, ClientId, CommitIdentity, DurableOutcome,
@@ -52,6 +54,96 @@ pub struct NativeSyncStatus {
     pub conflict_count: u32,
     pub cursor_epoch: Option<u64>,
     pub cursor_sequence: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, uniffi::Record)]
+pub struct NativePreparedLaneResolution {
+    pub resolution_id: String,
+    pub request_json: String,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "strategy", rename_all = "snake_case", deny_unknown_fields)]
+enum NativeLaneResolutionChoice {
+    KeepServer,
+    KeepLocal,
+    Merge {
+        value: JsonValue,
+        reference: Option<RecordId>,
+    },
+}
+
+fn lane_resolution_request(
+    choice: NativeLaneResolutionChoice,
+    replacement_identity: CommitIdentity,
+) -> LaneConflictResolutionRequest<JsonValue> {
+    match choice {
+        NativeLaneResolutionChoice::KeepServer => LaneConflictResolutionRequest::KeepServer,
+        NativeLaneResolutionChoice::KeepLocal => LaneConflictResolutionRequest::KeepLocal {
+            replacement_identity,
+        },
+        NativeLaneResolutionChoice::Merge { value, reference } => {
+            LaneConflictResolutionRequest::Merge {
+                replacement_identity,
+                replacement: LocalIntentValue::Present { value, reference },
+            }
+        }
+    }
+}
+
+fn with_resolution_fingerprint(
+    request: LaneConflictResolutionRequest<JsonValue>,
+    fingerprint: Fingerprint,
+) -> LaneConflictResolutionRequest<JsonValue> {
+    match request {
+        LaneConflictResolutionRequest::KeepServer => LaneConflictResolutionRequest::KeepServer,
+        LaneConflictResolutionRequest::KeepLocal {
+            mut replacement_identity,
+        } => {
+            replacement_identity.fingerprint = fingerprint;
+            LaneConflictResolutionRequest::KeepLocal {
+                replacement_identity,
+            }
+        }
+        LaneConflictResolutionRequest::Merge {
+            mut replacement_identity,
+            replacement,
+        } => {
+            replacement_identity.fingerprint = fingerprint;
+            LaneConflictResolutionRequest::Merge {
+                replacement_identity,
+                replacement,
+            }
+        }
+    }
+}
+
+fn resolution_request_matches_receipt(
+    request: &LaneConflictResolutionRequest<JsonValue>,
+    receipt: &surrealdb_sync_client::LaneResolutionReceipt<JsonValue>,
+) -> bool {
+    match request {
+        LaneConflictResolutionRequest::KeepServer => {
+            receipt.decision == LaneResolutionDecision::KeepServer
+                && receipt.replacement_identity.is_none()
+        }
+        LaneConflictResolutionRequest::KeepLocal {
+            replacement_identity,
+        } => {
+            receipt.decision == LaneResolutionDecision::KeepLocal
+                && receipt.replacement_identity.as_ref() == Some(replacement_identity)
+        }
+        LaneConflictResolutionRequest::Merge {
+            replacement_identity,
+            replacement,
+        } => {
+            receipt.decision
+                == LaneResolutionDecision::Merge {
+                    replacement: replacement.clone(),
+                }
+                && receipt.replacement_identity.as_ref() == Some(replacement_identity)
+        }
+    }
 }
 
 /// Counts remain available when a persisted scope barrier blocks ordinary reads.
@@ -478,6 +570,348 @@ impl NativeSyncClient {
 
 #[uniffi::export(async_runtime = "tokio")]
 impl NativeSyncClient {
+    pub fn lane_capabilities_json(&self) -> String {
+        serde_json::json!({
+            "schemaVersion": 2,
+            "storageFormat": 5,
+            "pullSourceProfile": "pull-source-v2"
+        })
+        .to_string()
+    }
+
+    /// Opaque edit token containing the confirmed record and visible lane prefix.
+    pub async fn observe_record_json(&self, record_id: String) -> Result<String, NativeSyncError> {
+        let slot = self.lock_runtime().await;
+        encode_output(&slot.read_client()?.observe_record(&RecordId(record_id)))
+    }
+
+    pub async fn lane_conflict_snapshot_json(
+        &self,
+        record_id: String,
+    ) -> Result<Option<String>, NativeSyncError> {
+        let slot = self.lock_runtime().await;
+        slot.read_client()?
+            .lane_conflict_snapshot(&RecordId(record_id))
+            .map(|snapshot| encode_output(&snapshot))
+            .transpose()
+    }
+
+    /// One locked revision of the optimistic read row and its durable intent
+    /// lane. Pending intent IDs include edits that have no wire commit yet.
+    pub async fn read_intent_record_json(
+        &self,
+        record_id: String,
+    ) -> Result<String, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        let id = RecordId(record_id.clone());
+        let mut view = slot.journal.bootstrap(slot.read_client()?)?;
+        let runtime = slot.read_client()?;
+        let rows = view["snapshot"]["rows"]
+            .as_object_mut()
+            .ok_or(NativeSyncError::Internal)?;
+        rows.retain(|key, _| key == &record_id);
+        let lane = runtime.state().lanes.get(&id);
+        let snapshot_json = runtime
+            .lane_conflict_snapshot(&id)
+            .map(|snapshot| encode_output(&snapshot))
+            .transpose()?;
+        let lane = serde_json::json!({
+            "pendingIntentIds": lane.map(|lane| lane.pending_intents.iter().map(|id| id.0.clone()).collect::<Vec<_>>()).unwrap_or_default(),
+            "blockedSnapshotJson": snapshot_json,
+            "blockedReason": lane.and_then(|lane| lane.blocked.as_ref()).map(|block| &block.reason),
+            "headIdentityJson": lane.and_then(|lane| lane.head.as_ref()).map(|head| encode_output(&head.identity)).transpose()?,
+            "resolutionRevision": lane.map_or(0, |lane| lane.resolution_revision).to_string(),
+        });
+        let view_json = crate::sync_read::output(&view)?;
+        crate::sync_read::output(&serde_json::json!({"viewJson": view_json, "lane": lane}))
+    }
+
+    /// Prepare an opaque request without mutating the durable lane. The app
+    /// persists this exact request and caller ID before submitting it.
+    pub async fn prepare_lane_resolution_json(
+        &self,
+        snapshot_json: String,
+        choice_json: String,
+    ) -> Result<NativePreparedLaneResolution, NativeSyncError> {
+        let snapshot = decode_input::<LaneConflictSnapshot<JsonValue>>(&snapshot_json)?;
+        let choice = decode_input::<NativeLaneResolutionChoice>(&choice_json)?;
+        let resolution_id =
+            LaneResolutionId(format!("resolution-{}", surrealdb::types::Uuid::new_v4()));
+        let commit_id = ClientCommitId(format!(
+            "lane-resolution-{}",
+            surrealdb::types::Uuid::new_v4()
+        ));
+        let slot = self.lock_runtime().await;
+        let runtime = slot.read_client()?;
+        let provisional = CommitIdentity {
+            client_commit_id: commit_id.clone(),
+            fingerprint: Fingerprint("provisional".into()),
+        };
+        let provisional_request = lane_resolution_request(choice, provisional);
+        let prepared = runtime
+            .prepare_resolve_lane_conflict(
+                resolution_id.clone(),
+                &snapshot,
+                provisional_request.clone(),
+            )
+            .map_err(map_protocol_error)?;
+        let fingerprint = prepared
+            .state()
+            .outbox
+            .iter()
+            .find(|commit| commit.identity.client_commit_id == commit_id)
+            .map(|commit| canonical_fingerprint(runtime.state(), commit))
+            .transpose()?
+            .unwrap_or_else(|| Fingerprint("local-noop".into()));
+        let request = with_resolution_fingerprint(provisional_request, fingerprint);
+        let verified = runtime
+            .prepare_resolve_lane_conflict(resolution_id.clone(), &snapshot, request.clone())
+            .map_err(map_protocol_error)?;
+        validate_state_codec(verified.state())?;
+        Ok(NativePreparedLaneResolution {
+            resolution_id: resolution_id.0,
+            request_json: encode_output(&request)?,
+        })
+    }
+
+    /// A domain-only view of a snapshot. Protocol counters remain inside the
+    /// opaque snapshot JSON and never cross a JS Number parse.
+    pub fn project_lane_conflict_snapshot_json(
+        &self,
+        snapshot_json: String,
+    ) -> Result<String, NativeSyncError> {
+        let snapshot = decode_input::<LaneConflictSnapshot<JsonValue>>(&snapshot_json)?;
+        let local = match snapshot.local_latest() {
+            LocalIntentValue::Present { value, .. } => Some(encode_output(value)?),
+            LocalIntentValue::Deleted => None,
+        };
+        let record_value = |state: &RecordState<JsonValue>| match state {
+            RecordState::Present { value, .. } => Some(encode_output(value)),
+            RecordState::Absent | RecordState::Tombstone { .. } => None,
+        };
+        Ok(serde_json::json!({
+            "recordId": snapshot.record_id().0,
+            "coveredIntentPrefixJson": encode_output(snapshot.covered_intents())?,
+            "localJson": local,
+            "remoteJson": record_value(snapshot.remote_state()).transpose()?,
+            "observedJson": record_value(snapshot.observed_state()).transpose()?,
+        })
+        .to_string())
+    }
+
+    /// Exact supported lookup. Absence is proven only while the original
+    /// blocked snapshot is still current; unsupported ABI is a separate error.
+    pub async fn inspect_lane_resolution_json(
+        &self,
+        snapshot_json: String,
+        resolution_id: Option<String>,
+        request_json: Option<String>,
+    ) -> Result<String, NativeSyncError> {
+        let snapshot = decode_input::<LaneConflictSnapshot<JsonValue>>(&snapshot_json)?;
+        let attempt = match (resolution_id, request_json) {
+            (None, None) => None,
+            (Some(id), Some(request)) if !id.is_empty() => Some((
+                LaneResolutionId(id),
+                decode_input::<LaneConflictResolutionRequest<JsonValue>>(&request)?,
+            )),
+            _ => return Err(NativeSyncError::InvalidInput),
+        };
+        let slot = self.lock_runtime().await;
+        let runtime = slot.read_client()?;
+        if let Some((id, request)) = attempt
+            && let Some(receipt) = runtime.state().resolution_receipts.get(&id)
+        {
+            if receipt.snapshot != snapshot
+                || !resolution_request_matches_receipt(&request, receipt)
+            {
+                return Err(NativeSyncError::Protocol);
+            }
+            return Ok(serde_json::json!({
+                "state": serde_json::to_value(receipt.status).map_err(|_| NativeSyncError::Internal)?,
+                "receiptJson": encode_output(receipt)?,
+            }).to_string());
+        }
+        let state = if runtime
+            .lane_conflict_snapshot(snapshot.record_id())
+            .as_ref()
+            == Some(&snapshot)
+        {
+            "absent"
+        } else {
+            "unknown"
+        };
+        Ok(serde_json::json!({"state": state, "receiptJson": null}).to_string())
+    }
+
+    /// Read only the resolution phase that remains bound to this snapshot's
+    /// covered prefix in the durable engine lane. A cleared head has no such
+    /// binding, even when the lane retains a later ready proof.
+    pub async fn lane_resolution_observation_json(
+        &self,
+        snapshot_json: String,
+        replacement_identity_json: String,
+    ) -> Result<String, NativeSyncError> {
+        let snapshot = decode_input::<LaneConflictSnapshot<JsonValue>>(&snapshot_json)?;
+        let identity = decode_input::<CommitIdentity>(&replacement_identity_json)?;
+        let slot = self.lock_runtime().await;
+        let state = slot.read_client()?.state();
+        let observation = state.lanes.get(snapshot.record_id()).and_then(|lane| {
+            let head = lane.head.as_ref()?;
+            let LaneHeadRole::Resolution { covered_intents, .. } = &head.role else {
+                return None;
+            };
+            if head.identity != identity || covered_intents != snapshot.covered_intents() {
+                return None;
+            }
+            Some(serde_json::json!({
+                "phase": if lane.blocked.is_some() { "conflict" } else if head.accepted_sequence.is_some() { "accepted" } else { "queued" },
+                "commitId": head.identity.client_commit_id.0.clone(),
+                "sequenceJson": head.accepted_sequence.map(|value| value.to_string()),
+                "resolutionRevisionJson": lane.resolution_revision.to_string(),
+            }))
+        });
+        Ok(observation
+            .unwrap_or_else(|| serde_json::json!({ "phase": "unknown" }))
+            .to_string())
+    }
+
+    pub async fn enqueue_intent_json(
+        self: Arc<Self>,
+        intent_json: String,
+        observation_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.run_mutation(move |owner| async move {
+            let intent = decode_input::<LocalIntent<JsonValue>>(&intent_json)?;
+            let observation = decode_input::<RecordObservation<JsonValue>>(&observation_json)?;
+            let mut slot = owner.lock_runtime().await;
+            let prepared = slot
+                .client()?
+                .prepare_enqueue_intent(intent, observation)
+                .map_err(map_protocol_error)?;
+            owner.persist_and_install(&mut slot, prepared).await
+        })
+        .await
+    }
+
+    pub async fn materialize_next_intent(
+        self: Arc<Self>,
+        record_id: String,
+        identity_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.run_mutation(move |owner| async move {
+            let identity = decode_input::<CommitIdentity>(&identity_json)?;
+            let mut slot = owner.lock_runtime().await;
+            let prepared = slot
+                .client()?
+                .prepare_materialize_next(&RecordId(record_id), identity)
+                .map_err(map_protocol_error)?;
+            owner.persist_and_install(&mut slot, prepared).await
+        })
+        .await
+    }
+
+    /// Materialize with a caller-stable commit ID while native code derives
+    /// the canonical fingerprint of the engine-produced operation.
+    pub async fn materialize_next_intent_with_commit_id(
+        self: Arc<Self>,
+        record_id: String,
+        commit_id: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.run_mutation(move |owner| async move {
+            let id = RecordId(record_id);
+            let mut slot = owner.lock_runtime().await;
+            let runtime = slot.client()?;
+            let provisional = CommitIdentity {
+                client_commit_id: ClientCommitId(commit_id.clone()),
+                fingerprint: Fingerprint("provisional".into()),
+            };
+            let prepared = runtime
+                .prepare_materialize_next(&id, provisional.clone())
+                .map_err(map_protocol_error)?;
+            let fingerprint = prepared
+                .state()
+                .outbox
+                .iter()
+                .find(|commit| commit.identity.client_commit_id.0 == commit_id)
+                .map(|commit| canonical_fingerprint(runtime.state(), commit))
+                .transpose()?;
+            let prepared = if let Some(fingerprint) = fingerprint {
+                runtime
+                    .prepare_materialize_next(
+                        &id,
+                        CommitIdentity {
+                            fingerprint,
+                            ..provisional
+                        },
+                    )
+                    .map_err(map_protocol_error)?
+            } else {
+                prepared
+            };
+            owner.persist_and_install(&mut slot, prepared).await
+        })
+        .await
+    }
+
+    pub async fn resolve_lane_conflict_json(
+        self: Arc<Self>,
+        resolution_id: String,
+        snapshot_json: String,
+        resolution_json: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.run_mutation(move |owner| async move {
+            let snapshot = decode_input::<LaneConflictSnapshot<JsonValue>>(&snapshot_json)?;
+            let resolution =
+                decode_input::<LaneConflictResolutionRequest<JsonValue>>(&resolution_json)?;
+            let mut slot = owner.lock_runtime().await;
+            let prepared = slot
+                .client()?
+                .prepare_resolve_lane_conflict(
+                    LaneResolutionId(resolution_id),
+                    &snapshot,
+                    resolution,
+                )
+                .map_err(map_protocol_error)?;
+            owner.persist_and_install(&mut slot, prepared).await
+        })
+        .await
+    }
+
+    pub async fn lane_resolution_receipt_json(
+        &self,
+        resolution_id: String,
+    ) -> Result<String, NativeSyncError> {
+        if resolution_id.is_empty() {
+            return Err(NativeSyncError::InvalidInput);
+        }
+        let slot = self.lock_runtime().await;
+        match slot
+            .read_client()?
+            .state()
+            .resolution_receipts
+            .get(&LaneResolutionId(resolution_id))
+        {
+            Some(receipt) => encode_output(receipt),
+            None => Ok(serde_json::json!({ "status": "unknown" }).to_string()),
+        }
+    }
+
+    pub async fn acknowledge_lane_resolution_receipt(
+        self: Arc<Self>,
+        resolution_id: String,
+    ) -> Result<NativeSyncStatus, NativeSyncError> {
+        self.run_mutation(move |owner| async move {
+            let mut slot = owner.lock_runtime().await;
+            let prepared = slot
+                .client()?
+                .prepare_ack_lane_resolution_receipt(&LaneResolutionId(resolution_id))
+                .map_err(map_protocol_error)?;
+            owner.persist_and_install(&mut slot, prepared).await
+        })
+        .await
+    }
+
     pub async fn enqueue(
         self: Arc<Self>,
         commit_json: String,
@@ -1603,7 +2037,7 @@ fn decode_input<T: DeserializeOwned>(input: &str) -> Result<T, NativeSyncError> 
     serde_json::from_str(input).map_err(|_| NativeSyncError::InvalidInput)
 }
 
-fn encode_output<T: serde::Serialize>(value: &T) -> Result<String, NativeSyncError> {
+fn encode_output<T: serde::Serialize + ?Sized>(value: &T) -> Result<String, NativeSyncError> {
     serde_json::to_string(value).map_err(|_| NativeSyncError::Internal)
 }
 
@@ -1663,6 +2097,8 @@ fn map_persistence_error(error: SyncStateError) -> NativeSyncError {
         | SyncStateError::Database(_)
         | SyncStateError::Core(_)
         | SyncStateError::RollbackFailed { .. } => NativeSyncError::Persistence,
+        #[cfg(test)]
+        SyncStateError::InjectedAfterComponentWrite => NativeSyncError::Persistence,
         SyncStateError::CommitUnknown(_) => NativeSyncError::RecoveryRequired,
     }
 }
@@ -1730,6 +2166,466 @@ mod tests {
         })
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn intent_read_projects_unmaterialized_suffix_delete_conflict_and_reopen() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let database = surrealkv_database(directory.path()).await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let record = "recipe:new";
+        let observation = client.observe_record_json(record.into()).await.unwrap();
+        let first = LocalIntent {
+            id: surrealdb_sync_client::LocalIntentId("first".into()),
+            record_id: RecordId(record.into()),
+            value: surrealdb_sync_client::LocalIntentValue::Present {
+                value: json!({"title":"first"}),
+                reference: None,
+            },
+            observation: None,
+        };
+        client
+            .clone()
+            .enqueue_intent_json(serde_json::to_string(&first).unwrap(), observation)
+            .await
+            .unwrap();
+        let read: JsonValue =
+            serde_json::from_str(&client.read_intent_record_json(record.into()).await.unwrap())
+                .unwrap();
+        let view: JsonValue = serde_json::from_str(read["viewJson"].as_str().unwrap()).unwrap();
+        assert_eq!(read["lane"]["pendingIntentIds"], json!(["first"]));
+        assert_eq!(
+            view["snapshot"]["rows"][record]["optimistic"]["value"]["title"],
+            "first"
+        );
+        assert_eq!(view["snapshot"]["rows"][record]["pending"], json!([]));
+
+        client.close().await;
+        drop(client);
+        database.close().await.unwrap();
+        drop(database);
+        let database = surrealkv_database(directory.path()).await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let read: JsonValue =
+            serde_json::from_str(&client.read_intent_record_json(record.into()).await.unwrap())
+                .unwrap();
+        assert_eq!(read["lane"]["pendingIntentIds"], json!(["first"]));
+
+        client
+            .clone()
+            .materialize_next_intent_with_commit_id(record.into(), "first-commit".into())
+            .await
+            .unwrap();
+        let observation = client.observe_record_json(record.into()).await.unwrap();
+        let second = LocalIntent {
+            id: surrealdb_sync_client::LocalIntentId("second".into()),
+            record_id: RecordId(record.into()),
+            value: surrealdb_sync_client::LocalIntentValue::Present {
+                value: json!({"title":"second"}),
+                reference: None,
+            },
+            observation: None,
+        };
+        client
+            .clone()
+            .enqueue_intent_json(serde_json::to_string(&second).unwrap(), observation)
+            .await
+            .unwrap();
+        let read: JsonValue =
+            serde_json::from_str(&client.read_intent_record_json(record.into()).await.unwrap())
+                .unwrap();
+        let view: JsonValue = serde_json::from_str(read["viewJson"].as_str().unwrap()).unwrap();
+        assert_eq!(read["lane"]["pendingIntentIds"], json!(["first", "second"]));
+        assert_eq!(
+            view["snapshot"]["rows"][record]["optimistic"]["value"]["title"],
+            "second"
+        );
+        assert_eq!(
+            view["snapshot"]["rows"][record]["pending"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let pending: ClientCommit<JsonValue> =
+            serde_json::from_str(&client.pending_json().await.unwrap()[0]).unwrap();
+        client
+            .clone()
+            .record_push_response(
+                serde_json::to_string(&PushResponse::<JsonValue> {
+                    schema_version: SchemaVersion::V1,
+                    partition_id: PartitionId("partition".into()),
+                    client_id: ClientId("client".into()),
+                    outcome: DurableOutcome::Conflict {
+                        identity: pending.identity,
+                        record_id: RecordId(record.into()),
+                        authoritative: RecordState::Present {
+                            value: json!({"title":"remote"}),
+                            version: 9_007_199_254_740_993,
+                            reference: None,
+                        },
+                    },
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let read: JsonValue =
+            serde_json::from_str(&client.read_intent_record_json(record.into()).await.unwrap())
+                .unwrap();
+        assert_eq!(read["lane"]["blockedReason"], "conflict");
+        assert!(read["lane"]["blockedSnapshotJson"].is_string());
+        let initial_snapshot_json = read["lane"]["blockedSnapshotJson"].as_str().unwrap();
+        assert!(initial_snapshot_json.contains("9007199254740993"));
+        let projected: JsonValue = serde_json::from_str(
+            &client
+                .project_lane_conflict_snapshot_json(initial_snapshot_json.into())
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(projected["localJson"], json!(r#"{"title":"second"}"#));
+        assert_eq!(projected["remoteJson"], json!(r#"{"title":"remote"}"#));
+
+        let observation = client.observe_record_json(record.into()).await.unwrap();
+        let deletion = LocalIntent {
+            id: surrealdb_sync_client::LocalIntentId("delete".into()),
+            record_id: RecordId(record.into()),
+            value: surrealdb_sync_client::LocalIntentValue::<JsonValue>::Deleted,
+            observation: None,
+        };
+        client
+            .clone()
+            .enqueue_intent_json(serde_json::to_string(&deletion).unwrap(), observation)
+            .await
+            .unwrap();
+        let read: JsonValue =
+            serde_json::from_str(&client.read_intent_record_json(record.into()).await.unwrap())
+                .unwrap();
+        let view: JsonValue = serde_json::from_str(read["viewJson"].as_str().unwrap()).unwrap();
+        assert_eq!(
+            read["lane"]["pendingIntentIds"],
+            json!(["first", "second", "delete"])
+        );
+        assert_eq!(
+            view["snapshot"]["rows"][record]["optimistic"]["state"],
+            "deleted"
+        );
+        assert_eq!(
+            view["snapshot"]["rows"][record]["optimistic"]["baseVersion"],
+            "9007199254740993"
+        );
+
+        client.close().await;
+        drop(client);
+        database.close().await.unwrap();
+        drop(database);
+        let reopened_database = surrealkv_database(directory.path()).await;
+        let reopened = open_sync_client(reopened_database.clone(), options("all"))
+            .await
+            .unwrap();
+        let persisted: JsonValue = serde_json::from_str(
+            &reopened
+                .read_intent_record_json(record.into())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            persisted["lane"]["pendingIntentIds"],
+            json!(["first", "second", "delete"])
+        );
+        assert_eq!(persisted["lane"]["blockedReason"], "conflict");
+        let snapshot_json = persisted["lane"]["blockedSnapshotJson"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let prepared = reopened
+            .prepare_lane_resolution_json(
+                snapshot_json.clone(),
+                json!({"strategy":"keep_server"}).to_string(),
+            )
+            .await
+            .unwrap();
+        let absent: JsonValue = serde_json::from_str(
+            &reopened
+                .inspect_lane_resolution_json(
+                    snapshot_json.clone(),
+                    Some(prepared.resolution_id.clone()),
+                    Some(prepared.request_json.clone()),
+                )
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(absent["state"], "absent");
+        let no_attempt: JsonValue = serde_json::from_str(
+            &reopened
+                .inspect_lane_resolution_json(snapshot_json.clone(), None, None)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(no_attempt["state"], "absent");
+        reopened
+            .clone()
+            .resolve_lane_conflict_json(
+                prepared.resolution_id.clone(),
+                snapshot_json.clone(),
+                prepared.request_json.clone(),
+            )
+            .await
+            .unwrap();
+        reopened
+            .clone()
+            .resolve_lane_conflict_json(
+                prepared.resolution_id.clone(),
+                snapshot_json.clone(),
+                prepared.request_json.clone(),
+            )
+            .await
+            .unwrap();
+        assert!(matches!(reopened.clone().resolve_lane_conflict_json(
+            prepared.resolution_id.clone(), snapshot_json.clone(), json!({"strategy":"keep_local","replacement_identity":{"clientCommitId":"changed","fingerprint":"changed"}}).to_string()
+        ).await, Err(NativeSyncError::Protocol)));
+        let inspected: JsonValue = serde_json::from_str(
+            &reopened
+                .inspect_lane_resolution_json(
+                    snapshot_json.clone(),
+                    Some(prepared.resolution_id.clone()),
+                    Some(prepared.request_json.clone()),
+                )
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(inspected["state"], "keep_server_applied");
+        assert!(
+            inspected["receiptJson"]
+                .as_str()
+                .unwrap()
+                .contains("9007199254740993")
+        );
+        assert!(matches!(reopened.inspect_lane_resolution_json(
+            snapshot_json.clone(), Some(prepared.resolution_id.clone()),
+            Some(json!({"strategy":"keep_local","replacement_identity":{"clientCommitId":"changed","fingerprint":"changed"}}).to_string())
+        ).await, Err(NativeSyncError::Protocol)));
+        let stale_no_attempt: JsonValue = serde_json::from_str(
+            &reopened
+                .inspect_lane_resolution_json(snapshot_json.clone(), None, None)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(stale_no_attempt["state"], "unknown");
+        let receipt: JsonValue = serde_json::from_str(
+            &reopened
+                .lane_resolution_receipt_json(prepared.resolution_id.clone())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(receipt["status"], "keep_server_applied");
+        assert_eq!(receipt["id"], prepared.resolution_id);
+        assert_eq!(receipt["acknowledged"], false);
+        assert_eq!(
+            receipt["snapshot"],
+            serde_json::from_str::<JsonValue>(&snapshot_json).unwrap()
+        );
+        reopened
+            .clone()
+            .acknowledge_lane_resolution_receipt(prepared.resolution_id.clone())
+            .await
+            .unwrap();
+        reopened.close().await;
+        drop(reopened);
+        reopened_database.close().await.unwrap();
+        drop(reopened_database);
+        let final_database = surrealkv_database(directory.path()).await;
+        let final_client = open_sync_client(final_database, options("all"))
+            .await
+            .unwrap();
+        let retained: JsonValue = serde_json::from_str(
+            &final_client
+                .lane_resolution_receipt_json(prepared.resolution_id.clone())
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(retained["acknowledged"], true);
+        assert_eq!(retained["snapshot"], receipt["snapshot"]);
+    }
+
+    #[tokio::test]
+    async fn prepared_merge_preserves_large_numbers_across_replay_and_receipt() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let database = surrealkv_database(directory.path()).await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let record = "recipe:large";
+        let observation = client.observe_record_json(record.into()).await.unwrap();
+        let intent = LocalIntent {
+            id: surrealdb_sync_client::LocalIntentId("large-intent".into()),
+            record_id: RecordId(record.into()),
+            value: LocalIntentValue::Present {
+                value: json!({"count": 9_007_199_254_740_993_u64}),
+                reference: None,
+            },
+            observation: None,
+        };
+        client
+            .clone()
+            .enqueue_intent_json(serde_json::to_string(&intent).unwrap(), observation)
+            .await
+            .unwrap();
+        client
+            .clone()
+            .materialize_next_intent_with_commit_id(record.into(), "large-commit".into())
+            .await
+            .unwrap();
+        let pending: ClientCommit<JsonValue> =
+            serde_json::from_str(&client.pending_json().await.unwrap()[0]).unwrap();
+        client
+            .clone()
+            .record_push_response(
+                serde_json::to_string(&PushResponse::<JsonValue> {
+                    schema_version: SchemaVersion::V1,
+                    partition_id: PartitionId("partition".into()),
+                    client_id: ClientId("client".into()),
+                    outcome: DurableOutcome::Conflict {
+                        identity: pending.identity,
+                        record_id: RecordId(record.into()),
+                        authoritative: RecordState::Present {
+                            value: json!({"count": 9_007_199_254_740_994_u64}),
+                            version: 9_007_199_254_740_995,
+                            reference: None,
+                        },
+                    },
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let snapshot_json = client
+            .lane_conflict_snapshot_json(record.into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(snapshot_json.contains("9007199254740995"));
+        let prepared = client
+            .prepare_lane_resolution_json(
+                snapshot_json.clone(),
+                json!({"strategy":"merge", "value":{"count":9_007_199_254_740_997_u64}})
+                    .to_string(),
+            )
+            .await
+            .unwrap();
+        assert!(prepared.request_json.contains("9007199254740997"));
+        assert!(prepared.request_json.contains("replacement_identity"));
+        client
+            .clone()
+            .resolve_lane_conflict_json(
+                prepared.resolution_id.clone(),
+                snapshot_json.clone(),
+                prepared.request_json.clone(),
+            )
+            .await
+            .unwrap();
+        client.close().await;
+        drop(client);
+        database.close().await.unwrap();
+        drop(database);
+
+        let database = surrealkv_database(directory.path()).await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let inspection: JsonValue = serde_json::from_str(
+            &client
+                .inspect_lane_resolution_json(
+                    snapshot_json.clone(),
+                    Some(prepared.resolution_id.clone()),
+                    Some(prepared.request_json.clone()),
+                )
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(inspection["state"], "awaiting_acceptance");
+        let retained = inspection["receiptJson"].as_str().unwrap();
+        assert!(retained.contains("9007199254740995"));
+        assert!(retained.contains("9007199254740997"));
+        let request: JsonValue = serde_json::from_str(&prepared.request_json).unwrap();
+        let receipt: JsonValue = serde_json::from_str(retained).unwrap();
+        assert_eq!(
+            receipt["replacement_identity"],
+            request["replacement_identity"]
+        );
+        client
+            .clone()
+            .resolve_lane_conflict_json(
+                prepared.resolution_id.clone(),
+                snapshot_json.clone(),
+                prepared.request_json.clone(),
+            )
+            .await
+            .unwrap();
+        let changed = prepared
+            .request_json
+            .replace("9007199254740997", "9007199254740998");
+        assert!(matches!(
+            client
+                .clone()
+                .resolve_lane_conflict_json(
+                    prepared.resolution_id.clone(),
+                    snapshot_json.clone(),
+                    changed
+                )
+                .await,
+            Err(NativeSyncError::Protocol)
+        ));
+        let replacement: ClientCommit<JsonValue> =
+            serde_json::from_str(&client.pending_json().await.unwrap()[0]).unwrap();
+        client
+            .clone()
+            .record_push_response(
+                serde_json::to_string(&PushResponse::<JsonValue> {
+                    schema_version: SchemaVersion::V1,
+                    partition_id: PartitionId("partition".into()),
+                    client_id: ClientId("client".into()),
+                    outcome: DurableOutcome::Accepted {
+                        identity: replacement.identity,
+                        sequence: 9_007_199_254_740_999,
+                        id_mappings: vec![],
+                    },
+                })
+                .unwrap(),
+            )
+            .await
+            .unwrap();
+        let accepted: JsonValue = serde_json::from_str(
+            &client
+                .inspect_lane_resolution_json(
+                    snapshot_json.clone(),
+                    Some(prepared.resolution_id.clone()),
+                    Some(prepared.request_json.clone()),
+                )
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(accepted["state"], "awaiting_pull");
+        assert!(
+            accepted["receiptJson"]
+                .as_str()
+                .unwrap()
+                .contains("9007199254740999")
+        );
     }
 
     #[tokio::test]

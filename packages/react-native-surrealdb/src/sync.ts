@@ -22,6 +22,7 @@ import {
   decodeSurrealValue,
   encodeSurrealValue,
   type SurrealScalar,
+  type SurrealValue,
 } from "./wire";
 
 import {
@@ -62,6 +63,54 @@ interface NativeReadPort {
     subscriptionRevision: bigint,
     options?: CallOptions,
   ): Promise<string>;
+}
+interface NativeLanePort {
+  laneCapabilitiesJson(): string;
+  observeRecordJson(recordId: string, options?: CallOptions): Promise<string>;
+  laneConflictSnapshotJson(recordId: string, options?: CallOptions): Promise<string | undefined>;
+  laneResolutionObservationJson(snapshotJson: string, replacementIdentityJson: string, options?: CallOptions): Promise<string>;
+  enqueueIntentJson(intentJson: string, observationJson: string, options?: CallOptions): Promise<NativeSyncStatus>;
+  materializeNextIntent(recordId: string, identityJson: string, options?: CallOptions): Promise<NativeSyncStatus>;
+  resolveLaneConflictJson(resolutionId: string, snapshotJson: string, resolutionJson: string, options?: CallOptions): Promise<NativeSyncStatus>;
+  laneResolutionReceiptJson(resolutionId: string, options?: CallOptions): Promise<string>;
+  acknowledgeLaneResolutionReceipt(resolutionId: string, options?: CallOptions): Promise<NativeSyncStatus>;
+  readIntentRecordJson(recordId: string, options?: CallOptions): Promise<string>;
+  prepareLaneResolutionJson(snapshotJson: string, choiceJson: string, options?: CallOptions): Promise<ExperimentalPreparedLaneResolution>;
+  projectLaneConflictSnapshotJson(snapshotJson: string, options?: CallOptions): string;
+  inspectLaneResolutionJson(snapshotJson: string, resolutionId?: string, requestJson?: string, options?: CallOptions): Promise<string>;
+  materializeNextIntentWithCommitId(recordId: string, commitId: string, options?: CallOptions): Promise<NativeSyncStatus>;
+}
+export type ExperimentalLaneResolutionChoice =
+  | Readonly<{ strategy: "keep_server" }>
+  | Readonly<{ strategy: "keep_local" }>
+  | Readonly<{ strategy: "merge"; value: SyncJsonValue; reference?: string | null }>;
+export type ExperimentalPreparedLaneResolution = Readonly<{
+  resolutionId: string;
+  requestJson: string;
+}>;
+export type ExperimentalLaneResolutionInspection = Readonly<{
+  state: "absent" | "unknown" | "keep_server_applied" | "awaiting_acceptance" | "awaiting_pull" | "reconciled" | "needs_review";
+  receiptJson: string | null;
+}>;
+export type ExperimentalLaneConflictProjection = Readonly<{
+  recordId: string;
+  coveredIntentPrefixJson: string;
+  local: SurrealValue | null;
+  remote: SurrealValue | null;
+  observed: SurrealValue | null;
+}>;
+export type ExperimentalIntentRecord = Readonly<{
+  record: SyncReadRecord;
+  lane: Readonly<{
+    pendingIntentIds: readonly string[];
+    blockedSnapshotJson: string | null;
+    blockedReason: string | null;
+    headIdentityJson: string | null;
+    resolutionRevision: string;
+  }>;
+}>;
+function laneAbiMissing(): never {
+  throw new Error("Lane intents require matching rebuilt native source-proof bindings");
 }
 function missingReadAbi(): never {
   throw new Error(
@@ -109,16 +158,50 @@ const nativeConflictPolicy = (
 export class ExperimentalSyncClient {
   readonly #native: NativeSyncClientLike &
     Partial<NativeReadPort> &
+    Partial<NativeLanePort> &
     Partial<NativeWindowPort>;
   #readCapabilities?: SyncReadCapabilities;
   readonly #readStores = new Set<ExperimentalSyncReadStore>();
   readonly #windowClients = new Set<ExperimentalSyncWindowClient>();
   #scopeBlocked?: SyncReadScopeError;
   #closed = false;
+  #laneSourceProof = false;
+
+  /** @internal Enabled only by an HTTP adapter with the source-v2 decoder. */
+  enableLaneSourceProof(): void {
+    const native = this.#native;
+    if (
+      typeof native.laneCapabilitiesJson !== "function" ||
+      typeof native.observeRecordJson !== "function" ||
+      typeof native.enqueueIntentJson !== "function" ||
+      typeof native.materializeNextIntent !== "function" ||
+      typeof native.laneConflictSnapshotJson !== "function" ||
+      typeof native.laneResolutionObservationJson !== "function" ||
+      typeof native.laneResolutionReceiptJson !== "function" ||
+      typeof native.acknowledgeLaneResolutionReceipt !== "function" ||
+      typeof native.readIntentRecordJson !== "function" ||
+      typeof native.prepareLaneResolutionJson !== "function" ||
+      typeof native.projectLaneConflictSnapshotJson !== "function" ||
+      typeof native.inspectLaneResolutionJson !== "function" ||
+      typeof native.materializeNextIntentWithCommitId !== "function" ||
+      typeof native.resolveLaneConflictJson !== "function"
+    ) laneAbiMissing();
+    let capabilities: unknown;
+    try { capabilities = JSON.parse(native.laneCapabilitiesJson()); }
+    catch { laneAbiMissing(); }
+    if (
+      typeof capabilities !== "object" || capabilities === null ||
+      !("schemaVersion" in capabilities) || capabilities.schemaVersion !== 2 ||
+      !("storageFormat" in capabilities) || capabilities.storageFormat !== 5 ||
+      !("pullSourceProfile" in capabilities) || capabilities.pullSourceProfile !== "pull-source-v2"
+    ) laneAbiMissing();
+    this.#laneSourceProof = true;
+  }
 
   constructor(
     native: NativeSyncClientLike &
       Partial<NativeReadPort> &
+      Partial<NativeLanePort> &
       Partial<NativeWindowPort>,
   ) {
     this.#native = native;
@@ -286,6 +369,138 @@ export class ExperimentalSyncClient {
     options?: CallOptions,
   ): Promise<ExperimentalSyncStatus> {
     return this.#native.enqueue(encodeProtocolJson(commit), options);
+  }
+
+  /** Opaque observation token for a later edit of this record. */
+  async observeRecord(recordId: string, options?: CallOptions): Promise<string> {
+    const method = this.#native.observeRecordJson ?? laneAbiMissing();
+    return method.call(this.#native, recordId, options);
+  }
+
+  async enqueueIntent(intent: SyncJsonValue, observationJson: string, options?: CallOptions): Promise<ExperimentalSyncStatus> {
+    if (!this.#laneSourceProof) throw new Error("Lane intents require source-proof pull capability");
+    const method = this.#native.enqueueIntentJson ?? laneAbiMissing();
+    return method.call(this.#native, encodeProtocolJson(intent), observationJson, options);
+  }
+
+  materializeNextIntent(recordId: string, identity: SyncJsonValue, options?: CallOptions): Promise<ExperimentalSyncStatus> {
+    if (!this.#laneSourceProof) throw new Error("Lane intents require source-proof pull capability");
+    const method = this.#native.materializeNextIntent ?? laneAbiMissing();
+    return method.call(this.#native, recordId, encodeProtocolJson(identity), options);
+  }
+
+  async laneConflictSnapshot(recordId: string, options?: CallOptions): Promise<string | undefined> {
+    const method = this.#native.laneConflictSnapshotJson ?? laneAbiMissing();
+    return method.call(this.#native, recordId, options);
+  }
+
+  /** Engine-derived phase; unknown means the original snapshot binding is unavailable. */
+  laneResolutionObservation(snapshotJson: string, replacementIdentity: SyncJsonValue, options?: CallOptions): Promise<string> {
+    const method = this.#native.laneResolutionObservationJson ?? laneAbiMissing();
+    return method.call(this.#native, snapshotJson, encodeProtocolJson(replacementIdentity), options);
+  }
+
+  resolveLaneConflict(resolutionId: string, snapshotJson: string, resolution: SyncJsonValue, options?: CallOptions): Promise<ExperimentalSyncStatus> {
+    if (!this.#laneSourceProof) throw new Error("Lane receipts require matching native source-proof bindings");
+    const method = this.#native.resolveLaneConflictJson ?? laneAbiMissing();
+    return method.call(this.#native, resolutionId, snapshotJson, encodeProtocolJson(resolution), options);
+  }
+
+  /** Opaque durable receipt JSON; unknown means this ID has no retained receipt. */
+  laneResolutionReceipt(resolutionId: string, options?: CallOptions): Promise<string> {
+    const method = this.#native.laneResolutionReceiptJson ?? laneAbiMissing();
+    return method.call(this.#native, resolutionId, options);
+  }
+
+  acknowledgeLaneResolutionReceipt(resolutionId: string, options?: CallOptions): Promise<ExperimentalSyncStatus> {
+    if (!this.#laneSourceProof) throw new Error("Lane receipts require matching native source-proof bindings");
+    const method = this.#native.acknowledgeLaneResolutionReceipt ?? laneAbiMissing();
+    return method.call(this.#native, resolutionId, options);
+  }
+
+  prepareLaneResolution(snapshotJson: string, choice: ExperimentalLaneResolutionChoice, options?: CallOptions): Promise<ExperimentalPreparedLaneResolution> {
+    if (!this.#laneSourceProof) throw new Error("Lane resolution requires matching native source-proof bindings");
+    const method = this.#native.prepareLaneResolutionJson ?? laneAbiMissing();
+    return method.call(this.#native, snapshotJson, encodeProtocolJson(choice), options);
+  }
+
+  /** Replay the exact request persisted with the draft; no protocol JSON parse in JS. */
+  submitPreparedLaneResolution(resolutionId: string, snapshotJson: string, requestJson: string, options?: CallOptions): Promise<ExperimentalSyncStatus> {
+    if (!this.#laneSourceProof) throw new Error("Lane resolution requires matching native source-proof bindings");
+    const method = this.#native.resolveLaneConflictJson ?? laneAbiMissing();
+    return method.call(this.#native, resolutionId, snapshotJson, requestJson, options);
+  }
+
+  /** Native validates the saved snapshot, request and ID before projecting a phase. */
+  async inspectLaneResolution(snapshotJson: string, attempt: { resolutionId: string; requestJson: string } | null, options?: CallOptions): Promise<ExperimentalLaneResolutionInspection> {
+    if (!this.#laneSourceProof) throw new Error("Lane receipts require matching native source-proof bindings");
+    const method = this.#native.inspectLaneResolutionJson ?? laneAbiMissing();
+    const parsed: unknown = JSON.parse(await method.call(this.#native, snapshotJson, attempt?.resolutionId, attempt?.requestJson, options));
+    if (typeof parsed !== "object" || parsed === null || !("state" in parsed) ||
+        !["absent", "unknown", "keep_server_applied", "awaiting_acceptance", "awaiting_pull", "reconciled", "needs_review"].includes(String(parsed.state)) ||
+        !("receiptJson" in parsed) || !(parsed.receiptJson === null || typeof parsed.receiptJson === "string"))
+      throw new Error("Invalid native lane receipt projection");
+    if ((parsed.state === "absent" || parsed.state === "unknown") !== (parsed.receiptJson === null))
+      throw new Error("Invalid native lane receipt projection");
+    return { state: parsed.state as ExperimentalLaneResolutionInspection["state"], receiptJson: parsed.receiptJson };
+  }
+
+  /** Domain values only; the full protocol snapshot stays opaque. */
+  projectLaneConflictSnapshot(snapshotJson: string): ExperimentalLaneConflictProjection {
+    if (!this.#laneSourceProof) throw new Error("Lane snapshots require matching native source-proof bindings");
+    const method = this.#native.projectLaneConflictSnapshotJson ?? laneAbiMissing();
+    const parsed: unknown = JSON.parse(method.call(this.#native, snapshotJson));
+    if (typeof parsed !== "object" || parsed === null ||
+        !("recordId" in parsed) || typeof parsed.recordId !== "string" ||
+        !("coveredIntentPrefixJson" in parsed) || typeof parsed.coveredIntentPrefixJson !== "string" ||
+        !("localJson" in parsed) || !(parsed.localJson === null || typeof parsed.localJson === "string") ||
+        !("remoteJson" in parsed) || !(parsed.remoteJson === null || typeof parsed.remoteJson === "string") ||
+        !("observedJson" in parsed) || !(parsed.observedJson === null || typeof parsed.observedJson === "string"))
+      throw new Error("Invalid native lane snapshot projection");
+    return {
+      recordId: parsed.recordId,
+      coveredIntentPrefixJson: parsed.coveredIntentPrefixJson,
+      local: parsed.localJson === null ? null : decodeSurrealValue(parsed.localJson),
+      remote: parsed.remoteJson === null ? null : decodeSurrealValue(parsed.remoteJson),
+      observed: parsed.observedJson === null ? null : decodeSurrealValue(parsed.observedJson),
+    };
+  }
+
+  materializeNextIntentWithCommitId(recordId: string, commitId: string, options?: CallOptions): Promise<ExperimentalSyncStatus> {
+    if (!this.#laneSourceProof) throw new Error("Lane materialization requires matching native source-proof bindings");
+    const method = this.#native.materializeNextIntentWithCommitId ?? laneAbiMissing();
+    return method.call(this.#native, recordId, commitId, options);
+  }
+
+  /** One native revision of the optimistic row and its unmaterialized intent lane. */
+  async readIntentRecord(recordId: string, options?: CallOptions): Promise<ExperimentalIntentRecord> {
+    if (!this.#laneSourceProof) throw new Error("Lane reads require matching native source-proof bindings");
+    const method = this.#native.readIntentRecordJson ?? laneAbiMissing();
+    const parsed: unknown = JSON.parse(await method.call(this.#native, recordId, options));
+    if (typeof parsed !== "object" || parsed === null ||
+        !("viewJson" in parsed) || typeof parsed.viewJson !== "string" ||
+        !("lane" in parsed) || typeof parsed.lane !== "object" || parsed.lane === null)
+      throw new Error("Invalid native intent read");
+    const lane = parsed.lane;
+    if (!("pendingIntentIds" in lane) || !Array.isArray(lane.pendingIntentIds) ||
+        !lane.pendingIntentIds.every((id: unknown) => typeof id === "string" && id.length > 0) ||
+        !("blockedSnapshotJson" in lane) || !(lane.blockedSnapshotJson === null || typeof lane.blockedSnapshotJson === "string") ||
+        !("blockedReason" in lane) || !(lane.blockedReason === null || typeof lane.blockedReason === "string") ||
+        !("headIdentityJson" in lane) || !(lane.headIdentityJson === null || typeof lane.headIdentityJson === "string") ||
+        !("resolutionRevision" in lane) || typeof lane.resolutionRevision !== "string" ||
+        !/^(0|[1-9][0-9]*)$/.test(lane.resolutionRevision))
+      throw new Error("Invalid native intent read");
+    const view = decodeSyncReadBootstrap(parsed.viewJson);
+    return {
+      record: readSyncRecord(view.snapshot, recordId),
+      lane: {
+        pendingIntentIds: lane.pendingIntentIds,
+        blockedSnapshotJson: lane.blockedSnapshotJson,
+        blockedReason: lane.blockedReason,
+        headIdentityJson: lane.headIdentityJson,
+        resolutionRevision: lane.resolutionRevision,
+      },
+    };
   }
 
   recordPushResponse(
