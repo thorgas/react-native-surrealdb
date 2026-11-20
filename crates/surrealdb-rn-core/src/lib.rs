@@ -1045,6 +1045,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn surrealkv_thread_replacement_failure_rolls_back_prior_native_transaction_writes() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let options = ConnectOptions {
+            endpoint: format!("surrealkv://{}", directory.path().display()),
+            namespace: Some("thread_rollback".into()),
+            database: Some("thread_rollback".into()),
+        };
+        let database = connect(options.clone()).await.unwrap();
+        database
+            .query(
+                "DEFINE TABLE thread SCHEMALESS; DEFINE TABLE message SCHEMALESS; DEFINE INDEX unique_thread_content ON TABLE message FIELDS thread, content UNIQUE"
+                    .into(),
+                None,
+            )
+            .await
+            .unwrap();
+        let original =
+            serde_json::json!({"id":"one", "provider":"old-provider", "model":"old-model"})
+                .to_string();
+        let replacement =
+            serde_json::json!({"id":"one", "provider":"new-provider", "model":"new-model"})
+                .to_string();
+        let upsert = "UPSERT type::record('thread', $id) SET provider_id = $provider, model_id = $model, created_at = time::now() RETURN NONE";
+        let create = "CREATE message CONTENT { thread: type::record('thread', $id), role: $role, content: $content, note_ids: $noteIds, position: $position } RETURN NONE";
+        database.query(upsert.into(), Some(original)).await.unwrap();
+        database
+            .query(
+                create.into(),
+                Some(serde_json::json!({"id":"one", "role":"user", "content":"original", "noteIds":["note:one"], "position":0}).to_string()),
+            )
+            .await
+            .unwrap();
+
+        // These are the same exported begin/query/cancel methods used by the
+        // TypeScript transaction(callback) facade. A unique-index failure in
+        // the second CREATE occurs after the parent UPSERT, DELETE, and first
+        // CREATE have all run on the same native transaction handle.
+        let transaction = database.begin_transaction().await.unwrap();
+        transaction
+            .query(upsert.into(), Some(replacement))
+            .await
+            .unwrap();
+        transaction
+            .query(
+                "DELETE message WHERE thread = type::record('thread', $id) RETURN NONE".into(),
+                Some(serde_json::json!({"id":"one"}).to_string()),
+            )
+            .await
+            .unwrap();
+        let new_message = serde_json::json!({"id":"one", "role":"assistant", "content":"duplicate", "noteIds":[], "position":0}).to_string();
+        transaction
+            .query(create.into(), Some(new_message))
+            .await
+            .unwrap();
+        let duplicate = serde_json::json!({"id":"one", "role":"assistant", "content":"duplicate", "noteIds":[], "position":1}).to_string();
+        assert!(
+            transaction
+                .query(create.into(), Some(duplicate))
+                .await
+                .is_err()
+        );
+        transaction.cancel().await.unwrap();
+        assert!(transaction.is_closed());
+
+        async fn assert_original(database: &Arc<SurrealDatabase>) {
+            let id = Some(serde_json::json!({"id":"one"}).to_string());
+            let model = database
+                .query(
+                    "RETURN (SELECT VALUE model_id FROM type::record('thread', $id))[0]".into(),
+                    id.clone(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(model[0].value_json, "\"old-model\"");
+            let provider = database
+                .query(
+                    "RETURN (SELECT VALUE provider_id FROM type::record('thread', $id))[0]".into(),
+                    id.clone(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(provider[0].value_json, "\"old-provider\"");
+            let messages = database
+                .query(
+                    "RETURN (SELECT VALUE content FROM message WHERE thread = type::record('thread', $id) ORDER BY position)".into(),
+                    id,
+                )
+                .await
+                .unwrap();
+            assert_eq!(messages[0].value_json, "[\"original\"]");
+        }
+        assert_original(&database).await;
+        database.close().await.unwrap();
+        drop(database);
+        let reopened = connect(options).await.unwrap();
+        assert_original(&reopened).await;
+        reopened.close().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn database_close_cancels_open_transactions() {
         let database = connect(ConnectOptions {
             endpoint: "mem://".into(),
