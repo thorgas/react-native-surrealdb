@@ -96,7 +96,9 @@ for (const path of [
   "SurrealDbRnFramework.xcframework/ios-arm64/libsurrealdb_rn_core.a",
   "SurrealDbRnFramework.xcframework/ios-arm64-simulator/libsurrealdb_rn_core.a",
 ]) {
-  if (await exists(path)) {
+  if (!(await exists(path))) {
+    failures.push(`missing ${path}`);
+  } else {
     const info = await stat(join(root, path));
     if (info.size === 0) failures.push(`${path} is empty`);
   }

@@ -957,3 +957,10 @@ Vitest, `node scripts/verify-package.mjs`, then the repository's Android and
 iOS strip scripts, recording binary hashes before and after stripping. Do not
 bump the package version, run `release:pack`, publish, or claim device
 acceptance from this matrix alone.
+
+The package verifier now requires nonempty iOS device and simulator archives,
+as well as their XCFramework metadata. With the current partial matrix,
+`node scripts/verify-package.mjs` correctly exits 1 and reports the missing
+Android x86_64 and iOS device binaries (plus unbuilt JS declarations). This
+is the expected state until both native platform commands and the package
+build finish.
