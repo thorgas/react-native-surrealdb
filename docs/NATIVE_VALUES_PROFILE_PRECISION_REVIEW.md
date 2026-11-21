@@ -84,7 +84,7 @@ Keep the existing v1 fixture
 `sha256:0167e7a657c1697643410c575a0ad1ffa6015f94e4ba70ed17f08320339bd769`
 as a non-regression vector; do not replace it with a candidate digest.
 
-## Recommended Set representative and ordering rules
+## Chosen Set representative and ordering rules
 
 The pinned SurrealDB `surrealdb-types` 3.2.4 source defines `Set` as a
 `BTreeSet<Value>` and `From<Vec<Value>>` collects the vector into that set
@@ -99,7 +99,12 @@ comparison rescales coefficients when scales differ
 
 Therefore the first equal value inserted into `Set::from(Vec<Value>)` is the
 surviving representative: the set does not retain both or normalize the
-representative. Recommended canonical-wire behavior:
+representative. This profile chooses representation-preserving identity:
+native equality is used to reject duplicate members and validate decoded Set
+cardinality; it does not define canonical wire equality or commit identity.
+The representative already retained by the native Set is authoritative.
+Neither encoder nor decoder may replace it by sorting, type preference, scale
+normalization, or another ordering-dependent choice.
 
 1. Encode the exact values already present in the native Set. Never normalize
    a Decimal, convert a number through text or float, or canonicalize signed
@@ -114,12 +119,12 @@ representative. Recommended canonical-wire behavior:
 3. A decoder requires strict ascending encoded-member bytes, then constructs
    native Set membership and rejects if the resulting cardinality differs
    from the encoded list. Thus duplicate bytes and distinct encodings that
-   compare equal natively are both rejected; decoding never silently chooses
-   a new representative.
+   compare equal natively are both rejected. A decoder never exposes a
+   partially constructed Set or silently chooses a replacement representative.
 4. Count and validate the whole Set before allocating its sorted output.
 
-Recommended constructor vectors (the expected member is preserved with its
-original representation):
+Constructor vectors under the selected rule (the expected member is preserved
+with its original representation):
 
 | Input order | Expected native Set member |
 | --- | --- |
@@ -130,19 +135,41 @@ original representation):
 | `Float(-0.0), Float(+0.0)` | the original `Float(-0.0)` |
 | `Float(+0.0), Float(-0.0)` | the original `Float(+0.0)` |
 
+Adversarial conformance vectors must assert all of the following:
+
+- `Set::from([Int(1), Float(1.0)])` has one member, `Int(1)`; reversing the
+  input has one member, `Float(1.0)`. Those two sets compare equal natively,
+  but their encoded Set bytes and commit fingerprints differ.
+- `Set::from([Decimal(1.0), Decimal(1.00)])` retains the first Decimal's
+  coefficient/scale; reversing the input retains the other representation.
+  Both are one-member native Sets, and the surviving scale remains visible in
+  wire bytes and fingerprints.
+- `Set::from([Float(-0.0), Float(+0.0)])` retains negative zero; reversing
+  retains positive zero. The exact IEEE-754 bits survive encoding and
+  decode/re-encode.
+- The decoder rejects encoded lists containing `Int(1)` plus `Float(1.0)`,
+  `Decimal(1.0)` plus `Decimal(1.00)`, or `Float(-0.0)` plus `Float(+0.0)`.
+  Each pair has two distinct candidate encodings but native Set cardinality
+  would shrink from two to one.
+- For each accepted Set, decode then encode reproduces the exact canonical
+  bytes. Reversing the insertion order of the same unequal members yields the
+  same byte-sorted wire Set. This proves ordering is independent of native
+  iteration and input order without changing any retained representative.
+
 For a canonical Set payload, test ordering with at least two unequal
 representatives whose native `Value::Ord` order differs from their encoded
-byte order. Also submit `Int(1)` and `Float(1.0)` together in an encoded Set;
-the decoder must fail because native construction yields one member instead
-of two.
+byte order. Keep the selected examples in the codec golden fixture once the
+native value tags are assigned.
 
-The existing draft says to preserve the actual surviving member. Making that
-normative means two SurrealDB Sets that compare equal under native `Eq` can
-have different native-values bytes and fingerprints if they retained
-different representatives. This is the lossless choice and avoids mutating
-existing native values, but it is not equality-class canonicalization. The
-protocol review must explicitly accept this consequence or instead choose a
-normalization rule that changes the draft's preserve-type/scale requirement.
+Two SurrealDB Sets that compare equal under native `Eq` can have different
+native-values bytes and fingerprints when they retained different
+representatives. This is intentional: profile identity preserves the actual
+stored value representation, including Float bits and Decimal scale. Native
+Set equality remains the duplicate/cardinality check only. A retry must retain
+and replay its exact canonical bytes and fingerprint; it must not reconstruct
+an equality-equivalent Set and recompute a different fingerprint. Reusing a
+commit identity with a changed representative is a fingerprint mismatch, not
+an equivalent replay.
 
 ## Unresolved decisions and evidence boundary
 
@@ -152,9 +179,6 @@ normalization rule that changes the draft's preserve-type/scale requirement.
   Rust and SDK implementations.
 - Confirm that typed RecordKey discriminants `[0, 1, 2]` and their payload
   shapes are acceptable, or assign the wire-schema's fixed semantic tags.
-- Explicitly choose representative-preserving fingerprints (recommended) or
-  equality-class normalization for native-equal Sets. No implementation may
-  silently pick one.
 - Add cross-language goldens for input insertion-order permutations, bytewise
   Set order, duplicate native equality, scalar Decimal scale, signed zero,
   and exact preimage bytes. Hand-derived vectors above are not a substitute.
@@ -162,4 +186,6 @@ normalization rule that changes the draft's preserve-type/scale requirement.
 Source comparison is not runtime proof. The pinned dependency source establishes
 the BTreeSet and numeric comparison rules; this SDK branch does not contain a
 native-values encoder, server route, persisted profile binding, or full Note
-sync. SDK `.3` artifact success does not close the persisted Note sync gate.
+sync. The representation-preserving Set and fingerprint rule is the selected
+design for this amendment; it has not been runtime tested. SDK `.3` artifact
+success does not close the persisted Note sync gate.

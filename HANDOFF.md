@@ -1252,13 +1252,16 @@ This SDK documentation review is based on engine draft
 SurrealDB 3.2.4 dependencies. See
 [`docs/NATIVE_VALUES_PROFILE_PRECISION_REVIEW.md`](docs/NATIVE_VALUES_PROFILE_PRECISION_REVIEW.md)
 for a candidate domain-separated fingerprint envelope and hand-derived
-RecordKey vectors, Set first-survivor and wire-order rules, pinned source
-references, and unresolved review choices. The engine lock resolves
+RecordKey vectors, selected Set representation/wire-order rules, pinned source
+references, and remaining review choices. The engine lock resolves
 `rust_decimal` 1.42.1; the engine draft's 1.43.0 citation needs correction.
 
 This is a design amendment only: no native-values codec, profile negotiation,
 route, persistence binding, or full Note sync was implemented or runtime
-verified. Protocol review must decide whether a SurrealDB Set's first retained
-equal-value representative remains part of its fingerprint, as recommended,
-or whether the draft's lossless scale/type rule should be changed. The `.3`
-SDK artifact does not close the full persisted Note sync gate.
+verified. The selected design preserves the first equal-value representative
+already retained by the SurrealDB Set; native equality is only the duplicate
+and decoder-cardinality relation. Thus equal Sets can have different
+fingerprints when their retained member type, Float bits, or Decimal scale
+differs. Retries must retain exact canonical bytes and fingerprint. This
+choice is documented, not runtime tested; the `.3` SDK artifact does not close
+the full persisted Note sync gate.
