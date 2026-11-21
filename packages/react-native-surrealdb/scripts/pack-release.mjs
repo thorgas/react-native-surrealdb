@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { parseNpmPackReport } from "./parse-npm-pack-report.mjs";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const requestedOutput = process.argv.find(
@@ -46,13 +47,7 @@ if (packed.status !== 0) {
 }
 
 const report = JSON.parse(packed.stdout);
-if (report.length !== 1)
-  throw new Error("npm pack returned an unexpected report");
-
-const [artifact] = report;
-if (artifact.name !== "react-native-surrealdb") {
-  throw new Error(`refusing to pack unexpected package ${artifact.name}`);
-}
+const artifact = parseNpmPackReport(report, "react-native-surrealdb");
 await writeFile(
   join(outputDirectory, "npm-pack.json"),
   `${JSON.stringify(report, null, 2)}\n`,

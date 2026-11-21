@@ -4996,6 +4996,14 @@ export interface NativeSyncClientLike {
     asyncOpts_?: { signal: AbortSignal },
   ) /*throws*/ : Promise<string>;
   /**
+   * One locked revision of every durable intent lane, including lanes whose
+   * latest local delete has no projected read row. The cursor belongs to the
+   * same read journal used by read_changes_json for invalidation.
+   */
+  readIntentLanesJson(asyncOpts_?: {
+    signal: AbortSignal;
+  }) /*throws*/ : Promise<string>;
+  /**
    * One locked revision of the optimistic read row and its durable intent
    * lane. Pending intent IDs include edits that have no wire commit yet.
    */
@@ -6081,6 +6089,51 @@ export class NativeSyncClient
               maxBatches,
               nativeModule().rustbuffer_alloc,
             ),
+          );
+        },
+        /*pollFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_poll_rust_buffer,
+        /*cancelFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_cancel_rust_buffer,
+        /*completeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_complete_rust_buffer,
+        /*freeFunc:*/ nativeModule()
+          .ubrn_ffi_surrealdb_rn_core_rust_future_free_rust_buffer,
+        // Async returns always go through the JS-side converter: the
+        // FFI symbol returns the future handle (u64), and the user-level
+        // RustBuffer comes back via the shared `rust_future_complete_*`
+        // export. The bytes the runtime hands back must be deserialized
+        // here using the per-callable return-type converter.
+        /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+        /*asyncOpts:*/ asyncOpts_,
+        /*errorHandler:*/ FfiConverterTypeNativeSyncError.lift.bind(
+          FfiConverterTypeNativeSyncError,
+        ),
+      );
+    } catch (__error: any) {
+      if (uniffiIsDebug && __error instanceof Error) {
+        __error.stack = __stack;
+      }
+      throw __error;
+    }
+  }
+
+  /**
+   * One locked revision of every durable intent lane, including lanes whose
+   * latest local delete has no projected read row. The cursor belongs to the
+   * same read journal used by read_changes_json for invalidation.
+   */
+  async readIntentLanesJson(asyncOpts_?: {
+    signal: AbortSignal;
+  }): Promise<string> /*throws*/ {
+    const __stack = uniffiIsDebug ? new Error().stack : undefined;
+    try {
+      return await uniffiRustCallAsync(
+        /*rustCaller:*/ uniffiCaller,
+        /*rustFutureFunc:*/ () => {
+          return nativeModule().ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_read_intent_lanes_json(
+            uniffiTypeNativeSyncClientObjectFactory.clonePointer(this),
           );
         },
         /*pollFunc:*/ nativeModule()
@@ -8655,6 +8708,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_changes_json",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_intent_lanes_json() !==
+    28569
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_intent_lanes_json",
     );
   }
   if (

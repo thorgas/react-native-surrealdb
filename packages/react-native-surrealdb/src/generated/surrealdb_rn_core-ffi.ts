@@ -414,6 +414,9 @@ interface NativeModuleInterface {
     cursorJson: Uint8Array,
     maxBatches: number,
   ): bigint;
+  ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_read_intent_lanes_json(
+    uniffiSelf: bigint,
+  ): bigint;
   ubrn_uniffi_surrealdb_rn_core_fn_method_nativesyncclient_read_intent_record_json(
     uniffiSelf: bigint,
     recordId: Uint8Array,
@@ -628,6 +631,7 @@ interface NativeModuleInterface {
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_project_lane_conflict_snapshot_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_capabilities_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_changes_json(): number;
+  ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_intent_lanes_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_intent_record_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_snapshot_json(): number;
   ubrn_uniffi_surrealdb_rn_core_checksum_method_nativesyncclient_read_view_json(): number;

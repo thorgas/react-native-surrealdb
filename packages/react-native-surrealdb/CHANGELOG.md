@@ -4,8 +4,9 @@
   conflict resolution preparation and retained receipts through the native
   engine pinned to `5f104c16e0d367b686fba6905550b38ef57653f4`.
 - The earlier two-target UniFFI probe used SDK native input `eba56329` and
-  handwritten facade `be42c754`. The durable lane inventory API supersedes
-  that probe; matching full four-target native artifacts, generated bindings,
+  handwritten facade `be42c754`. The durable lane inventory API at source
+  commit `b0442a8` supersedes that probe; matching full four-target native
+  artifacts and generated bindings,
   and a local reviewable tarball are required before consumption.
 - Keep the existing public protocol and package publication unchanged. This
   private candidate is not a tag or npm release.

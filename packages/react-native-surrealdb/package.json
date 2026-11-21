@@ -74,7 +74,7 @@
     "typecheck": "tsc --noEmit",
     "verify:package": "node scripts/verify-package.mjs",
     "release:artifacts": "pnpm run ubrn:ios && pnpm run release:strip:ios && pnpm run ubrn:android && pnpm run release:strip:android",
-    "release:check": "pnpm run build && pnpm run typecheck && pnpm run test && pnpm run verify:package",
+    "release:check": "pnpm run build && pnpm run typecheck && pnpm run test && node --test scripts/parse-npm-pack-report.node-test.mjs && pnpm run verify:package",
     "release:pack": "node scripts/pack-release.mjs",
     "release:strip:android": "bash scripts/prepare-android-release-artifacts.sh",
     "release:strip:ios": "bash scripts/prepare-ios-release-artifacts.sh",

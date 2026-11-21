@@ -950,11 +950,13 @@ active compiler, and start with roughly 9 GiB free to allow an estimated
 2-4 GiB of new release output and transient linking while maintaining the
 5 GiB stop floor. Measure `df -k .` before and during each platform build and
 stop below the floor. After both commands, compare generated TS/C++ hashes
-with this source commit, record raw and staged binary hashes for all four
+across Android and iOS generation from source `b0442a8`, then commit those
+fresh generated files; record raw and staged binary hashes for all four
 targets, check the XCFramework has device and simulator identifiers, and
-confirm lock and manifest hashes are unchanged. Run package typecheck and
-Vitest, `node scripts/verify-package.mjs`, then the repository's Android and
-iOS strip scripts, recording binary hashes before and after stripping. Do not
+confirm lock and manifest hashes are unchanged. Record raw hashes, then run
+the repository's Android and iOS strip scripts and record staged hashes.
+Run `release:check` against the stripped four-slice matrix before local
+`release:pack`. Do not
 publish, tag, or claim device acceptance from this matrix alone. Package
 metadata now names the separate private candidate described below; keep that
 version until its local archive is reviewed, and never overwrite the `haus`
@@ -975,21 +977,23 @@ returned E404 (the registry also uses this response for inaccessible versions).
 It is distinct from immutable `0.1.0-alpha.7.haus.20261023.1`. Only the package
 wrapper version changed; the Rust crate version, pnpm lock graph, Cargo lock
 graph, platform targets, and dependency versions did not. The package's
-`src/generated` and `cpp/generated` files come from the pinned UniFFI generator
+old `src/generated` and `cpp/generated` files came from pinned UniFFI generator
 `0.31.0-3` and SDK native input `eba56329e744e65c1da674dcd1d316955d389aba`
-at engine `5f104c16e0d367b686fba6905550b38ef57653f4`. The handwritten
-runtime facade is commit `be42c754e4a8ac0eb17152b30285b296df26936d`;
-do not leave `runtimeSourceSha` null in the final package proof. The test-only
-rollback commit `77a9e7e` changes no production native input. The generated
-source commit is `39f38bd`; the package inventory fix is `3d257ed`.
+at engine `5f104c16e0d367b686fba6905550b38ef57653f4`. They are superseded.
+The validated replacement source commit `b0442a8c96b0f8d3133855afcd905d0723a14fb1`
+is both `nativeInputSourceSha` and `runtimeSourceSha`; do not leave the latter
+null in the final package proof. The test-only rollback commit `77a9e7e`
+changed no production native input. The old generated source commit was
+`39f38bd`; the package inventory fix is `3d257ed`.
 
 The package allowlist retains `LICENSE` (MIT wrapper),
-`LICENSE-APACHE-2.0` (engine client/protocol), and
-`THIRD_PARTY_NOTICES.md` (including MPL-2.0 UniFFI/generator attribution).
+`LICENSE-APACHE-2.0` (engine client/protocol), exact locked SurrealDB 3.2.4
+and protocol 0.10.2 license files, and `THIRD_PARTY_NOTICES.md` (including
+MPL-2.0 UniFFI/generator attribution and SurrealDB Cargo license metadata).
 The notice now identifies the canonical Git dependency SHA rather than the
 historical copied source as the native core's actual input. At the local pack
 gate, inspect the tarball's regular-file inventory and hashes, and confirm all
-three files and `RELEASING.md` are present. Compare the final compressed and
+five license/notice files and `RELEASING.md` are present. Compare the final compressed and
 unpacked bytes, file count, and per-slice sizes with immutable `haus` alpha7's
 152,993,844-byte/155-file archive; explain size changes before accepting the
 candidate. The generated TS increased 38,064 bytes and C++ increased 41,707
@@ -998,26 +1002,23 @@ bindings; the final binary and tarball deltas remain unmeasured until the
 four-target build.
 
 After both paired native commands above produce four matched slices, run from
-`packages/react-native-surrealdb`:
+`packages/react-native-surrealdb` using the already installed pnpm 11.5.0 and
+Node 22.22.0:
 
 ```sh
-./node_modules/.bin/bob build
-./node_modules/.bin/tsc --noEmit
-./node_modules/.bin/vitest run
-node scripts/verify-package.mjs
-node scripts/pack-release.mjs /absolute/owned/output/directory
+pnpm run release:strip:android
+pnpm run release:strip:ios
+pnpm run release:check
+pnpm run release:pack -- /absolute/owned/output/directory
 ```
 
-The pack helper uses `npm pack --ignore-scripts`, records `npm-pack.json`, and
-enforces a 180,000,000-byte compressed ceiling; the preceding commands are
-required because packing does not rebuild or retest. Check the tarball name,
+`release:check` runs Bob to build JS declarations, package typecheck, Vitest,
+and the four-slice package verifier. The pack helper uses
+`npm pack --ignore-scripts`, records `npm-pack.json`, and enforces a
+180,000,000-byte compressed ceiling; it does not rebuild or retest. Check the tarball name,
 version, regular-file list and hashes, license/notice files, all four native
 slice hashes/checksums and generated ABI against the source manifest. Keep raw
-pre-strip and staged post-strip hashes separate. The Rust host suite and 158
-package Vitest tests passed before this metadata update; rerun package checks
-against the complete candidate. The app conflict adapter passed strict TS and
-24 adapter tests against the source facade, but it has not installed this
-tarball or exercised a rebuilt app. Consumer installation, RN compatibility
+pre-strip and staged post-strip hashes separate. Consumer installation, RN compatibility
 typecheck/native host tests, and iOS/Android device behavior remain separate
 acceptance gates.
 
@@ -1057,8 +1058,10 @@ row-change batches for lane-only revisions and emits a fresh snapshot after
 snapshot/batch events, with no app durable ID index. Source tests cover the
 absent projected row, persistence reopen, empty-batch invalidation, reset
 cursor, blocked and awaiting-pull lanes, scope barriers, and large counters.
-The new native input and generated ABI hashes remain pending a coherent source
-commit, an explicit renewed native build slot, and a complete four-target rebuild.
+The source commit is `b0442a8c96b0f8d3133855afcd905d0723a14fb1`, both
+`nativeInputSourceSha` and `runtimeSourceSha` for the new ABI. Its Rust and TS
+inputs passed focused tests before push and remote readback. Fresh generated
+ABI and native hashes are recorded below; the older probe hashes are historical only.
 The package source `tsc --noEmit` passed and full Vitest passed 160/160 across
 18 files after the inventory facade and empty-batch watcher tests. `cargo
 +1.96.1 fmt --all` and `git diff --check` passed. The repository's existing
@@ -1074,8 +1077,7 @@ scope-barrier, and read-cursor tests passed individually. Full cached
 `cargo +1.96.1 test --locked --offline -p surrealdb-rn-core --lib --quiet`
 passed with 177 tests, 3 intentional ignored, and 0 failed. `cargo +1.96.1
 fmt --all -- --check` passed. No compiler remained, and the host slot was
-released at 13,369,016 KiB free. Native generation and local packing have
-not resumed.
+released at 13,369,016 KiB free.
 
 The vendored-license audit inspected the exact locked registry contents:
 `surrealdb`, `surrealdb-core`, and `surrealdb-types` 3.2.4 all declare
@@ -1088,5 +1090,50 @@ Locked `surrealdb-protocol` 0.10.2 declares both `license = "BUSL-1.1"` and
 Those exact files are now copied into the package allowlist and verified by
 hash in `verify-package.mjs`, alongside wrapper MIT, engine Apache, and UniFFI
 MPL notice. This closes a previously missing notice-text gap without making a
-legal conclusion. Local package verification still intentionally fails on the
-incomplete native/JS matrix.
+legal conclusion.
+
+## Complete private four-target package candidate
+
+With no SDK compiler or competing Cargo build active and 13,285,328 KiB free,
+the SDK built sequential Android arm64/x86_64 and iOS device/simulator arm64
+using the approved offline Rust 1.96.1, one Cargo job, and the existing inactive
+`/Users/timhorgas/git/worktrees/sync-receipt-sdk/target` cache. The Android and
+iOS UniFFI generations produced identical TS/C++ hashes. The XCFramework
+contains exactly `ios-arm64` and `ios-arm64-simulator`. Cargo.lock, pnpm lock,
+and Rust manifest SHA256 stayed `f54d6f6e372d9a4f825d9c6f76833af6a8d35c9d517760fb543e1883549931c4`,
+`e142612f80f63e3aa7cb2f72a94cb6c16f8738d464d0643bf2490255b54322f0`,
+and `faa7ef0c62ef211a6e8cbad229b0e2ff53fa63f31b0e8d07facfca5a77e2fc30`.
+The raw four-target manifest is `/tmp/sdk-full-matrix-raw-20261121.json`.
+The compiler slot was released after the iOS pair at 13,305,204 KiB free.
+
+The repository strip scripts changed only staged libraries. The packed staged
+SHA256 values are Android arm64 `8a1cac455933859bc3b734d7aa734bf8adc83532803905e573364b3e4534ebdb`,
+Android x86_64 `0ea0c91f0a5d654f94fba9cbe729c3c918909bbf5fcbce74ef606842afdebb0f`,
+iOS device arm64 `0c2317c79244c3365cfb4fb50608073356f1379284e0913d2ad2bb4bf2f2c38b`,
+and iOS simulator arm64 `09a4e7f555590a568c19bc71641014ae52ba2f954288c10e8d2faf1aa2323bea`.
+The generated TS and C++ hashes are `2f487856c935d04e0079388dadf5c707df27b877024096435c8ac6a311013b06`
+and `231ac1455b7bf8add7fb5eaa76676dde974c1063273eece894da166cb649b625`.
+The pre-strip raw hashes and all generated/staged paths remain in the raw
+manifest; `/tmp/sdk-private-package-20261121/provenance.json` checks every
+packed generated file and staged library byte-for-byte against the worktree.
+
+Node 22.22.0 and installed pnpm 11.5.0 ran `release:check`: Bob module and
+TypeScript declarations, `tsc --noEmit`, 160/160 Vitest tests in 18 files,
+and the four-slice `verify-package.mjs` all passed. npm 12.2.1 returned its
+current keyed JSON `npm pack` report, so `pack-release.mjs` now accepts either
+the keyed object or historical single-element array. Three permanent Node
+tests cover both shapes and zero, multiple, or malformed artifacts; all passed
+within `release:check`. The first real pack exposed the format mismatch and
+the final rerun passed the 180,000,000-byte ceiling.
+The private candidate at
+`/tmp/sdk-private-package-20261121/react-native-surrealdb-0.1.0-alpha.7.tdt.20261121.1.tgz`
+is 58,027,318 compressed bytes, 179,995,135 unpacked bytes, 157 regular
+files, SHA256 `c2ac15bcad246841b19a6ba1ce1104afff1ceeb862df0f7381cfcccb0b4d7d52`.
+The npm report SHA1 matches the archive. Against immutable `haus` alpha7's
+152,993,844-byte/155-file archive, this candidate is 94,966,526 compressed
+bytes smaller and has two more files (the exact SurrealDB license texts).
+The smaller archive is consistent with stripping the staged native symbols;
+raw outputs are retained separately. The archive contains the wrapper MIT,
+engine Apache, exact locked SurrealDB license texts, third-party notice,
+module entry, and TypeScript declarations. No app consumer/device execution or
+public publication is claimed by this package gate.
