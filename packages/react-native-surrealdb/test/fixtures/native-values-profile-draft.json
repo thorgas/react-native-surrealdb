@@ -238,7 +238,7 @@
       "depthCountsRootAs": 1,
       "containerItemsAreDirectMembers": true,
       "totalItemsCount": "tagged native value nodes",
-      "stringsAndBytesMeasure": "encoded UTF-8 or byte count",
+      "stringsAndBytesMeasure": "aggregate UTF-8 text plus bytes",
       "encodedCborMeasures": "complete single CBOR message",
       "maximaInclusive": true,
       "claimedLengthValidatedBeforeAllocation": true
@@ -252,7 +252,10 @@
       "decimalMaxScale": 28,
       "decimalMustRoundTripConstructor": true,
       "datetimeConstructor": "surrealdb_types::Datetime::from_timestamp",
-      "uuidWidthBytes": 16
+      "uuidWidthBytes": 16,
+      "recordIdTableMustBeNonempty": true,
+      "recordIdStringKeyMayBeEmpty": true,
+      "recordIdFieldsHaveNoIndividualByteCap": true
     },
     "jsonAst": ["surrealdb-sync/native-values/1", "kindId", "payload"],
     "jsonObjectPayload": "sorted array of [keyText, NativeJsonValue] pairs",

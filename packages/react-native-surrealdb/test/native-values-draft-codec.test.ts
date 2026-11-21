@@ -9,8 +9,26 @@ import {
 
 type Fixture = {
   valid: { id: string; cborHex: string; expected: string }[];
-  rejected: { id: string; cborHex: string; error: string }[];
+  rejected: { id: string; cborHex: string; error: string; tsError?: string }[];
   oversizedEncodedInput: { length: number; error: string };
+  nativeSetCardinalityCase: {
+    id: string;
+    cborHex: string;
+    rustError: string;
+    typescriptDisposition: string;
+  };
+  resourceBoundaryCases: {
+    maxTotalItems: number;
+    overTotalItems: number;
+    maxAggregateStringBytes: number;
+    overAggregateStringBytes: number;
+    maxEncodedBytes: number;
+    recordIdentityTableBytes: number;
+    recordIdentityKeyBytes: number;
+    emptyRecordStringKeyBytes: number;
+    overEncodedOutputBytes: number;
+    nativeSetEqualityCheckedInTypescript: boolean;
+  };
 };
 const fixture = JSON.parse(
   readFileSync(
@@ -31,6 +49,10 @@ function expected(id: string): DraftNativeValue {
       return { kind: "null" };
     case "int-one":
       return { kind: "int", value: 1n };
+    case "int64-min":
+      return { kind: "int", value: -(1n << 63n) };
+    case "int64-max":
+      return { kind: "int", value: (1n << 63n) - 1n };
     case "string-one":
       return { kind: "string", value: "1" };
     case "float-negative-zero":
@@ -62,6 +84,12 @@ function expected(id: string): DraftNativeValue {
         kind: "recordId",
         table: "note",
         key: { kind: "int", value: 7n },
+      };
+    case "record-key-empty-string":
+      return {
+        kind: "recordId",
+        table: "note",
+        key: { kind: "string", value: "" },
       };
     case "record-key-string-seven":
       return {
@@ -141,7 +169,7 @@ describe("unwired native-values draft codec", () => {
       expect(
         () => decodeDraftNativeValue(hex(vector.cborHex)),
         vector.id,
-      ).toThrow(vector.error);
+      ).toThrow(vector.tsError ?? vector.error);
     }
     expect(() =>
       decodeDraftNativeValue(
@@ -181,5 +209,105 @@ describe("unwired native-values draft codec", () => {
     expect(() =>
       encodeDraftNativeValue({ kind: "string", value: "lone-\ud800" }),
     ).toThrow("InvalidUnicode");
+  });
+
+  it("matches aggregate resource bounds and native-only Set rejection cases", () => {
+    const limits = fixture.resourceBoundaryCases;
+    expect(limits).toMatchObject({
+      maxTotalItems: 4096,
+      overTotalItems: 4097,
+      maxAggregateStringBytes: 1048576,
+      overAggregateStringBytes: 1048577,
+      maxEncodedBytes: 4194304,
+      recordIdentityKeyBytes: 1025,
+      overEncodedOutputBytes: 4194305,
+      nativeSetEqualityCheckedInTypescript: false,
+    });
+
+    const buildTree = (extraLeaf: boolean): DraftNativeValue => {
+      const branches: DraftNativeValue[] = [];
+      for (let i = 0; i < 64; i++) {
+        const leafCount = i < 63 ? 63 : 62 + Number(extraLeaf);
+        branches.push({
+          kind: "array",
+          values: Array.from({ length: leafCount }, () => ({
+            kind: "null" as const,
+          })),
+        });
+      }
+      return { kind: "array", values: branches };
+    };
+    const atItemLimit = encodeDraftNativeValue(buildTree(false));
+    expect(atItemLimit.length).toBeLessThan(limits.maxEncodedBytes);
+    expect(decodeDraftNativeValue(atItemLimit)).toEqual(buildTree(false));
+    expect(() => encodeDraftNativeValue(buildTree(true))).toThrow(
+      "TotalItemsLimit",
+    );
+
+    const maxBytes = limits.maxAggregateStringBytes;
+    const atStringLimit = encodeDraftNativeValue({
+      kind: "array",
+      values: [
+        { kind: "string", value: "a".repeat(maxBytes / 2) },
+        { kind: "bytes", hex: "00".repeat(maxBytes / 2) },
+      ],
+    });
+    expect(atStringLimit.length).toBeLessThan(limits.maxEncodedBytes);
+    expect(decodeDraftNativeValue(atStringLimit)).toEqual({
+      kind: "array",
+      values: [
+        { kind: "string", value: "a".repeat(maxBytes / 2) },
+        { kind: "bytes", hex: "00".repeat(maxBytes / 2) },
+      ],
+    });
+    expect(() =>
+      encodeDraftNativeValue({
+        kind: "array",
+        values: [
+          { kind: "string", value: "a".repeat(maxBytes / 2) },
+          { kind: "bytes", hex: "00".repeat(maxBytes / 2 + 1) },
+        ],
+      }),
+    ).toThrow("StringLimit");
+
+    const table = "t".repeat(limits.recordIdentityTableBytes);
+    const longRecord: DraftNativeValue = {
+      kind: "recordId",
+      table,
+      key: {
+        kind: "string",
+        value: "k".repeat(limits.recordIdentityKeyBytes),
+      },
+    };
+    expect(decodeDraftNativeValue(encodeDraftNativeValue(longRecord))).toEqual(
+      longRecord,
+    );
+    const setCase = fixture.nativeSetCardinalityCase;
+    expect(setCase.rustError).toBe("SetCardinality");
+    expect(setCase.typescriptDisposition).toBe(
+      "representation-only-accepts-both-members",
+    );
+    expect(decodeDraftNativeValue(hex(setCase.cborHex))).toEqual({
+      kind: "set",
+      values: [
+        { kind: "int", value: 1n },
+        { kind: "float", bitsHex: "3ff0000000000000" },
+      ],
+    });
+    expect(() =>
+      encodeDraftNativeValue({
+        kind: "bytes",
+        hex: "00".repeat(limits.overEncodedOutputBytes),
+      }),
+    ).toThrow("StringLimit");
+    expect(
+      decodeDraftNativeValue(
+        encodeDraftNativeValue({
+          kind: "recordId",
+          table: "note",
+          key: { kind: "string", value: "" },
+        }),
+      ),
+    ).toEqual(expected("record-key-empty-string"));
   });
 });

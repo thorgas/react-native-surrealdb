@@ -68,7 +68,7 @@ fn decode_value(bytes: &[u8]) -> Result<SurrealValue, CodecError> {
 #[derive(Default)]
 struct Budget {
     items: usize,
-    encoded_bytes: usize,
+    string_bytes: usize,
 }
 
 impl Budget {
@@ -87,12 +87,12 @@ impl Budget {
         if bytes > MAX_STRING_BYTES {
             return Err(CodecError::StringLimit);
         }
-        self.encoded_bytes = self
-            .encoded_bytes
+        self.string_bytes = self
+            .string_bytes
             .checked_add(bytes)
             .ok_or(CodecError::EncodedLimit)?;
-        if self.encoded_bytes > MAX_ENCODED_BYTES {
-            return Err(CodecError::EncodedLimit);
+        if self.string_bytes > MAX_STRING_BYTES {
+            return Err(CodecError::StringLimit);
         }
         Ok(())
     }

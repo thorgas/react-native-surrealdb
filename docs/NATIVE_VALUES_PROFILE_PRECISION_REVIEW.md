@@ -236,8 +236,9 @@ NativeRecordIdentity := [tableText, NativeRecordKey]
 NativeRecordKey      := [0, signedI64] | [1, keyText] | [2, uuidBytes16]
 ```
 
-`tableText` and `keyText` are nonempty UTF-8 text and each is limited to 1,024
-bytes. Kind 0 is a numeric key, kind 1 a string key, and kind 2 a UUID key.
+`tableText` is nonempty UTF-8 text. A string key may be empty; neither field
+has an individual byte cap, though both count toward the 1 MiB aggregate
+string/byte budget. Kind 0 is a numeric key, kind 1 a string key, and kind 2 a UUID key.
 Numeric-looking text stays a string key. Array, object, and range keys are
 unsupported and fail closed. All operation IDs, record references, pull
 records, snapshots, mappings, and conflict records use this same structural
@@ -483,8 +484,8 @@ while this candidate wire profile rejects them per the engine draft. Therefore
 this candidate is not yet proven fully lossless for every native Number, and
 must not be used to activate full Note sync. The existing v1 JSON-backed
 `sync_state` path also cannot retain arbitrary NaN payload bits. The native
-codec source passed the focused Rust value-node suite; JS fixture checks remain
-metadata/hand-derived-vector checks and do not claim that native behavior.
+codec remains an isolated spike; its tests do not prove integrated sync or
+durable replay behavior.
 
 Independent literal decoder vectors are shared at
 `packages/react-native-surrealdb/test/fixtures/native-values-decode-vectors.json`.
@@ -495,10 +496,16 @@ inputs use `rust_decimal` 1.42.1's 96-bit coefficient and `MAX_SCALE` 28;
 Datetime boundary seconds/nanoseconds follow pinned Chrono 0.4.45
 `NaiveDateTime::{MIN,MAX}` through SurrealDB 3.2.4's
 `Datetime::from_timestamp`. The vectors also cover UUID and three typed record
-key forms, negative zero, retained Set values, tag-lookalike Object keys,
-depth 32/33, and an input one byte over the 4 MiB limit. The focused Rust
-command passed 11/11; the narrow JS test checks fixture identity and shape,
-not native decode behavior.
+key forms, empty string RecordId keys, i64 endpoints, negative zero, retained
+Set values, tag-lookalike Object keys, depth 32/33, malformed UTF-8, and an
+input one byte over the 4 MiB limit. Resource tests cover exactly 4,096 and
+4,097 value nodes, exactly 1 MiB and 1 MiB plus one aggregate text/Bytes
+payload, and long table/key text. The Rust focused command passes 12/12,
+including native-equal Set collapse rejection. The TypeScript focused codec
+suite passes 6/6 and checks the same literal fixtures and aggregate budgets;
+its Set fixture only proves representation decode and intentionally does not
+make a native-equality claim. The profile contract suite has five passing
+checks and three existing SDK-invocation TODOs.
 
 ## SDK draft contract fixtures
 
@@ -521,8 +528,12 @@ For each supported vector, the test compares decoded bytes to a separately
 written expected TypeScript AST and encodes that AST back to the literal bytes.
 It also exercises malformed/truncated input, overlong/overflowing integers,
 unknown kinds, CBOR-map rejection, non-increasing Set bytes, depth 32/33,
-decimal/datetime bounds, and the encoded-input limit. It is not exported in the
-package export map and has no production call sites.
+decimal/datetime bounds, aggregate item/string-byte boundaries, malformed
+UTF-8, and the encoded-input limit. The SDK writer grows only up to the 4 MiB
+output ceiling; the 1 MiB aggregate payload budget makes that ceiling
+unreachable for otherwise-valid values, so an over-ceiling payload fixture is
+rejected by the earlier string-byte budget. It is not exported in the package
+export map and has no production call sites.
 
 The TypeScript module is a byte and representation codec only, not a
 `SurrealValue` validator. Its AST intentionally carries exact Float64 bits,
@@ -534,6 +545,17 @@ native Set uniqueness/cardinality, or prove SDK persistence/replay behavior.
 Set decoding checks only strict ascending encoded-member bytes and retains the
 decoded member representations; native construction must separately enforce
 the SurrealDB duplicate/cardinality rule before any future integration.
+Both draft codecs count 4,096 NativeValue nodes and at most 1 MiB aggregate
+UTF-8 text plus Bytes payload, including Object keys and RecordId table/string
+keys, alongside per-container and 4 MiB encoded input/output guards. The Rust
+draft budget now applies the 1 MiB payload cap to the aggregate rather than
+only each individual item. Pinned RecordId construction permits an empty
+string key and imposes no independent table/key length cap; the table remains
+nonempty and all field bytes count toward the aggregate. Shared vectors cover
+signed i64 endpoints, the empty-key/empty-table distinction, long identity
+fields, malformed UTF-8, and native-equal Set collapse. TypeScript accepts both
+encoded Set member representations; only Rust reports native
+`SetCardinality` for the equality collapse.
 Existing SDK-invocation TODOs therefore remain open. This spike does not add
 profile conversion, transport, storage, activation, ABI changes, or package
 exports, and does not complete full persisted Note sync.

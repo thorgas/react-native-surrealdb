@@ -1,4 +1,4 @@
-use super::{CodecError, decode_value, encode_value};
+use super::{decode_value, encode_value, CodecError};
 use serde::Deserialize;
 use surrealdb::types::{
     Array, Datetime, Number, Object, RecordId, RecordIdKey, Set, Uuid, Value as SurrealValue,
@@ -10,6 +10,8 @@ struct DecodeVectorFixture {
     valid: Vec<ValidDecodeVector>,
     rejected: Vec<RejectedDecodeVector>,
     oversized_encoded_input: OversizedInputVector,
+    native_set_cardinality_case: NativeSetCardinalityCase,
+    resource_boundary_cases: ResourceBoundaryCases,
 }
 
 #[derive(Deserialize)]
@@ -26,6 +28,30 @@ struct RejectedDecodeVector {
     id: String,
     cbor_hex: String,
     error: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NativeSetCardinalityCase {
+    id: String,
+    cbor_hex: String,
+    rust_error: String,
+    typescript_disposition: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ResourceBoundaryCases {
+    max_total_items: usize,
+    over_total_items: usize,
+    max_aggregate_string_bytes: usize,
+    over_aggregate_string_bytes: usize,
+    max_encoded_bytes: usize,
+    record_identity_table_bytes: usize,
+    record_identity_key_bytes: usize,
+    empty_record_string_key_bytes: usize,
+    over_encoded_output_bytes: usize,
+    native_set_equality_checked_in_typescript: bool,
 }
 
 #[derive(Deserialize)]
@@ -108,6 +134,109 @@ fn independently_authored_literal_vectors_decode_to_pinned_native_values() {
         decode_value(&vec![0; fixture.oversized_encoded_input.length]),
         Err(CodecError::EncodedLimit)
     );
+
+    assert_eq!(
+        fixture.native_set_cardinality_case.rust_error,
+        "SetCardinality"
+    );
+    assert_eq!(
+        fixture.native_set_cardinality_case.typescript_disposition,
+        "representation-only-accepts-both-members"
+    );
+    let collapsed = decode_value(&hex_to_bytes(&fixture.native_set_cardinality_case.cbor_hex));
+    assert_eq!(
+        collapsed,
+        Err(CodecError::SetCardinality),
+        "{}",
+        fixture.native_set_cardinality_case.id
+    );
+}
+
+#[test]
+fn aggregate_resource_limits_and_record_key_boundaries_match_shared_fixture() {
+    let fixture: DecodeVectorFixture = serde_json::from_str(include_str!(
+        "../../../packages/react-native-surrealdb/test/fixtures/native-values-decode-vectors.json"
+    ))
+    .expect("shared hand-authored decode fixture is valid JSON");
+    let limits = fixture.resource_boundary_cases;
+    assert_eq!(limits.max_total_items, 4_096);
+    assert_eq!(limits.over_total_items, limits.max_total_items + 1);
+    assert_eq!(limits.max_aggregate_string_bytes, 1_048_576);
+    assert_eq!(
+        limits.over_aggregate_string_bytes,
+        limits.max_aggregate_string_bytes + 1
+    );
+    assert_eq!(limits.max_encoded_bytes, 4_194_304);
+    assert_eq!(limits.record_identity_table_bytes, 1_025);
+    assert_eq!(limits.record_identity_key_bytes, 1_025);
+    assert_eq!(limits.empty_record_string_key_bytes, 0);
+    assert_eq!(
+        limits.over_encoded_output_bytes,
+        limits.max_encoded_bytes + 1
+    );
+    assert!(!limits.native_set_equality_checked_in_typescript);
+
+    let item_tree = |extra_leaf: bool| {
+        let branches = (0..64).map(|index| {
+            let leaf_count = if index < 63 {
+                63
+            } else {
+                62 + usize::from(extra_leaf)
+            };
+            SurrealValue::Array(Array::from(vec![SurrealValue::Null; leaf_count]))
+        });
+        SurrealValue::Array(Array::from(branches.collect::<Vec<_>>()))
+    };
+    let at_item_limit = encode_value(&item_tree(false)).expect("4096 value nodes fit");
+    assert!(at_item_limit.len() <= limits.max_encoded_bytes);
+    assert_eq!(decode_value(&at_item_limit), Ok(item_tree(false)));
+    assert_eq!(
+        encode_value(&item_tree(true)),
+        Err(CodecError::TotalItemsLimit)
+    );
+
+    let half = limits.max_aggregate_string_bytes / 2;
+    let string_tree = |second_len: usize| {
+        SurrealValue::Array(Array::from(vec![
+            SurrealValue::String("a".repeat(half)),
+            SurrealValue::Bytes(vec![0; second_len].into()),
+        ]))
+    };
+    let at_string_limit = encode_value(&string_tree(half)).expect("aggregate string bytes fit");
+    assert!(at_string_limit.len() <= limits.max_encoded_bytes);
+    assert_eq!(decode_value(&at_string_limit), Ok(string_tree(half)));
+    assert_eq!(
+        encode_value(&string_tree(half + 1)),
+        Err(CodecError::StringLimit)
+    );
+    assert_eq!(
+        encode_value(&SurrealValue::Bytes(
+            vec![0; limits.over_encoded_output_bytes].into()
+        )),
+        Err(CodecError::StringLimit),
+        "the stricter payload budget rejects this before the 4 MiB output cap"
+    );
+
+    let long_table = "t".repeat(limits.record_identity_table_bytes);
+    let long_key = "k".repeat(limits.record_identity_key_bytes);
+    let empty_string_key = SurrealValue::RecordId(RecordId::new(
+        long_table.clone(),
+        RecordIdKey::String(long_key),
+    ));
+    let encoded =
+        encode_value(&empty_string_key).expect("native RID has no arbitrary table/key byte cap");
+    assert_eq!(decode_value(&encoded), Ok(empty_string_key));
+    let empty_string_key =
+        SurrealValue::RecordId(RecordId::new("note", RecordIdKey::String(String::new())));
+    let encoded = encode_value(&empty_string_key).expect("native RID permits an empty string key");
+    assert_eq!(decode_value(&encoded), Ok(empty_string_key));
+    assert_eq!(
+        encode_value(&SurrealValue::RecordId(RecordId::new(
+            "",
+            RecordIdKey::String(String::new())
+        ))),
+        Err(CodecError::InvalidRecordId),
+    );
 }
 
 fn expected_native_value(id: &str) -> SurrealValue {
@@ -115,6 +244,8 @@ fn expected_native_value(id: &str) -> SurrealValue {
         "none" => SurrealValue::None,
         "null" => SurrealValue::Null,
         "int-one" => SurrealValue::Number(Number::Int(1)),
+        "int64-min" => SurrealValue::Number(Number::Int(i64::MIN)),
+        "int64-max" => SurrealValue::Number(Number::Int(i64::MAX)),
         "string-one" => SurrealValue::String("1".into()),
         "float-negative-zero" => SurrealValue::Number(Number::Float(-0.0)),
         "decimal-max-coefficient-scale-zero" => decimal("79228162514264337593543950335"),
@@ -132,6 +263,9 @@ fn expected_native_value(id: &str) -> SurrealValue {
         }
         "record-key-string-seven" => {
             SurrealValue::RecordId(RecordId::new("note", RecordIdKey::String("7".into())))
+        }
+        "record-key-empty-string" => {
+            SurrealValue::RecordId(RecordId::new("note", RecordIdKey::String(String::new())))
         }
         "record-key-uuid" => SurrealValue::RecordId(RecordId::new(
             "note",

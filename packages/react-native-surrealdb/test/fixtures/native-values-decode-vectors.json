@@ -19,6 +19,21 @@
       "expected": "int-one"
     },
     {
+      "id": "int64-min",
+      "cborHex": "d9ea6082033b7fffffffffffffff",
+      "expected": "int64-min"
+    },
+    {
+      "id": "int64-max",
+      "cborHex": "d9ea6082031b7fffffffffffffff",
+      "expected": "int64-max"
+    },
+    {
+      "id": "record-key-empty-string",
+      "cborHex": "d9ea60820d82646e6f7465820160",
+      "expected": "record-key-empty-string"
+    },
+    {
       "id": "string-one",
       "cborHex": "d9ea6082056131",
       "expected": "string-one"
@@ -119,10 +134,39 @@
       "id": "depth-33-array-chain",
       "cborHex": "d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820301",
       "error": "DepthLimit"
+    },
+    {
+      "id": "empty-record-table",
+      "cborHex": "d9ea60820d8260820160",
+      "error": "InvalidRecordId"
+    },
+    {
+      "id": "malformed-utf8-string",
+      "cborHex": "d9ea60820561ff",
+      "error": "Decode",
+      "tsError": "InvalidUnicode"
     }
   ],
   "oversizedEncodedInput": {
     "length": 4194305,
     "error": "EncodedLimit"
+  },
+  "nativeSetCardinalityCase": {
+    "id": "native-equal-int-float-set-collapse",
+    "cborHex": "d9ea60820c82d9ea60820301d9ea608204483ff0000000000000",
+    "rustError": "SetCardinality",
+    "typescriptDisposition": "representation-only-accepts-both-members"
+  },
+  "resourceBoundaryCases": {
+    "maxTotalItems": 4096,
+    "overTotalItems": 4097,
+    "maxAggregateStringBytes": 1048576,
+    "overAggregateStringBytes": 1048577,
+    "maxEncodedBytes": 4194304,
+    "recordIdentityTableBytes": 1025,
+    "emptyRecordStringKeyBytes": 0,
+    "nativeSetEqualityCheckedInTypescript": false,
+    "recordIdentityKeyBytes": 1025,
+    "overEncodedOutputBytes": 4194305
   }
 }

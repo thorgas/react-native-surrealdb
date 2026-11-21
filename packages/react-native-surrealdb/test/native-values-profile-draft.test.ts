@@ -373,7 +373,7 @@ describe("native-values profile draft contract fixtures", () => {
       depthCountsRootAs: 1,
       containerItemsAreDirectMembers: true,
       totalItemsCount: "tagged native value nodes",
-      stringsAndBytesMeasure: "encoded UTF-8 or byte count",
+      stringsAndBytesMeasure: "aggregate UTF-8 text plus bytes",
       encodedCborMeasures: "complete single CBOR message",
       maximaInclusive: true,
       claimedLengthValidatedBeforeAllocation: true,
@@ -388,6 +388,9 @@ describe("native-values profile draft contract fixtures", () => {
       decimalMustRoundTripConstructor: true,
       datetimeConstructor: "surrealdb_types::Datetime::from_timestamp",
       uuidWidthBytes: 16,
+      recordIdTableMustBeNonempty: true,
+      recordIdStringKeyMayBeEmpty: true,
+      recordIdFieldsHaveNoIndividualByteCap: true,
     });
     expect(schema.profileBindingToken).toEqual([0, "opaqueTokenBytes:1..4096"]);
     expect(schema.jsonAst).toEqual([
@@ -485,6 +488,8 @@ describe("native-values profile draft contract fixtures", () => {
       ["datetime-nanos-one-billion", "InvalidDatetime"],
       ["datetime-one-second-past-max", "InvalidDatetime"],
       ["depth-33-array-chain", "DepthLimit"],
+      ["empty-record-table", "InvalidRecordId"],
+      ["malformed-utf8-string", "Decode"],
     ]);
     expect(decodeVectors.oversizedEncodedInput).toEqual({
       length: 4_194_305,
