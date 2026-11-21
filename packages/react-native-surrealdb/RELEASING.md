@@ -51,25 +51,22 @@ when npm accepts the GitHub OIDC attestation.
 
 ### Private wrapper artifacts
 
-`0.1.0-alpha.7.tdt.20261121.2` is the current local private candidate. It
-corrects the JavaScript canonical CBOR codec factory while retaining the
-matching four-target binaries from native input
-`b0442a8c96b0f8d3133855afcd905d0723a14fb1`. Its wrapper source is
-`af57b6da08cc6153276a59952154e6f333e587c3`. It does not
-replace the immutable `haus` alpha7 artifact below. The earlier two-target
-probe used SDK native input `eba56329e744e65c1da674dcd1d316955d389aba`
-and handwritten runtime facade `be42c754e4a8ac0eb17152b30285b296df26936d`,
-pinned to engine `5f104c16e0d367b686fba6905550b38ef57653f4`. The
-durable lane inventory API supersedes that probe. Its validated source commit
-`b0442a8c96b0f8d3133855afcd905d0723a14fb1` is the
-`nativeInputSourceSha`; `af57b6da08cc6153276a59952154e6f333e587c3`
-is the `runtimeSourceSha`. Record generated output and all four binary hashes
-before packing. The earlier `.1` archive remains immutable.
-The test-only SurrealKV rollback commit `77a9e7e` changed neither prior
-production native input nor generated ABI. Complete all four matching platform
-slices, JS declarations,
-license and file inventory, size comparison, and consumer checks before making
-the local candidate tarball. This candidate has no public tag or npm release.
+`0.1.0-alpha.7.tdt.20261121.3` is the current local private candidate. It
+rebuilds all four native slices from the validated source containing the query
+wire datetime and typed record-ID decoders, and preserves iOS unwind
+relocations for Xcode linker validation. The prior `.2` candidate's stripped
+iOS archives are known-bad and remain immutable; its b0442 raw archives were
+diagnostic inputs only because their native source predates those decoder
+changes. Record the exact native input source, runtime source, generated
+outputs, and all four binary hashes before packing. This candidate does not
+replace the immutable `haus` alpha7 artifact below and has no public tag or
+npm release. Consumer behavior remains a separate validation gate.
+
+The earlier `.1` archive remains immutable. The test-only SurrealKV rollback
+commit `77a9e7e` changed neither prior production native input nor generated
+ABI. See
+[`../../docs/evidence/2026-11-21-ios-link-sdk2/README.md`](../../docs/evidence/2026-11-21-ios-link-sdk2/README.md)
+for the `.2` linker failure evidence.
 
 The `.2` iOS device and simulator archives are known to fail the Xcode 27.2
 link check after the release strip step. Do not repack or distribute `.2` as an

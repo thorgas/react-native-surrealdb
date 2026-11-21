@@ -4,7 +4,7 @@ import { parseNpmPackReport } from "./parse-npm-pack-report.mjs";
 
 const artifact = {
   name: "react-native-surrealdb",
-  version: "0.1.0-alpha.7.tdt.20261121.2",
+  version: "0.1.0-alpha.7.tdt.20261121.3",
   size: 58_027_244,
   unpackedSize: 179_995_076,
 };

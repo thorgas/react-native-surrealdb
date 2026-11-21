@@ -1,3 +1,11 @@
+## 0.1.0-alpha.7.tdt.20261121.3 — private source matched candidate
+
+- Rebuild all four native slices from the current source including the query
+  wire datetime and typed record-ID decoders.
+- Preserve iOS archive unwind relocations and validate device and simulator
+  archives with the installed Xcode linker before packing.
+- Private candidate only; no public tag or npm publication.
+
 ## 0.1.0-alpha.7.tdt.20261121.2 — private wrapper correction
 
 - Wire the existing generated source-v2 pull decoder into the canonical CBOR
