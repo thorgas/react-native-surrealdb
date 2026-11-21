@@ -1244,3 +1244,21 @@ next candidate needs binaries built from its matching current Rust source.
 No native rebuild, `.2` archive mutation, package publication, or consuming-app
 build was performed. See
 `docs/evidence/2026-11-21-ios-link-sdk2/README.md`.
+
+## Native-values fingerprint and Set precision review (design only)
+
+This SDK documentation review is based on engine draft
+`df88ce632bf8784b8bed439a19da224ef9936583` and source-reads the locked
+SurrealDB 3.2.4 dependencies. See
+[`docs/NATIVE_VALUES_PROFILE_PRECISION_REVIEW.md`](docs/NATIVE_VALUES_PROFILE_PRECISION_REVIEW.md)
+for a candidate domain-separated fingerprint envelope and hand-derived
+RecordKey vectors, Set first-survivor and wire-order rules, pinned source
+references, and unresolved review choices. The engine lock resolves
+`rust_decimal` 1.42.1; the engine draft's 1.43.0 citation needs correction.
+
+This is a design amendment only: no native-values codec, profile negotiation,
+route, persistence binding, or full Note sync was implemented or runtime
+verified. Protocol review must decide whether a SurrealDB Set's first retained
+equal-value representative remains part of its fingerprint, as recommended,
+or whether the draft's lossless scale/type rule should be changed. The `.3`
+SDK artifact does not close the full persisted Note sync gate.
