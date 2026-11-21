@@ -1262,6 +1262,9 @@ verified. The selected design preserves the first equal-value representative
 already retained by the SurrealDB Set; native equality is only the duplicate
 and decoder-cardinality relation. Thus equal Sets can have different
 fingerprints when their retained member type, Float bits, or Decimal scale
-differs. Retries must retain exact canonical bytes and fingerprint. This
-choice is documented, not runtime tested; the `.3` SDK artifact does not close
-the full persisted Note sync gate.
+differs. Retries must retain exact canonical bytes and fingerprint. Draft
+contract fixtures and narrow JS checks now pin the hand-derived fingerprint
+bytes and Set vector inventory; they do not prove native Set semantics. This
+choice remains untested in a native codec, and the `.3` SDK artifact does not
+close the full persisted Note sync gate. See the “SDK draft contract fixtures”
+section of the precision review for the exact validation boundary.

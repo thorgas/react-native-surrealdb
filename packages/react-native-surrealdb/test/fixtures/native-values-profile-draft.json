@@ -1,0 +1,161 @@
+{
+  "status": "draft-contract-hand-derived-not-runtime-verified",
+  "profile": "surrealdb-sync/native-values/1",
+  "fingerprintDomain": "surrealdb-sync/native-values/1/commit-fingerprint/sha256",
+  "fingerprintEnvelope": [
+    "domain",
+    "profile",
+    "partitionId",
+    "clientId",
+    "clientCommitId",
+    "orderedOperations"
+  ],
+  "fingerprintVectors": [
+    {
+      "id": "delete-integer-record-key-7",
+      "partitionId": "partition",
+      "clientId": "client-a",
+      "clientCommitId": "commit-1",
+      "operation": "delete note integer-key 7 at base version 0",
+      "recordKey": { "kind": "integer", "value": "7" },
+      "preimageHex": "8678387375727265616c64622d73796e632f6e61746976652d76616c7565732f312f636f6d6d69742d66696e6765727072696e742f736861323536781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f3169706172746974696f6e68636c69656e742d6168636f6d6d69742d3181830182646e6f746582000700",
+      "fingerprint": "sha256:af9faebfbf5afd784b0691280e4f9c8b16ca3f12fc6320ae9c5c41c78202806e"
+    },
+    {
+      "id": "delete-string-record-key-7",
+      "partitionId": "partition",
+      "clientId": "client-a",
+      "clientCommitId": "commit-1",
+      "operation": "delete note string-key 7 at base version 0",
+      "recordKey": { "kind": "string", "value": "7" },
+      "preimageHex": "8678387375727265616c64622d73796e632f6e61746976652d76616c7565732f312f636f6d6d69742d66696e6765727072696e742f736861323536781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f3169706172746974696f6e68636c69656e742d6168636f6d6d69742d3181830182646e6f74658201613700",
+      "fingerprint": "sha256:29307c46cb38fa49880331cf3f3561a8748c61786016831a0205e9f8b3710b4f"
+    }
+  ],
+  "setRule": {
+    "nativeEqualityUse": "duplicate-and-decoded-cardinality-validation-only",
+    "representative": "preserve-the-member-already-retained-by-native-set-construction",
+    "wireOrder": "strict-ascending-unsigned-lexicographic-complete-canonical-member-bytes",
+    "retry": "preserve-and-replay-exact-canonical-bytes-and-fingerprint",
+    "memberEncodingTagsAssigned": false,
+    "nativeRuntimeEvidenceRequired": true
+  },
+  "setVectors": [
+    {
+      "id": "int-one-before-float-one",
+      "input": [
+        { "kind": "int", "value": "1" },
+        { "kind": "float", "ieee754Hex": "3ff0000000000000" }
+      ],
+      "expectedNativeRepresentative": { "kind": "int", "value": "1" },
+      "expectedNativeCardinality": 1,
+      "expectedWireIdentity": "preserve-int-representative",
+      "nativeRuntimeRequired": true
+    },
+    {
+      "id": "float-one-before-int-one",
+      "input": [
+        { "kind": "float", "ieee754Hex": "3ff0000000000000" },
+        { "kind": "int", "value": "1" }
+      ],
+      "expectedNativeRepresentative": {
+        "kind": "float",
+        "ieee754Hex": "3ff0000000000000"
+      },
+      "expectedNativeCardinality": 1,
+      "expectedWireIdentity": "preserve-float-representative",
+      "nativeRuntimeRequired": true
+    },
+    {
+      "id": "decimal-scale-one-before-scale-two",
+      "input": [
+        { "kind": "decimal", "coefficient": "10", "scale": 1 },
+        { "kind": "decimal", "coefficient": "100", "scale": 2 }
+      ],
+      "expectedNativeRepresentative": {
+        "kind": "decimal",
+        "coefficient": "10",
+        "scale": 1
+      },
+      "expectedNativeCardinality": 1,
+      "expectedWireIdentity": "preserve-decimal-scale-one",
+      "nativeRuntimeRequired": true
+    },
+    {
+      "id": "decimal-scale-two-before-scale-one",
+      "input": [
+        { "kind": "decimal", "coefficient": "100", "scale": 2 },
+        { "kind": "decimal", "coefficient": "10", "scale": 1 }
+      ],
+      "expectedNativeRepresentative": {
+        "kind": "decimal",
+        "coefficient": "100",
+        "scale": 2
+      },
+      "expectedNativeCardinality": 1,
+      "expectedWireIdentity": "preserve-decimal-scale-two",
+      "nativeRuntimeRequired": true
+    },
+    {
+      "id": "negative-zero-before-positive-zero",
+      "input": [
+        { "kind": "float", "ieee754Hex": "8000000000000000" },
+        { "kind": "float", "ieee754Hex": "0000000000000000" }
+      ],
+      "expectedNativeRepresentative": {
+        "kind": "float",
+        "ieee754Hex": "8000000000000000"
+      },
+      "expectedNativeCardinality": 1,
+      "expectedWireIdentity": "preserve-negative-zero-bits",
+      "nativeRuntimeRequired": true
+    },
+    {
+      "id": "positive-zero-before-negative-zero",
+      "input": [
+        { "kind": "float", "ieee754Hex": "0000000000000000" },
+        { "kind": "float", "ieee754Hex": "8000000000000000" }
+      ],
+      "expectedNativeRepresentative": {
+        "kind": "float",
+        "ieee754Hex": "0000000000000000"
+      },
+      "expectedNativeCardinality": 1,
+      "expectedWireIdentity": "preserve-positive-zero-bits",
+      "nativeRuntimeRequired": true
+    }
+  ],
+  "decoderRejectVectors": [
+    {
+      "id": "int-one-and-float-one",
+      "encodedMembers": [
+        { "kind": "int", "value": "1" },
+        { "kind": "float", "ieee754Hex": "3ff0000000000000" }
+      ],
+      "expectedNativeCardinality": 1,
+      "nativeRuntimeRequired": true
+    },
+    {
+      "id": "decimal-scale-one-and-scale-two",
+      "encodedMembers": [
+        { "kind": "decimal", "coefficient": "10", "scale": 1 },
+        { "kind": "decimal", "coefficient": "100", "scale": 2 }
+      ],
+      "expectedNativeCardinality": 1,
+      "nativeRuntimeRequired": true
+    },
+    {
+      "id": "negative-zero-and-positive-zero",
+      "encodedMembers": [
+        { "kind": "float", "ieee754Hex": "8000000000000000" },
+        { "kind": "float", "ieee754Hex": "0000000000000000" }
+      ],
+      "expectedNativeCardinality": 1,
+      "nativeRuntimeRequired": true
+    }
+  ],
+  "missingNativeContract": [
+    "semantic CBOR tags and payload encodings for native values",
+    "full native-values operation and envelope wire schema"
+  ]
+}

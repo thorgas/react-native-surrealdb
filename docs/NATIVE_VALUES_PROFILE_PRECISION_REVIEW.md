@@ -189,3 +189,25 @@ native-values encoder, server route, persisted profile binding, or full Note
 sync. The representation-preserving Set and fingerprint rule is the selected
 design for this amendment; it has not been runtime tested. SDK `.3` artifact
 success does not close the persisted Note sync gate.
+
+## SDK draft contract fixtures
+
+The SDK-only fixture is
+`packages/react-native-surrealdb/test/fixtures/native-values-profile-draft.json`;
+its narrow Vitest file is
+`packages/react-native-surrealdb/test/native-values-profile-draft.test.ts`.
+The executable checks hash the checked-in literal preimage bytes and verify the
+candidate digests, distinguish integer from string structural keys, and show
+that copying the exact candidate bytes unchanged retains its digest. This is a
+byte-level replay example only, not an SDK persistence/retry integration test.
+The checks do not implement CBOR encoding or a fingerprint constructor.
+
+Set fixture assertions check only that the chosen rules and adversarial cases
+remain present and explicitly marked `nativeRuntimeRequired`. They do not
+execute JavaScript Set equality as a proxy for SurrealDB `Number::Ord`, nor do
+they claim native Set construction, decoder rejection, or encode/decode
+stability. Three `todo` tests name the native-runtime gates. Set member bytes
+and full Note fingerprints remain unavailable until the wire contract assigns
+semantic CBOR tags/payloads for the supported native values and freezes the
+complete operation/envelope layout. Do not fill those gaps with a test-only
+codec that duplicates its own expected behavior.
