@@ -4,7 +4,7 @@ import { parseNpmPackReport } from "./parse-npm-pack-report.mjs";
 
 const artifact = {
   name: "react-native-surrealdb",
-  version: "0.1.0-alpha.7.tdt.20261121.1",
+  version: "0.1.0-alpha.7.tdt.20261121.2",
   size: 58_027_244,
   unpackedSize: 179_995_076,
 };
@@ -21,7 +21,12 @@ test("accepts npm 12 keyed reports", () => {
 });
 
 test("rejects zero, multiple, and malformed artifacts", () => {
-  for (const report of [[], {}, [artifact, artifact], { a: artifact, b: artifact }]) {
+  for (const report of [
+    [],
+    {},
+    [artifact, artifact],
+    { a: artifact, b: artifact },
+  ]) {
     assert.throws(() => parseNpmPackReport(report, artifact.name));
   }
   for (const invalid of [

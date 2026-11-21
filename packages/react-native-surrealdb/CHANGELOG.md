@@ -1,3 +1,11 @@
+## 0.1.0-alpha.7.tdt.20261121.2 — private wrapper correction
+
+- Wire the existing generated source-v2 pull decoder into the canonical CBOR
+  codec factory. The RN86 two-client intent harness now passes against the
+  unchanged four-target native binaries.
+- This is a local private candidate with native input `b0442a8` and wrapper
+  source `af57b6d`; it is not a tag or npm release.
+
 ## 0.1.0-alpha.7.tdt.20261121.1 — private candidate
 
 - Add durable source-proof intent lanes, optimistic pending-record reads,

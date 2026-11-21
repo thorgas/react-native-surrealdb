@@ -1137,3 +1137,43 @@ raw outputs are retained separately. The archive contains the wrapper MIT,
 engine Apache, exact locked SurrealDB license texts, third-party notice,
 module entry, and TypeScript declarations. No app consumer/device execution or
 public publication is claimed by this package gate.
+
+## 2026-11-21 RN86 source-proof intent run and private `.2` wrapper
+
+The RN86 Android arm64 APK built offline with Gradle 9.3.1, one worker, and
+`-PreactNativeArchitectures=arm64-v8a` after bounded retrieval of existing
+declared Gradle artifacts. Its SHA256 is
+`b7bf0b9d3af51455c30a878ac4077f10adccd49d6d27a63ab403d63e612fa0be`.
+The synthetic two-client test used only `TDT_Intent_Sync_API36` on
+`emulator-5580`, a task-owned SurrealKV server running SurrealDB 3.2.4 binary
+SHA256 `bf14960ed517bd6d3eced7d37cfbe2d4ff795266f59421df56f6b1ee3bf0876b`,
+and the exact `5f104c16` authority binary SHA256
+`dd502b97122c35ff9af15835d5497799cdbc1989750b2ceec4be87e619cb5fb5`.
+The first run exposed a missing source-v2 decoder in the canonical JavaScript
+codec factory. Source commit `af57b6da08cc6153276a59952154e6f333e587c3`
+wires the generated decoder and accepts the authority's expected pre-scan
+`503` as startup readiness. The rerun passed 1/1 real native harness tests:
+initial source pull, two offline stores, invisible create-delete lane, reopen,
+stable retry/equivocation, materialize/push, other-client pull, and causal
+completion. Redacted logs and hashes are in
+`/tmp/sdk-intent-live-proof-20261121/`. This is local Android harness evidence,
+not app activation or physical-device acceptance. The task-owned server and
+AVD were stopped. AVD cleanup belongs to `verification_setup`; SDK must not
+delete or reboot it. The private temporary DB directory and Gradle init script
+remain because their deletion hit a runtime approval gate; do not retry it via
+another route.
+
+`0.1.0-alpha.7.tdt.20261121.2` is a JS-only private correction. Its
+`nativeInputSourceSha` remains `b0442a8c96b0f8d3133855afcd905d0723a14fb1`;
+its `runtimeSourceSha` is `af57b6da08cc6153276a59952154e6f333e587c3`.
+No native library or generated ABI changed. `release:check` passed Bob output,
+TypeScript, 161/161 Vitest tests, 3/3 pack parser tests, and four-slice package
+verification. A timing-sensitive WebSocket test failed on the first full run,
+then passed alone and in the complete rerun. Local `release:pack` produced
+`/tmp/sdk-private-package-20261121-2-final/react-native-surrealdb-0.1.0-alpha.7.tdt.20261121.2.tgz`,
+58,027,761 compressed bytes, 157 regular files, SHA256
+`5431e24e84f41a850892743e8d225e109566314794bc7ddc58ff25a72641d511`.
+`/tmp/sdk-private-package-20261121-2-final/provenance.json` verifies every packed
+native slice, generated file, and license against the prior four-target matrix
+and verifies that the module client contains the source-v2 decoder. The `.1`
+archive remains immutable. No tag, npm publication, or app integration occurred.

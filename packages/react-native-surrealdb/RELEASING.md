@@ -6,12 +6,12 @@ workflows.
 
 ## Release channels
 
-| Package version | GitHub release              | npm tag  | Purpose                                                         |
-| --------------- | --------------------------- | -------- | --------------------------------------------------------------- |
+| Package version | GitHub release              | npm tag  | Purpose                                                       |
+| --------------- | --------------------------- | -------- | ------------------------------------------------------------- |
 | `0.1.0-alpha.3` | Prerelease                  | `next`   | Fix clean iOS TurboModule registration for local sync testing |
-| `0.1.0-alpha.2` | Prerelease                  | `next`   | Test the experimental sync client in consuming apps |
-| `0.1.0-alpha.1` | Prerelease                  | `next`   | Embedded SurrealDB and native bindings before sync |
-| `0.1.0`         | Draft until npm publication | `latest` | Public stable release                                           |
+| `0.1.0-alpha.2` | Prerelease                  | `next`   | Test the experimental sync client in consuming apps           |
+| `0.1.0-alpha.1` | Prerelease                  | `next`   | Embedded SurrealDB and native bindings before sync            |
+| `0.1.0`         | Draft until npm publication | `latest` | Public stable release                                         |
 
 An npm prerelease is still publicly downloadable. You do not need to publish an
 alpha to npm to test it: install the `.tgz` attached to its GitHub prerelease.
@@ -51,15 +51,20 @@ when npm accepts the GitHub OIDC attestation.
 
 ### Private wrapper artifacts
 
-`0.1.0-alpha.7.tdt.20261121.1` is a new local private candidate. It does not
+`0.1.0-alpha.7.tdt.20261121.2` is the current local private candidate. It
+corrects the JavaScript canonical CBOR codec factory while retaining the
+matching four-target binaries from native input
+`b0442a8c96b0f8d3133855afcd905d0723a14fb1`. Its wrapper source is
+`af57b6da08cc6153276a59952154e6f333e587c3`. It does not
 replace the immutable `haus` alpha7 artifact below. The earlier two-target
 probe used SDK native input `eba56329e744e65c1da674dcd1d316955d389aba`
 and handwritten runtime facade `be42c754e4a8ac0eb17152b30285b296df26936d`,
 pinned to engine `5f104c16e0d367b686fba6905550b38ef57653f4`. The
 durable lane inventory API supersedes that probe. Its validated source commit
-`b0442a8c96b0f8d3133855afcd905d0723a14fb1` is both the current
-`nativeInputSourceSha` and `runtimeSourceSha`; record fresh generated output
-and all four binary hashes before packing.
+`b0442a8c96b0f8d3133855afcd905d0723a14fb1` is the
+`nativeInputSourceSha`; `af57b6da08cc6153276a59952154e6f333e587c3`
+is the `runtimeSourceSha`. Record generated output and all four binary hashes
+before packing. The earlier `.1` archive remains immutable.
 The test-only SurrealKV rollback commit `77a9e7e` changed neither prior
 production native input nor generated ABI. Complete all four matching platform
 slices, JS declarations,
