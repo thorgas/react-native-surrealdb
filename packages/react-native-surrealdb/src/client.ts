@@ -16,6 +16,7 @@ import {
   decodeSubscriptionResponse as nativeDecodeSubscriptionResponse,
   encodeSubscriptionRequestJson as nativeEncodeSubscriptionRequestJson,
   decodeSyncPullResponse as nativeDecodeSyncPullResponse,
+  decodeSyncPullResponseWithSource as nativeDecodeSyncPullResponseWithSource,
   decodeSyncPushResponse as nativeDecodeSyncPushResponse,
   encodeSyncPullRequest as nativeEncodeSyncPullRequest,
   encodeSyncPushRequest as nativeEncodeSyncPushRequest,
@@ -74,6 +75,7 @@ export function createExperimentalCanonicalCborSyncHttpCodec(): ExperimentalSync
     decodeSyncPushResponse: nativeDecodeSyncPushResponse,
     encodeSyncPullRequest: nativeEncodeSyncPullRequest,
     decodeSyncPullResponse: nativeDecodeSyncPullResponse,
+    decodeSyncPullResponseWithSource: nativeDecodeSyncPullResponseWithSource,
   });
 }
 /** Create the separate one-shot native ordered-subscription transport. */

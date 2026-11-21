@@ -4,9 +4,17 @@ import type { SurrealDatabaseLike } from "../src/generated/surrealdb_rn_core";
 const bindings = vi.hoisted(() => ({
   openExistingSyncClient: vi.fn(),
   openSyncClient: vi.fn(),
+  encodeSyncPushRequest: vi.fn(),
+  decodeSyncPushResponse: vi.fn(),
+  encodeSyncPullRequest: vi.fn(),
+  decodeSyncPullResponse: vi.fn(),
+  decodeSyncPullResponseWithSource: vi.fn(),
 }));
 vi.mock("../src/native", () => bindings);
-import { SurrealClient } from "../src/client";
+import {
+  SurrealClient,
+  createExperimentalCanonicalCborSyncHttpCodec,
+} from "../src/client";
 
 const options = {
   partitionId: "partition",
@@ -16,6 +24,20 @@ const options = {
 };
 
 describe("existing-only sync attach facade", () => {
+  it("exposes the native source-proof decoder through the canonical codec", async () => {
+    const bytes = new ArrayBuffer(1);
+    bindings.decodeSyncPullResponseWithSource.mockResolvedValueOnce(
+      "opaque-source-proof",
+    );
+    const codec = createExperimentalCanonicalCborSyncHttpCodec();
+    expect(codec.decodePullResponseWithSource).toBeTypeOf("function");
+    expect(await codec.decodePullResponseWithSource!(bytes)).toBe(
+      "opaque-source-proof",
+    );
+    expect(bindings.decodeSyncPullResponseWithSource).toHaveBeenCalledWith(
+      bytes,
+    );
+  });
   it("uses only the strict native factory and preserves cancellation options", async () => {
     const native = {} as SurrealDatabaseLike;
     const close = vi.fn(async () => undefined);

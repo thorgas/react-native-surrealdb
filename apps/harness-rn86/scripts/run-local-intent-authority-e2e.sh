@@ -68,8 +68,16 @@ SYNC_DEV_AUTHORITY_MANIFEST="$MANIFEST" \
   "$SDK_INTENT_AUTHORITY_BINARY" serve >"$TASK_DIR/authority.log" 2>&1 &
 AUTHORITY_PID=$!
 
+authority_ready() {
+  # A fresh authority has no scanner health row until its first authenticated
+  # pull. Its health route returns 503 in that state, then the pull runs a scan.
+  local status
+  status="$(curl --max-time 2 --silent --output /dev/null --write-out '%{http_code}' "http://127.0.0.1:$PORT/healthz")" || return 1
+  [[ "$status" == "200" || "$status" == "503" ]]
+}
+
 for _ in {1..100}; do
-  if curl --fail --silent "http://127.0.0.1:$PORT/healthz" >/dev/null; then
+  if authority_ready; then
     break
   fi
   if ! kill -0 "$AUTHORITY_PID" 2>/dev/null; then
@@ -78,7 +86,7 @@ for _ in {1..100}; do
   fi
   sleep 0.1
 done
-if ! curl --fail --silent "http://127.0.0.1:$PORT/healthz" >/dev/null; then
+if ! authority_ready; then
   echo "Task-owned authority did not become healthy." >&2
   exit 1
 fi
