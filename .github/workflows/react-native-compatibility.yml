@@ -105,7 +105,7 @@ jobs:
           key: surrealdb-ios-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'Cargo.toml', 'rust-toolchain.toml', 'crates/surrealdb-rn-core/**', 'packages/react-native-surrealdb/ubrn.config.yaml') }}
       - if: steps.native-cache.outputs.cache-hit != 'true'
         run: pnpm --filter react-native-surrealdb run ubrn:ios
-      - run: pnpm --filter react-native-surrealdb run release:strip:ios
+      - run: pnpm --filter react-native-surrealdb run release:verify:ios
       - uses: actions/upload-artifact@v6
         with:
           name: surrealdb-ios-xcframework

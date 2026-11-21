@@ -35,7 +35,6 @@ Task9 on feat/sync-observability-dst-20261016 extends candidate3a1105a. See
 rebuild boundary. Public merge/package publication and production changes remain
 separate. Native status/support reads do not provide atomic application-row snapshots.
 
-
 ## Local-only native bootstrap staging foundation (2026-10-19)
 
 Branch `private/bootstrap-staging-20261019` is intentionally local with no remote
@@ -58,7 +57,6 @@ Evidence: `/private/tmp/sdk-bootstrap-storage-bench/`. Final atomic install must
 verify complete root/context/receipt and commit journal, projection, cursor and
 consumed identity together while preserving newer local pending/accepted intent.
 
-
 ### Local query consolidation follow-up
 
 Batch scalar inventory statements with unchanged per-table bounds, then reuse
@@ -76,7 +74,6 @@ but host load still ranged 66.17 to 125.66. These are host debug memory-engine
 results, not an idle-host causal finding, mobile startup, Release or fsync proof.
 No overall performance win or activation readiness is claimed. Retain all runs
 and uncertainty: `/private/tmp/sdk-bootstrap-storage-opt-bench/quiet-replay/`.
-
 
 ### Local-only durable bootstrap completion
 
@@ -268,7 +265,6 @@ Logs/provenance: /private/tmp/haus-inspector-canonical-{build.log,artifacts.json
 provenance.json,tests.log,persistent.log,clippy.log}. Persistent fixture retained at
 /private/tmp/haus-inspector-canonical-persistent. Matching rebuilt iOS/Android
 acceptance remains required; no SDK public push is authorized pending user choice.
-
 
 ## 2026-10-19 typed whole-storage inspection bridge
 
@@ -1222,3 +1218,29 @@ physical UUID string-key path; it does not validate the app graph snapshot's
 own RID acceptance rules, which currently reject hyphenated keys. The engine's structural
 `ProtocolRecordId` remains a separate identifier contract and still uses
 `parse_simple` in `sync_state.rs`; the query-wire result alone does not solve it.
+
+## 2026-11-21 iOS archive link gate
+
+The private `.2` iOS archives fail Xcode 27.2 linking because the release
+artifact script's `strip -S -x` transformation removes required Mach-O unwind
+relocations. The raw b0442 p521, p384, p256, and Edwards25519 members pass
+focused `ld -r` probes for both device and simulator; the corresponding staged
+members fail. Reapplying either strip flag independently to a raw p521 member
+reproduces the failure.
+
+The iOS release flow now leaves archives unstripped and runs
+`release:verify:ios` on macOS after archive generation. The validator checks
+archive architecture/index, regression member inventory, platform metadata,
+unwind relocations, and links each member with the installed Xcode linker. The
+same gate runs in native compatibility CI and release-candidate generation. The
+pack ceiling checks npm's compressed `size`, not `unpackedSize`; the exact
+packlist with raw b0442 device/simulator libraries measured 158,568,920 bytes
+compressed and 523,633,111 bytes unpacked through `release:pack`.
+
+Do not use the b0442 raw archives as the next candidate binaries. SDK source
+HEAD `785bf9c` has later production datetime and typed record-key wire decoder
+changes absent from b0442. Those archives were only diagnostic inputs; the
+next candidate needs binaries built from its matching current Rust source.
+No native rebuild, `.2` archive mutation, package publication, or consuming-app
+build was performed. See
+`docs/evidence/2026-11-21-ios-link-sdk2/README.md`.

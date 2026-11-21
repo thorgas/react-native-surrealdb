@@ -71,6 +71,16 @@ slices, JS declarations,
 license and file inventory, size comparison, and consumer checks before making
 the local candidate tarball. This candidate has no public tag or npm release.
 
+The `.2` iOS device and simulator archives are known to fail the Xcode 27.2
+link check after the release strip step. Do not repack or distribute `.2` as an
+iOS candidate. The preserved b0442 raw archives pass the focused link smoke
+test and an isolated release-pack measurement with a 158,568,920-byte compressed
+tarball, but their native Rust source predates the later datetime and typed
+record-key wire decoder changes. They are diagnostic inputs only; the next
+candidate must rebuild the matching current Rust source and pass the link
+smoke test before packing. See
+[`../../docs/evidence/2026-11-21-ios-link-sdk2/README.md`](../../docs/evidence/2026-11-21-ios-link-sdk2/README.md).
+
 `0.1.0-alpha.7.haus.20261023.1` is an immutable private wrapper artifact. Its
 native libraries retain the Rust inputs from
 `fb1164ebf98469a64e41f0422938cb2bb23a5111`, including the existing
@@ -126,11 +136,13 @@ load this alpha because its x86_64 iOS slice was removed to stay below npm's
 effective upload-size boundary. Android x86_64 emulators remain supported.
 
 The workflow fails if the tag and package version differ. It never edits or
-commits generated files. After binding generation, it strips debug and local
-symbols from the distributable native libraries while preserving their public
-linker symbols. Release builds abort rather than unwind on an unexpected Rust
-panic. The pack step has a 180,000,000-byte ceiling and fails before
-release creation when a candidate grows beyond it.
+commits generated files. After binding generation, the iOS device and simulator
+archives are checked with the installed Xcode linker; do not strip their Mach-O
+members because stripping can invalidate unwind relocations. Android release
+libraries retain their existing strip step. Release builds abort rather than
+unwind on an unexpected Rust panic. The pack step checks npm's compressed
+tarball `size` against a 180,000,000-byte ceiling and fails before release
+creation when a candidate grows beyond it.
 
 The locally verified alpha.1 candidate is 143,388,326 bytes compressed and
 451,087,977 bytes unpacked. Treat the ceiling as a regression guard rather than

@@ -24,3 +24,14 @@ export function parseNpmPackReport(report, expectedName) {
   }
   return artifact;
 }
+
+export function assertNpmPackSize(artifact, maximumPackedBytes) {
+  if (!Number.isSafeInteger(maximumPackedBytes) || maximumPackedBytes <= 0) {
+    throw new Error("maximum packed size must be a positive safe integer");
+  }
+  if (artifact.size > maximumPackedBytes) {
+    throw new Error(
+      `npm tarball is ${artifact.size} bytes; release limit is ${maximumPackedBytes} bytes`,
+    );
+  }
+}

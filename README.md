@@ -342,7 +342,7 @@ The `ubrn:*` scripts live in
 | `pnpm --filter react-native-surrealdb run ubrn:ios`          | Builds release libraries for arm64 iOS devices and Apple Silicon simulators, creates `SurrealDbRnFramework.xcframework`, and regenerates the UniFFI bindings. The deployment target is iOS 15.1. |
 | `pnpm --filter react-native-surrealdb run ubrn:android`      | Builds release `.so` files for arm64-v8a and x86_64 under `android/src/main/jniLibs`, and regenerates the bindings.                                                                              |
 | `pnpm --filter react-native-surrealdb run ubrn:android:size` | Builds only arm64 Android, which is sufficient for the controlled release-size benchmark. Do not use this reduced artifact set for publishing.                                                   |
-| `pnpm --filter react-native-surrealdb run release:artifacts` | Runs the full iOS and Android `ubrn` builds, then strips non-runtime symbols from the distributable native libraries.                                                                            |
+| `pnpm --filter react-native-surrealdb run release:artifacts` | Runs the full iOS and Android `ubrn` builds, link-checks the iOS device and simulator archives with Xcode, and strips non-runtime symbols from Android libraries.                                |
 | `pnpm --filter react-native-surrealdb run format:generated`  | Rewrites the generated TurboModule entry files with Prettier. The `ubrn:*` scripts run it automatically.                                                                                         |
 
 `--and-generate` in these scripts means “build Rust and regenerate bindings”;
@@ -369,13 +369,14 @@ All commands below target the published package:
 | `... run format`                                 | Checks package source, tests, and top-level JSON/YAML with Prettier.                                                         |
 | `... run verify:package`                         | Checks built output, generated bindings, the retained iOS/Android architectures, and package metadata.                       |
 | `... run release:pack -- /path/to/output`        | Packs the release without rerunning generators and rejects tarballs larger than 180,000,000 bytes.                           |
+| `... run release:verify:ios`                     | Uses the installed Xcode linker to validate the device and simulator regression members without mutating either archive.     |
 | `... run release:check`                          | Runs build, type-check, tests, and package verification. It does **not** create missing native artifacts.                    |
 | `pnpm --filter react-native-surrealdb pack`      | Runs `prepack` (therefore `release:check`) and creates the npm tarball for consumer testing.                                 |
 | `pnpm --filter react-native-surrealdb publish …` | Runs `prepublishOnly` (also `release:check`) before publishing. Follow the release guide rather than invoking this casually. |
 
 The workspace root is private and must never be published. Publish only the
 tested tarball produced for `packages/react-native-surrealdb`. Pull-request CI
-assembles that complete package from stripped iOS and Android artifacts, checks
+assembles that complete package from validated iOS and stripped Android artifacts, checks
 its exact npm name, and rejects it if the compressed tarball exceeds
 180,000,000 bytes.
 
@@ -466,7 +467,7 @@ These scripts are intentionally not duplicated in older hosts:
 | `... run size:android:benchmark`                                          | Builds a fresh stock baseline and the candidate, then performs the paired comparison. Run `ubrn:android:size` first. |
 | `... run benchmark:android` / `... run benchmark:ios`                     | Runs the short `smoke` device benchmark.                                                                             |
 | `... run benchmark:android:canonical` / `... run benchmark:ios:canonical` | Runs the 2,000-record regression profile.                                                                            |
-| `... run benchmark:android:sync` / `... run benchmark:ios:sync`           | Measures local durable sync enqueue, pending reads, and reopen against a persistent SQLite lower bound.             |
+| `... run benchmark:android:sync` / `... run benchmark:ios:sync`           | Measures local durable sync enqueue, pending reads, and reopen against a persistent SQLite lower bound.              |
 | `... run benchmark:android:upstream` / `... run benchmark:ios:upstream`   | Runs the 10,000-record upstream-shaped profile.                                                                      |
 | `... run test:benchmark-tools`                                            | Tests the Node report extraction and comparison utilities without a device.                                          |
 

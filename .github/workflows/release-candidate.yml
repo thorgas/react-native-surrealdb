@@ -98,7 +98,7 @@ jobs:
           targets: aarch64-apple-ios,aarch64-apple-ios-sim
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter react-native-surrealdb run ubrn:ios
-      - run: pnpm --filter react-native-surrealdb run release:strip:ios
+      - run: pnpm --filter react-native-surrealdb run release:verify:ios
       - uses: actions/upload-artifact@v6
         with:
           name: release-ios-native

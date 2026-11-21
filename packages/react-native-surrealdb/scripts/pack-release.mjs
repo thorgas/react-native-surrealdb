@@ -3,7 +3,10 @@ import { isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
-import { parseNpmPackReport } from "./parse-npm-pack-report.mjs";
+import {
+  assertNpmPackSize,
+  parseNpmPackReport,
+} from "./parse-npm-pack-report.mjs";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const requestedOutput = process.argv.find(
@@ -57,8 +60,4 @@ console.log(
   `${artifact.name}@${artifact.version}: ${artifact.size} bytes packed, ${artifact.unpackedSize} bytes unpacked`,
 );
 
-if (artifact.size > maximumPackedBytes) {
-  throw new Error(
-    `npm tarball is ${artifact.size} bytes; release limit is ${maximumPackedBytes} bytes`,
-  );
-}
+assertNpmPackSize(artifact, maximumPackedBytes);
