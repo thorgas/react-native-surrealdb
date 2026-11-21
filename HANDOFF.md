@@ -1269,6 +1269,15 @@ Set vectors. The private Rust value codec passed its focused unit suite
 (11/11); it does not integrate sync or prove fingerprint replay. The shared
 literal decode vectors are in
 `packages/react-native-surrealdb/test/fixtures/native-values-decode-vectors.json`.
+An isolated SDK-side draft TypeScript CBOR value codec is also present at
+`packages/react-native-surrealdb/src/native-values-draft-codec.ts`, with
+literal-vector and malformed-input coverage in
+`packages/react-native-surrealdb/test/native-values-draft-codec.test.ts`.
+It is not exported or called from production, does not instantiate native
+SurrealDB types or approximate native Set equality, and does not implement
+profile conversion, persistence, transport, or activation. The 5 focused Vitest
+cases and package TypeScript check passed under Node 22. Existing SDK invocation
+TODOs remain open; full persisted Note sync remains blocked.
 The `.3` SDK artifact does not
 close the full persisted Note sync gate. See the “SDK draft contract fixtures”
 section of the precision review for the exact validation boundary. The schema

@@ -510,7 +510,33 @@ The executable checks hash the checked-in literal preimage bytes and verify the
 candidate digests, distinguish integer from string structural keys, and show
 that copying the exact candidate bytes unchanged retains its digest. This is a
 byte-level replay example only, not an SDK persistence/retry integration test.
-The checks do not implement CBOR encoding or a fingerprint constructor.
+These metadata checks do not implement a fingerprint constructor.
+
+An additional unexported TypeScript codec spike lives at
+`packages/react-native-surrealdb/src/native-values-draft-codec.ts`; focused
+tests are in `packages/react-native-surrealdb/test/native-values-draft-codec.test.ts`.
+This module directly implements the candidate value-node CBOR encoding and
+decoding and consumes the same independent literal vectors as the Rust spike.
+For each supported vector, the test compares decoded bytes to a separately
+written expected TypeScript AST and encodes that AST back to the literal bytes.
+It also exercises malformed/truncated input, overlong/overflowing integers,
+unknown kinds, CBOR-map rejection, non-increasing Set bytes, depth 32/33,
+decimal/datetime bounds, and the encoded-input limit. It is not exported in the
+package export map and has no production call sites.
+
+The TypeScript module is a byte and representation codec only, not a
+`SurrealValue` validator. Its AST intentionally carries exact Float64 bits,
+Decimal coefficient and scale, datetime components, UUID bytes, structural
+record keys, object entry pairs, and Set member representations. It rejects
+non-finite Float64 values and checks the profile's local wire constraints. It
+does not instantiate pinned native values, use native Number equality, prove
+native Set uniqueness/cardinality, or prove SDK persistence/replay behavior.
+Set decoding checks only strict ascending encoded-member bytes and retains the
+decoded member representations; native construction must separately enforce
+the SurrealDB duplicate/cardinality rule before any future integration.
+Existing SDK-invocation TODOs therefore remain open. This spike does not add
+profile conversion, transport, storage, activation, ABI changes, or package
+exports, and does not complete full persisted Note sync.
 
 The Set fixture assertions check only that the selected rules and adversarial
 cases remain present; they do not use JavaScript Set equality as a proxy for
