@@ -1259,13 +1259,17 @@ references, and the concrete candidate value/message schema. The engine lock res
 This is a design amendment plus an isolated value-codec spike: no integrated
 native-values profile, profile negotiation, route, persistence binding, or
 full Note sync is implemented. Focused tests of pinned SurrealDB 3.2.4 Set
-construction show that the last equal-value representative is retained; native equality is only the duplicate
-and decoder-cardinality relation. Thus equal Sets can have different
+construction show that the last equal-value representative is retained; native
+equality is only the duplicate and decoder-cardinality relation. Thus equal
+Sets can have different
 fingerprints when their retained member type, Float bits, or Decimal scale
 differs. Retries must retain exact canonical bytes and fingerprint. Draft
 contract fixtures and narrow JS checks pin hand-derived fingerprint bytes and
-Set vectors. The new private Rust value codec passed its focused unit suite
-(10/10); it does not integrate sync or prove fingerprint replay. The `.3` SDK artifact does not
+Set vectors. The private Rust value codec passed its focused unit suite
+(11/11); it does not integrate sync or prove fingerprint replay. The shared
+literal decode vectors are in
+`packages/react-native-surrealdb/test/fixtures/native-values-decode-vectors.json`.
+The `.3` SDK artifact does not
 close the full persisted Note sync gate. See the “SDK draft contract fixtures”
 section of the precision review for the exact validation boundary. The schema
 proposal assigns kind IDs 0–13 under internal CBOR tag 60000 and explicit

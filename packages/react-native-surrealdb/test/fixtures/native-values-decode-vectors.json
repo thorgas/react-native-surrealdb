@@ -1,0 +1,128 @@
+{
+  "status": "hand-authored-cbor-vectors-not-generated-by-sdk-codec",
+  "profileTag": 60000,
+  "sourceBasis": "RFC 8949 definite-length major types and SDK native-values draft schema; decimal and datetime bounds from pinned surrealdb-types 3.2.4 / rust_decimal 1.42.1 sources",
+  "valid": [
+    {
+      "id": "none",
+      "cborHex": "d9ea608200f6",
+      "expected": "none"
+    },
+    {
+      "id": "null",
+      "cborHex": "d9ea608201f6",
+      "expected": "null"
+    },
+    {
+      "id": "int-one",
+      "cborHex": "d9ea60820301",
+      "expected": "int-one"
+    },
+    {
+      "id": "string-one",
+      "cborHex": "d9ea6082056131",
+      "expected": "string-one"
+    },
+    {
+      "id": "float-negative-zero",
+      "cborHex": "d9ea608204488000000000000000",
+      "expected": "float-negative-zero"
+    },
+    {
+      "id": "decimal-max-coefficient-scale-zero",
+      "cborHex": "d9ea60820a83f44cffffffffffffffffffffffff00",
+      "expected": "decimal-max-coefficient-scale-zero"
+    },
+    {
+      "id": "decimal-max-coefficient-scale-28",
+      "cborHex": "d9ea60820a83f44cffffffffffffffffffffffff181c",
+      "expected": "decimal-max-coefficient-scale-28"
+    },
+    {
+      "id": "datetime-min-utc",
+      "cborHex": "d9ea608209823b000007948cf211ff00",
+      "expected": "datetime-min-utc"
+    },
+    {
+      "id": "datetime-max-utc",
+      "cborHex": "d9ea608209821b000007779a0a6b7f1a3b9ac9ff",
+      "expected": "datetime-max-utc"
+    },
+    {
+      "id": "datetime-fractional-nanos",
+      "cborHex": "d9ea60820982011a3b9ac9ff",
+      "expected": "datetime-fractional-nanos"
+    },
+    {
+      "id": "uuid-00112233",
+      "cborHex": "d9ea60820b5000112233445566778899aabbccddeeff",
+      "expected": "uuid-00112233"
+    },
+    {
+      "id": "record-key-integer-seven",
+      "cborHex": "d9ea60820d82646e6f7465820007",
+      "expected": "record-key-integer-seven"
+    },
+    {
+      "id": "record-key-string-seven",
+      "cborHex": "d9ea60820d82646e6f746582016137",
+      "expected": "record-key-string-seven"
+    },
+    {
+      "id": "record-key-uuid",
+      "cborHex": "d9ea60820d82646e6f746582025000112233445566778899aabbccddeeff",
+      "expected": "record-key-uuid"
+    },
+    {
+      "id": "set-retained-float-one",
+      "cborHex": "d9ea60820c81d9ea608204483ff0000000000000",
+      "expected": "set-retained-float-one"
+    },
+    {
+      "id": "set-retained-decimal-scale-two",
+      "cborHex": "d9ea60820c81d9ea60820a83f44c00000000000000000000006402",
+      "expected": "set-retained-decimal-scale-two"
+    },
+    {
+      "id": "set-wire-order-differs-from-native-order",
+      "cborHex": "d9ea60820c82d9ea60820301d9ea60820a83f44c00000000000000000000000002",
+      "expected": "set-wire-order-differs-from-native-order"
+    },
+    {
+      "id": "ordinary-map-with-tag-lookalike-keys",
+      "cborHex": "d9ea608208828268247375727265616cd9ea608205697461673a363030303082781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f31d9ea6082056f6e61746976652d76616c7565732f31",
+      "expected": "ordinary-map-with-tag-lookalike-keys"
+    },
+    {
+      "id": "depth-32-array-chain",
+      "cborHex": "d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820301",
+      "expected": "depth-32-array-chain"
+    }
+  ],
+  "rejected": [
+    {
+      "id": "decimal-scale-29",
+      "cborHex": "d9ea60820a83f44cffffffffffffffffffffffff181d",
+      "error": "InvalidDecimal"
+    },
+    {
+      "id": "datetime-nanos-one-billion",
+      "cborHex": "d9ea60820982001a3b9aca00",
+      "error": "InvalidDatetime"
+    },
+    {
+      "id": "datetime-one-second-past-max",
+      "cborHex": "d9ea608209821b000007779a0a6b8000",
+      "error": "InvalidDatetime"
+    },
+    {
+      "id": "depth-33-array-chain",
+      "cborHex": "d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820781d9ea60820301",
+      "error": "DepthLimit"
+    }
+  ],
+  "oversizedEncodedInput": {
+    "length": 4194305,
+    "error": "EncodedLimit"
+  }
+}

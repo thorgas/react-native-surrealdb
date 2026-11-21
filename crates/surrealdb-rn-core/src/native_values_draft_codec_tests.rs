@@ -1,5 +1,39 @@
 use super::{CodecError, decode_value, encode_value};
-use surrealdb::types::{Number, RecordId, RecordIdKey, Set, Value as SurrealValue};
+use serde::Deserialize;
+use surrealdb::types::{
+    Array, Datetime, Number, Object, RecordId, RecordIdKey, Set, Uuid, Value as SurrealValue,
+};
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DecodeVectorFixture {
+    valid: Vec<ValidDecodeVector>,
+    rejected: Vec<RejectedDecodeVector>,
+    oversized_encoded_input: OversizedInputVector,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ValidDecodeVector {
+    id: String,
+    cbor_hex: String,
+    expected: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RejectedDecodeVector {
+    id: String,
+    cbor_hex: String,
+    error: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct OversizedInputVector {
+    length: usize,
+    error: String,
+}
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -38,6 +72,95 @@ fn scalar_golden_vectors_match_the_draft_profile_bytes() {
         assert_eq!(hex(&encoded), expected);
         let decoded = decode_value(&encoded).expect("golden is canonical");
         assert_eq!(encode_value(&decoded).unwrap(), encoded);
+    }
+}
+
+#[test]
+fn independently_authored_literal_vectors_decode_to_pinned_native_values() {
+    let fixture: DecodeVectorFixture = serde_json::from_str(include_str!(
+        "../../../packages/react-native-surrealdb/test/fixtures/native-values-decode-vectors.json"
+    ))
+    .expect("shared hand-authored decode fixture is valid JSON");
+
+    for vector in fixture.valid {
+        let bytes = hex_to_bytes(&vector.cbor_hex);
+        let decoded = decode_value(&bytes)
+            .unwrap_or_else(|error| panic!("{} should decode, got {error:?}", vector.id));
+        assert_eq!(
+            decoded,
+            expected_native_value(&vector.expected),
+            "{}",
+            vector.id
+        );
+        // This second assertion catches representation loss for Decimal scale,
+        // Float signed zero, and the retained member type inside a Set.
+        assert_eq!(encode_value(&decoded).unwrap(), bytes, "{}", vector.id);
+    }
+
+    for vector in fixture.rejected {
+        let bytes = hex_to_bytes(&vector.cbor_hex);
+        let error = decode_value(&bytes).expect_err(&vector.id);
+        assert_eq!(format!("{error:?}"), vector.error, "{}", vector.id);
+    }
+
+    assert_eq!(fixture.oversized_encoded_input.error, "EncodedLimit");
+    assert_eq!(
+        decode_value(&vec![0; fixture.oversized_encoded_input.length]),
+        Err(CodecError::EncodedLimit)
+    );
+}
+
+fn expected_native_value(id: &str) -> SurrealValue {
+    match id {
+        "none" => SurrealValue::None,
+        "null" => SurrealValue::Null,
+        "int-one" => SurrealValue::Number(Number::Int(1)),
+        "string-one" => SurrealValue::String("1".into()),
+        "float-negative-zero" => SurrealValue::Number(Number::Float(-0.0)),
+        "decimal-max-coefficient-scale-zero" => decimal("79228162514264337593543950335"),
+        "decimal-max-coefficient-scale-28" => decimal("7.9228162514264337593543950335"),
+        "datetime-min-utc" => SurrealValue::Datetime(Datetime::MIN_UTC),
+        "datetime-max-utc" => SurrealValue::Datetime(Datetime::MAX_UTC),
+        "datetime-fractional-nanos" => {
+            SurrealValue::Datetime(Datetime::from_timestamp(1, 999_999_999).unwrap())
+        }
+        "uuid-00112233" => SurrealValue::Uuid(
+            Uuid::try_from("00112233-4455-6677-8899-aabbccddeeff".to_owned()).unwrap(),
+        ),
+        "record-key-integer-seven" => {
+            SurrealValue::RecordId(RecordId::new("note", RecordIdKey::Number(7)))
+        }
+        "record-key-string-seven" => {
+            SurrealValue::RecordId(RecordId::new("note", RecordIdKey::String("7".into())))
+        }
+        "record-key-uuid" => SurrealValue::RecordId(RecordId::new(
+            "note",
+            RecordIdKey::Uuid(
+                Uuid::try_from("00112233-4455-6677-8899-aabbccddeeff".to_owned()).unwrap(),
+            ),
+        )),
+        "set-retained-float-one" => {
+            SurrealValue::Set(Set::from(vec![SurrealValue::Number(Number::Float(1.0))]))
+        }
+        "set-retained-decimal-scale-two" => SurrealValue::Set(Set::from(vec![decimal("1.00")])),
+        "set-wire-order-differs-from-native-order" => SurrealValue::Set(Set::from(vec![
+            SurrealValue::Number(Number::Int(1)),
+            decimal("0.00"),
+        ])),
+        "ordinary-map-with-tag-lookalike-keys" => {
+            let mut object = Object::new();
+            object.insert("$surreal", "tag:60000");
+            object.insert("surrealdb-sync/native-values/1", "native-values/1");
+            SurrealValue::Object(object)
+        }
+        "depth-32-array-chain" => {
+            let mut value = SurrealValue::Number(Number::Int(1));
+            for _ in 0..31 {
+                value = SurrealValue::Array(Array::from(vec![value]));
+            }
+            value
+        }
+        _ => panic!("unknown expected native-value vector: {id}"),
     }
 }
 

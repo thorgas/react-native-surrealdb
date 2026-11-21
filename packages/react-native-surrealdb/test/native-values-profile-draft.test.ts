@@ -107,6 +107,22 @@ const draft = JSON.parse(
   ),
 ) as DraftFixture;
 
+type DecodeVectorFixture = {
+  status: string;
+  profileTag: number;
+  sourceBasis: string;
+  valid: { id: string; cborHex: string; expected: string }[];
+  rejected: { id: string; cborHex: string; error: string }[];
+  oversizedEncodedInput: { length: number; error: string };
+};
+
+const decodeVectors = JSON.parse(
+  readFileSync(
+    new URL("./fixtures/native-values-decode-vectors.json", import.meta.url),
+    "utf8",
+  ),
+) as DecodeVectorFixture;
+
 function fingerprint(preimageHex: string): string {
   const digest = createHash("sha256")
     .update(Buffer.from(preimageHex, "hex"))
@@ -438,6 +454,42 @@ describe("native-values profile draft contract fixtures", () => {
       "check and complete any required external CBOR tag registration for 60000",
       "assign a native-values HTTP route after acceptance-receipt-v2 router collision testing",
     ]);
+  });
+
+  it("keeps independent literal CBOR decode vectors available cross-layer", () => {
+    expect(decodeVectors.status).toBe(
+      "hand-authored-cbor-vectors-not-generated-by-sdk-codec",
+    );
+    expect(decodeVectors.profileTag).toBe(60_000);
+    expect(decodeVectors.sourceBasis).toContain("rust_decimal 1.42.1");
+    expect(decodeVectors.valid.map(({ id }) => id)).toContain(
+      "decimal-max-coefficient-scale-28",
+    );
+    expect(decodeVectors.valid.map(({ id }) => id)).toContain(
+      "datetime-min-utc",
+    );
+    expect(decodeVectors.valid.map(({ id }) => id)).toContain(
+      "datetime-max-utc",
+    );
+    expect(decodeVectors.valid.map(({ id }) => id)).toContain(
+      "ordinary-map-with-tag-lookalike-keys",
+    );
+    expect(
+      [...decodeVectors.valid, ...decodeVectors.rejected].every(
+        ({ cborHex }) =>
+          /^[0-9a-f]+$/.test(cborHex) && cborHex.length % 2 === 0,
+      ),
+    ).toBe(true);
+    expect(decodeVectors.rejected.map(({ id, error }) => [id, error])).toEqual([
+      ["decimal-scale-29", "InvalidDecimal"],
+      ["datetime-nanos-one-billion", "InvalidDatetime"],
+      ["datetime-one-second-past-max", "InvalidDatetime"],
+      ["depth-33-array-chain", "DepthLimit"],
+    ]);
+    expect(decodeVectors.oversizedEncodedInput).toEqual({
+      length: 4_194_305,
+      error: "EncodedLimit",
+    });
   });
 
   it.todo("SDK invocation preserves the native Set representative");

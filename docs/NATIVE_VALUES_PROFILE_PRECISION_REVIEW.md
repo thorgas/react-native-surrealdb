@@ -486,6 +486,20 @@ must not be used to activate full Note sync. The existing v1 JSON-backed
 codec source passed the focused Rust value-node suite; JS fixture checks remain
 metadata/hand-derived-vector checks and do not claim that native behavior.
 
+Independent literal decoder vectors are shared at
+`packages/react-native-surrealdb/test/fixtures/native-values-decode-vectors.json`.
+The Rust tests consume these exact bytes and compare results with expected
+pinned native values, then re-encode only as a separate representation-presence
+assertion. They do not derive expected bytes from the codec. Decimal boundary
+inputs use `rust_decimal` 1.42.1's 96-bit coefficient and `MAX_SCALE` 28;
+Datetime boundary seconds/nanoseconds follow pinned Chrono 0.4.45
+`NaiveDateTime::{MIN,MAX}` through SurrealDB 3.2.4's
+`Datetime::from_timestamp`. The vectors also cover UUID and three typed record
+key forms, negative zero, retained Set values, tag-lookalike Object keys,
+depth 32/33, and an input one byte over the 4 MiB limit. The focused Rust
+command passed 11/11; the narrow JS test checks fixture identity and shape,
+not native decode behavior.
+
 ## SDK draft contract fixtures
 
 The SDK-only fixture is
