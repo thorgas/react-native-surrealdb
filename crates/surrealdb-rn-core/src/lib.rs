@@ -4,6 +4,7 @@
 //! SDK while Rust owns engine selection, connection lifetime, authentication,
 //! query execution, and lossless value transport.
 
+mod native_values_draft_codec;
 mod sync_bootstrap;
 mod sync_bootstrap_store;
 pub mod sync_client;

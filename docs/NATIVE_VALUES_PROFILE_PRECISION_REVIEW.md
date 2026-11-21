@@ -97,9 +97,10 @@ implements Decimal equality through `Ord` (`src/decimal.rs:2750-2778`) and its
 comparison rescales coefficients when scales differ
 (`src/ops/cmp.rs:45-70`).
 
-Therefore the first equal value inserted into `Set::from(Vec<Value>)` is the
-surviving representative: the set does not retain both or normalize the
-representative. This profile chooses representation-preserving identity:
+`Set::from(Vec<Value>)` collects the input into its native `BTreeSet<Value>`.
+Focused runtime tests against the pinned SurrealDB 3.2.4 type show that when
+input values compare equal but carry different representations, the last equal
+value in the vector is retained. This profile chooses representation-preserving identity:
 native equality is used to reject duplicate members and validate decoded Set
 cardinality; it does not define canonical wire equality or commit identity.
 The representative already retained by the native Set is authoritative.
@@ -126,26 +127,26 @@ normalization, or another ordering-dependent choice.
 Constructor vectors under the selected rule (the expected member is preserved
 with its original representation):
 
-| Input order                | Expected native Set member   |
-| -------------------------- | ---------------------------- |
-| `Int(1), Float(1.0)`       | `Int(1)`                     |
-| `Float(1.0), Int(1)`       | `Float(1.0)`                 |
-| `Decimal(1.00), Int(1)`    | the original `Decimal(1.00)` |
-| `Int(1), Decimal(1.00)`    | `Int(1)`                     |
-| `Float(-0.0), Float(+0.0)` | the original `Float(-0.0)`   |
-| `Float(+0.0), Float(-0.0)` | the original `Float(+0.0)`   |
+| Input order                   | Expected native Set member   |
+| ----------------------------- | ---------------------------- |
+| `Int(1), Float(1.0)`          | `Float(1.0)`                 |
+| `Float(1.0), Int(1)`          | `Int(1)`                     |
+| `Decimal(1.00), Decimal(1.0)` | the original `Decimal(1.0)`  |
+| `Decimal(1.0), Decimal(1.00)` | the original `Decimal(1.00)` |
+| `Float(-0.0), Float(+0.0)`    | the original `Float(+0.0)`   |
+| `Float(+0.0), Float(-0.0)`    | the original `Float(-0.0)`   |
 
 Adversarial conformance vectors must assert all of the following:
 
-- `Set::from([Int(1), Float(1.0)])` has one member, `Int(1)`; reversing the
-  input has one member, `Float(1.0)`. Those two sets compare equal natively,
+- `Set::from([Int(1), Float(1.0)])` has one member, `Float(1.0)`; reversing the
+  input has one member, `Int(1)`. Those two sets compare equal natively,
   but their encoded Set bytes and commit fingerprints differ.
-- `Set::from([Decimal(1.0), Decimal(1.00)])` retains the first Decimal's
+- `Set::from([Decimal(1.0), Decimal(1.00)])` retains the last Decimal's
   coefficient/scale; reversing the input retains the other representation.
   Both are one-member native Sets, and the surviving scale remains visible in
   wire bytes and fingerprints.
-- `Set::from([Float(-0.0), Float(+0.0)])` retains negative zero; reversing
-  retains positive zero. The exact IEEE-754 bits survive encoding and
+- `Set::from([Float(-0.0), Float(+0.0)])` retains positive zero; reversing
+  retains negative zero. The exact IEEE-754 bits survive encoding and
   decode/re-encode.
 - The decoder rejects encoded lists containing `Int(1)` plus `Float(1.0)`,
   `Decimal(1.0)` plus `Decimal(1.00)`, or `Float(-0.0)` plus `Float(+0.0)`.
@@ -183,11 +184,12 @@ an equivalent replay.
   acceptance-receipt-v2 contract and test exact method/path/media/family
   dispatch against both existing profiles.
 
-Source comparison is not runtime proof. The pinned dependency source establishes
-the BTreeSet and numeric comparison rules; this SDK branch does not contain a
-native-values encoder, server route, persisted profile binding, or full Note
-sync. The representation-preserving Set and fingerprint rule is the selected
-design for this amendment; it has not been runtime tested. SDK `.3` artifact
+The pinned dependency source establishes the BTreeSet and numeric comparison
+rules. Focused runtime tests below verify selected Set representative behavior
+against the pinned types, but the SDK still has no integrated native-values
+profile, server route, persisted profile binding, or full Note sync. The
+representation-preserving Set rule is runtime-tested only for the covered
+constructor vectors; fingerprint replay remains hand-derived. SDK `.3` artifact
 success does not close the persisted Note sync gate.
 
 ## Concrete native-values wire-schema proposal
@@ -216,7 +218,7 @@ primitive to masquerade as a native value.
 |    1 | Null     | `null`                             |                                                                                                                                                                                                                                                   |
 |    2 | Bool     | CBOR boolean                       |                                                                                                                                                                                                                                                   |
 |    3 | Int      | CBOR integer                       | Signed i64 only; shortest deterministic integer encoding.                                                                                                                                                                                         |
-|    4 | Float    | 8-byte byte string                 | Big-endian IEEE-754 binary64 bits; preserve every bit pattern, including infinities, NaN payloads, and signed zero; never CBOR float-shortening.                                                                                                  |
+|    4 | Float    | 8-byte byte string                 | Big-endian IEEE-754 binary64 bits; finite values only; preserve `-0.0`; never CBOR float-shortening. Reject NaN and infinities as required by the engine draft.                                                                                   |
 |    5 | String   | CBOR text string                   | Preserve exact Unicode scalar sequence/UTF-8; no Unicode normalization.                                                                                                                                                                           |
 |    6 | Bytes    | CBOR byte string                   | At most 1 MiB.                                                                                                                                                                                                                                    |
 |    7 | Array    | `[NativeValue, ...]`               | At most 1,024 children.                                                                                                                                                                                                                           |
@@ -403,16 +405,15 @@ below; decoder/profile errors do not get converted into that enum.
 
 Resource limits are inclusive maxima: depth 32 counts the root value/message
 as depth 1; a container may have at most 1,024 direct members; a message may
-contain at most 4,096 total value/container items; a text or byte string may
+contain at most 4,096 tagged native value nodes; a text or byte string may
 contain at most 1,048,576 encoded bytes; the complete CBOR item may contain at
 most 4,194,304 bytes; a binding token contains 1 through 4,096 bytes; and the
 serialized JSON bridge message may contain at most 4,194,304 UTF-8 bytes.
 Exceeding any ceiling fails closed before allocating based on the claimed
-length or touching durable state. Float payloads must be exactly eight bytes;
-all binary64 bit patterns are valid and must round-trip exactly, including
-infinity and NaN payload bits (the pinned `Number::Float(f64)` accepts these
-values). Decimal coefficient
-and scale must round-trip exactly through the pinned Decimal constructor;
+length or touching durable state. Float payloads must be exactly eight bytes
+and decode to finite binary64; preserve both zero signs and reject NaN and
+infinity as required by engine draft lines 101–113 and 234–241. Decimal
+coefficient and scale must round-trip exactly through the pinned Decimal constructor;
 never rescale to make an out-of-range value fit. Datetime payloads must
 successfully pass the pinned `Datetime::from_timestamp` constructor. UUIDs are
 exactly 16 bytes. These rules are derived from the proposed schema and pinned
@@ -442,8 +443,9 @@ An implementation following this proposal has a finite contract to implement:
    assigned message envelopes and their exact payload arities.
 2. Encode/decode the closed value-kind table `0..=13`, typed RecordIdentity
    keys, operation/outcome/state/frame discriminants, and binding token shape.
-3. Enforce deterministic CBOR, byte-exact re-encoding, representation-preserving
-   Float/Decimal/Set behavior, and the listed inclusive limits before mutation.
+3. Enforce deterministic CBOR, byte-exact re-encoding, finite Float bit
+   preservation, Decimal scale, Set representative preservation, and the listed
+   inclusive limits before mutation.
 4. Compute fingerprints from the complete ordered native operation array and
    exact six-field native domain preimage; persist and replay exact bytes.
 5. Implement the typed JSON bridge AST without interpreting ordinary JSON
@@ -464,6 +466,26 @@ Neither external gate changes the internal candidate tag number, profile
 family, or wire vectors in this review. No engine source or profile runtime is
 changed by this proposal; full persisted Note sync remains blocked.
 
+## Isolated SDK codec spike
+
+`crates/surrealdb-rn-core/src/native_values_draft_codec.rs` now contains an
+internal, private, unwired value-only CBOR codec spike, with native golden and
+rejection coverage in its sibling test module. It uses pinned SurrealDB 3.2.4
+types, rejects non-finite floats as required by the engine draft, preserves
+finite Float bits/negative zero and Decimal scale, sorts Set members by full
+encoded bytes, and rejects decoded Set cardinality collapse. It does not encode
+messages, operations, fingerprints, persistence records, or routes and has no
+call sites. Its tag `60000` interpretation is scoped to this profile module;
+it is not a global CBOR dispatcher.
+
+The pinned `surrealdb_types::Number::Float` can represent NaN and infinities,
+while this candidate wire profile rejects them per the engine draft. Therefore
+this candidate is not yet proven fully lossless for every native Number, and
+must not be used to activate full Note sync. The existing v1 JSON-backed
+`sync_state` path also cannot retain arbitrary NaN payload bits. The native
+codec source passed the focused Rust value-node suite; JS fixture checks remain
+metadata/hand-derived-vector checks and do not claim that native behavior.
+
 ## SDK draft contract fixtures
 
 The SDK-only fixture is
@@ -476,12 +498,14 @@ that copying the exact candidate bytes unchanged retains its digest. This is a
 byte-level replay example only, not an SDK persistence/retry integration test.
 The checks do not implement CBOR encoding or a fingerprint constructor.
 
-Set fixture assertions check only that the chosen rules and adversarial cases
-remain present and explicitly marked `nativeRuntimeRequired`. They do not
-execute JavaScript Set equality as a proxy for SurrealDB `Number::Ord`, nor do
-they claim native Set construction, decoder rejection, or encode/decode
-stability. Three `todo` tests name the native-runtime gates. The concrete
-candidate assignments and hand-derived simple-value bytes are in the schema
-proposal below; they are not runtime goldens. Full Note/fingerprint conformance
-still requires a real encoder/decoder and byte-exact replay. Do not fill that
-gate with a test-only codec that duplicates its own expected behavior.
+The Set fixture assertions check only that the selected rules and adversarial
+cases remain present; they do not use JavaScript Set equality as a proxy for
+SurrealDB `Number::Ord`. A separate, private Rust value-codec spike now has
+focused native tests for literal bytes, finite negative zero, Decimal scale,
+last-equal Set representative, byte ordering, and decode cardinality rejection.
+The targeted command
+`cargo test -p surrealdb-rn-core native_values_draft_codec::tests --lib --locked --offline --jobs 1`
+passed 10/10. This is native value-node evidence only; three TypeScript TODOs
+remain for SDK invocation/integration. The schema and fingerprint vectors are
+still draft; full Note/fingerprint conformance needs an adopted profile, an
+independent cross-language encoder, and exact persisted retry replay.

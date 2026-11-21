@@ -75,6 +75,12 @@ type DraftFixture = {
       };
     };
     nativeValueVectors: { id: string; kind: number; cborHex: string }[];
+    rejectedNativeValueVectors: {
+      id: string;
+      kind: number;
+      cborHex: string;
+      error: string;
+    }[];
     pendingExternalDecisions: string[];
   };
   setVectors: {
@@ -188,7 +194,7 @@ describe("native-values profile draft contract fixtures", () => {
           vector.nativeRuntimeRequired &&
           vector.expectedNativeCardinality === 1 &&
           JSON.stringify(vector.expectedNativeRepresentative) ===
-            JSON.stringify(vector.input[0]),
+            JSON.stringify(vector.input.at(-1)),
       ),
     ).toBe(true);
     expect(draft.decoderRejectVectors.map(({ id }) => id)).toEqual([
@@ -350,6 +356,7 @@ describe("native-values profile draft contract fixtures", () => {
     expect(schema.limitSemantics).toEqual({
       depthCountsRootAs: 1,
       containerItemsAreDirectMembers: true,
+      totalItemsCount: "tagged native value nodes",
       stringsAndBytesMeasure: "encoded UTF-8 or byte count",
       encodedCborMeasures: "complete single CBOR message",
       maximaInclusive: true,
@@ -357,8 +364,8 @@ describe("native-values profile draft contract fixtures", () => {
     });
     expect(schema.constructorRules).toEqual({
       floatWidthBytes: 8,
-      allBinary64BitPatternsValid: true,
-      preserveNaNPayloadBits: true,
+      finiteFloatOnly: true,
+      rejectNaNAndInfinity: true,
       preserveSignedFloatZero: true,
       decimalMaxCoefficient: "79228162514264337593543950335",
       decimalMaxScale: 28,
@@ -408,7 +415,6 @@ describe("native-values profile draft contract fixtures", () => {
       "int-one",
       "string-one",
       "float-negative-zero",
-      "float-nan-payload-one",
       "decimal-one-scale-two",
       "set-containing-int-one",
       "record-note-integer-seven",
@@ -421,13 +427,20 @@ describe("native-values profile draft contract fixtures", () => {
       ),
     ).toBe(true);
     expect(vectors[0]!.cborHex).not.toBe(vectors[1]!.cborHex);
+    expect(
+      schema.rejectedNativeValueVectors.map(({ id, error }) => [id, error]),
+    ).toEqual([
+      ["float-nan-payload-one", "InvalidFloat"],
+      ["float-positive-infinity", "InvalidFloat"],
+      ["float-negative-infinity", "InvalidFloat"],
+    ]);
     expect(schema.pendingExternalDecisions).toEqual([
       "check and complete any required external CBOR tag registration for 60000",
       "assign a native-values HTTP route after acceptance-receipt-v2 router collision testing",
     ]);
   });
 
-  it.todo("native codec preserves the actual SurrealDB Set representative");
-  it.todo("native codec rejects Set members equal under pinned Number::Ord");
-  it.todo("native codec decode-encode preserves accepted canonical Set bytes");
+  it.todo("SDK invocation preserves the native Set representative");
+  it.todo("SDK invocation rejects members equal under pinned Number::Ord");
+  it.todo("SDK invocation round-trips accepted canonical Set bytes");
 });

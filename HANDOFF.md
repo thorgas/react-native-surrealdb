@@ -1256,23 +1256,30 @@ RecordKey vectors, selected Set representation/wire-order rules, pinned source
 references, and the concrete candidate value/message schema. The engine lock resolves
 `rust_decimal` 1.42.1; the engine draft's 1.43.0 citation needs correction.
 
-This is a design amendment only: no native-values codec, profile negotiation,
-route, persistence binding, or full Note sync was implemented or runtime
-verified. The selected design preserves the first equal-value representative
-already retained by the SurrealDB Set; native equality is only the duplicate
+This is a design amendment plus an isolated value-codec spike: no integrated
+native-values profile, profile negotiation, route, persistence binding, or
+full Note sync is implemented. Focused tests of pinned SurrealDB 3.2.4 Set
+construction show that the last equal-value representative is retained; native equality is only the duplicate
 and decoder-cardinality relation. Thus equal Sets can have different
 fingerprints when their retained member type, Float bits, or Decimal scale
 differs. Retries must retain exact canonical bytes and fingerprint. Draft
-contract fixtures and narrow JS checks now pin the hand-derived fingerprint
-bytes and Set vector inventory; they do not prove native Set semantics. This
-choice remains untested in a native codec, and the `.3` SDK artifact does not
+contract fixtures and narrow JS checks pin hand-derived fingerprint bytes and
+Set vectors. The new private Rust value codec passed its focused unit suite
+(10/10); it does not integrate sync or prove fingerprint replay. The `.3` SDK artifact does not
 close the full persisted Note sync gate. See the “SDK draft contract fixtures”
 section of the precision review for the exact validation boundary. The schema
 proposal assigns kind IDs 0–13 under internal CBOR tag 60000 and explicit
-push/pull envelopes; it preserves all binary64 bits (including NaN payloads),
-pins the Decimal coefficient ceiling and Datetime constructor validation, and
-defines local validation errors separately from durable wire rejections. Tag
+push/pull envelopes; it preserves finite Float bits, rejects NaN/infinity per
+the engine draft, pins the Decimal coefficient ceiling and Datetime
+constructor validation, and defines local validation errors separately from
+durable wire rejections. Tag
 60000 is not claimed externally registered. It keeps v1
 tags 6/8, pull-source-v2 family/media/route, and the acceptance-receipt-v2
 family/media/path namespace distinct. Route selection and external tag-registry
-check/registration remain pending; no native codec or activation exists.
+check/registration remain pending. An isolated private value-codec spike and
+native golden/rejection tests are now in `crates/surrealdb-rn-core/src/`, have
+passed the focused Rust suite, and remain unwired. It covers value
+nodes only, not messages, operations, fingerprints, persistence, or activation.
+Because the candidate profile rejects non-finite floats accepted by the native
+type, it is not proven lossless for every native Number and does not close the
+full persisted Note sync gate.

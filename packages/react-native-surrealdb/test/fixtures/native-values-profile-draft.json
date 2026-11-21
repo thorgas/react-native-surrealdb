@@ -237,6 +237,7 @@
     "limitSemantics": {
       "depthCountsRootAs": 1,
       "containerItemsAreDirectMembers": true,
+      "totalItemsCount": "tagged native value nodes",
       "stringsAndBytesMeasure": "encoded UTF-8 or byte count",
       "encodedCborMeasures": "complete single CBOR message",
       "maximaInclusive": true,
@@ -244,8 +245,8 @@
     },
     "constructorRules": {
       "floatWidthBytes": 8,
-      "allBinary64BitPatternsValid": true,
-      "preserveNaNPayloadBits": true,
+      "finiteFloatOnly": true,
+      "rejectNaNAndInfinity": true,
       "preserveSignedFloatZero": true,
       "decimalMaxCoefficient": "79228162514264337593543950335",
       "decimalMaxScale": 28,
@@ -292,11 +293,6 @@
         "cborHex": "d9ea608204488000000000000000"
       },
       {
-        "id": "float-nan-payload-one",
-        "kind": 4,
-        "cborHex": "d9ea608204487ff8000000000001"
-      },
-      {
         "id": "decimal-one-scale-two",
         "kind": 10,
         "cborHex": "d9ea60820a83f44c00000000000000000000006402"
@@ -312,6 +308,26 @@
         "cborHex": "d9ea60820d82646e6f7465820007"
       }
     ],
+    "rejectedNativeValueVectors": [
+      {
+        "id": "float-nan-payload-one",
+        "kind": 4,
+        "cborHex": "d9ea608204487ff8000000000001",
+        "error": "InvalidFloat"
+      },
+      {
+        "id": "float-positive-infinity",
+        "kind": 4,
+        "cborHex": "d9ea608204487ff0000000000000",
+        "error": "InvalidFloat"
+      },
+      {
+        "id": "float-negative-infinity",
+        "kind": 4,
+        "cborHex": "d9ea60820448fff0000000000000",
+        "error": "InvalidFloat"
+      }
+    ],
     "pendingExternalDecisions": [
       "check and complete any required external CBOR tag registration for 60000",
       "assign a native-values HTTP route after acceptance-receipt-v2 router collision testing"
@@ -324,17 +340,6 @@
         { "kind": "int", "value": "1" },
         { "kind": "float", "ieee754Hex": "3ff0000000000000" }
       ],
-      "expectedNativeRepresentative": { "kind": "int", "value": "1" },
-      "expectedNativeCardinality": 1,
-      "expectedWireIdentity": "preserve-int-representative",
-      "nativeRuntimeRequired": true
-    },
-    {
-      "id": "float-one-before-int-one",
-      "input": [
-        { "kind": "float", "ieee754Hex": "3ff0000000000000" },
-        { "kind": "int", "value": "1" }
-      ],
       "expectedNativeRepresentative": {
         "kind": "float",
         "ieee754Hex": "3ff0000000000000"
@@ -344,25 +349,21 @@
       "nativeRuntimeRequired": true
     },
     {
+      "id": "float-one-before-int-one",
+      "input": [
+        { "kind": "float", "ieee754Hex": "3ff0000000000000" },
+        { "kind": "int", "value": "1" }
+      ],
+      "expectedNativeRepresentative": { "kind": "int", "value": "1" },
+      "expectedNativeCardinality": 1,
+      "expectedWireIdentity": "preserve-int-representative",
+      "nativeRuntimeRequired": true
+    },
+    {
       "id": "decimal-scale-one-before-scale-two",
       "input": [
         { "kind": "decimal", "coefficient": "10", "scale": 1 },
         { "kind": "decimal", "coefficient": "100", "scale": 2 }
-      ],
-      "expectedNativeRepresentative": {
-        "kind": "decimal",
-        "coefficient": "10",
-        "scale": 1
-      },
-      "expectedNativeCardinality": 1,
-      "expectedWireIdentity": "preserve-decimal-scale-one",
-      "nativeRuntimeRequired": true
-    },
-    {
-      "id": "decimal-scale-two-before-scale-one",
-      "input": [
-        { "kind": "decimal", "coefficient": "100", "scale": 2 },
-        { "kind": "decimal", "coefficient": "10", "scale": 1 }
       ],
       "expectedNativeRepresentative": {
         "kind": "decimal",
@@ -374,6 +375,21 @@
       "nativeRuntimeRequired": true
     },
     {
+      "id": "decimal-scale-two-before-scale-one",
+      "input": [
+        { "kind": "decimal", "coefficient": "100", "scale": 2 },
+        { "kind": "decimal", "coefficient": "10", "scale": 1 }
+      ],
+      "expectedNativeRepresentative": {
+        "kind": "decimal",
+        "coefficient": "10",
+        "scale": 1
+      },
+      "expectedNativeCardinality": 1,
+      "expectedWireIdentity": "preserve-decimal-scale-one",
+      "nativeRuntimeRequired": true
+    },
+    {
       "id": "negative-zero-before-positive-zero",
       "input": [
         { "kind": "float", "ieee754Hex": "8000000000000000" },
@@ -381,10 +397,10 @@
       ],
       "expectedNativeRepresentative": {
         "kind": "float",
-        "ieee754Hex": "8000000000000000"
+        "ieee754Hex": "0000000000000000"
       },
       "expectedNativeCardinality": 1,
-      "expectedWireIdentity": "preserve-negative-zero-bits",
+      "expectedWireIdentity": "preserve-positive-zero-bits",
       "nativeRuntimeRequired": true
     },
     {
@@ -395,10 +411,10 @@
       ],
       "expectedNativeRepresentative": {
         "kind": "float",
-        "ieee754Hex": "0000000000000000"
+        "ieee754Hex": "8000000000000000"
       },
       "expectedNativeCardinality": 1,
-      "expectedWireIdentity": "preserve-positive-zero-bits",
+      "expectedWireIdentity": "preserve-negative-zero-bits",
       "nativeRuntimeRequired": true
     }
   ],
