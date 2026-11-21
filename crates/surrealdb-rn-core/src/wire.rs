@@ -6,7 +6,9 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Serialize;
 use serde::ser::{SerializeMap, SerializeSeq, Serializer};
 use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue, json};
-use surrealdb::types::{Array, Bytes, Decimal, Number, Object, RecordId, Set, ToSql, Uuid, Value};
+use surrealdb::types::{
+    Array, Bytes, Datetime, Decimal, Number, Object, RecordId, RecordIdKey, Set, ToSql, Uuid, Value,
+};
 
 use crate::SurrealRnError;
 
@@ -279,6 +281,22 @@ fn decode_tagged_value(
             .map(Number::Decimal)
             .map(Value::Number)
             .map_err(|error| invalid_variables(error.to_string())),
+        "datetime" => {
+            let literal = required_string(&mut object, "value")?;
+            if !object.is_empty() {
+                return Err(invalid_variables("datetime tag has unsupported fields"));
+            }
+            let timestamp = literal
+                .strip_prefix("d'")
+                .and_then(|value| value.strip_suffix('\''))
+                .ok_or_else(|| invalid_variables("datetime must be a quoted literal"))?;
+            let datetime = Datetime::from_str(timestamp)
+                .map_err(|_| invalid_variables("invalid datetime literal"))?;
+            if Value::Datetime(datetime).to_sql() != literal {
+                return Err(invalid_variables("noncanonical datetime literal"));
+            }
+            Ok(Value::Datetime(datetime))
+        }
         "bytes" => BASE64
             .decode(required_string(&mut object, "base64")?)
             .map(Bytes::from)
@@ -287,9 +305,10 @@ fn decode_tagged_value(
         "uuid" => Uuid::from_str(&required_string(&mut object, "value")?)
             .map(Value::Uuid)
             .map_err(|error| invalid_variables(error.to_string())),
-        "record" => RecordId::parse_simple(&required_string(&mut object, "value")?)
-            .map(Value::RecordId)
-            .map_err(|error| invalid_variables(error.to_string())),
+        "record" => {
+            let literal = required_string(&mut object, "value")?;
+            decode_record_id_literal(&literal).map(Value::RecordId)
+        }
         "set" => {
             let values = object
                 .remove("values")
@@ -306,6 +325,34 @@ fn decode_tagged_value(
             "unsupported $surreal tag '{other}'"
         ))),
     }
+}
+
+// Decode only canonical scalar record keys. The SDK exposes no typed parser for
+// record literals; parse_simple treats a quoted/numeric key as a plain string.
+// Construct the typed key and require SurrealDB's serializer to reproduce the
+// exact input, so unsupported key shapes cannot silently change identity.
+fn decode_record_id_literal(literal: &str) -> Result<RecordId, SurrealRnError> {
+    let (table, key) = literal
+        .split_once(':')
+        .ok_or_else(|| invalid_variables("record id must contain a table and key"))?;
+    let key = if let Some(quoted) = key.strip_prefix('`').and_then(|key| key.strip_suffix('`')) {
+        if quoted.is_empty() || quoted.contains('`') || quoted.contains('\\') {
+            return Err(invalid_variables("unsupported quoted record id key"));
+        }
+        RecordIdKey::String(quoted.to_owned())
+    } else if key.as_bytes().iter().all(u8::is_ascii_digit) {
+        RecordIdKey::Number(
+            key.parse::<i64>()
+                .map_err(|_| invalid_variables("record id number is outside i64"))?,
+        )
+    } else {
+        RecordIdKey::String(key.to_owned())
+    };
+    let record = RecordId::new(table, key);
+    if record.to_sql() != literal {
+        return Err(invalid_variables("unsupported record id key shape"));
+    }
+    Ok(record)
 }
 
 fn required_string(
@@ -375,6 +422,82 @@ mod tests {
             Some(&Value::Number(Number::Int(9_007_199_254_740_993)))
         );
         assert_eq!(variables.get("missing"), Some(&Value::None));
+    }
+
+    #[test]
+    fn datetime_round_trips_at_nanosecond_precision_with_nested_values() {
+        let input = r#"{
+            "when":{"$surreal":"datetime","value":"d'2026-01-01T00:00:00.123456789Z'"},
+            "nested":{"integer":{"$surreal":"int","value":"9007199254740993"},
+                "decimal":{"$surreal":"decimal","value":"1234567890.0000000001"},
+                "bytes":{"$surreal":"bytes","base64":"AAH+/w=="},
+                "record":{"$surreal":"record","value":"person:ada"},
+                "missing":{"$surreal":"none"},"null":null}
+        }"#;
+        let decoded = Value::Object(decode_variables(Some(input)).unwrap());
+        let streaming: JsonValue =
+            serde_json::from_str(&encode_value(decoded.clone()).unwrap()).unwrap();
+        let tree: JsonValue = serde_json::from_str(&encode_value_tree(decoded).unwrap()).unwrap();
+        assert_eq!(streaming, serde_json::from_str::<JsonValue>(input).unwrap());
+        assert_eq!(tree, streaming);
+        assert_ne!(streaming["nested"]["missing"], streaming["nested"]["null"]);
+    }
+
+    #[test]
+    fn datetime_decoder_rejects_noncanonical_and_injected_sql() {
+        for literal in [
+            "2026-01-01T00:00:00Z",
+            "d'2026-01-01T00:00:00Z'; DELETE note",
+            "d'not-a-date'",
+            "d'2026-01-01T01:00:00+01:00'",
+            "d'2026-01-01T00:00:00.1234567890Z'",
+        ] {
+            let input = json!({"when": {TAG: "datetime", "value": literal}}).to_string();
+            assert!(
+                matches!(
+                    decode_variables(Some(&input)),
+                    Err(SurrealRnError::InvalidVariables { .. })
+                ),
+                "accepted {literal}"
+            );
+        }
+        assert!(
+            decode_variables(Some(
+                r#"{"when":{"$surreal":"datetime","value":"d'2026-01-01T00:00:00Z'","extra":true}}"#
+            ))
+            .is_err()
+        );
+        assert!(
+            decode_variables(Some(
+                r#"{"when":{"$surreal":"geometry","value":"point(1,2)"}}"#
+            ))
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn record_decoder_rejects_unhandled_key_syntax() {
+        assert!(
+            decode_variables(Some(r#"{"id":{"$surreal":"record","value":"person:ada"}}"#)).is_ok()
+        );
+        let uuid = "550e8400-e29b-41d4-a716-446655440000";
+        let app_id = RecordId::new("note", uuid);
+        let encoded = encode_value(Value::RecordId(app_id.clone())).unwrap();
+        assert_eq!(
+            encoded,
+            format!(r#"{{"$surreal":"record","value":"note:`{uuid}`"}}"#)
+        );
+        let decoded = decode_variables(Some(&format!(r#"{{"id":{encoded}}}"#))).unwrap();
+        assert_eq!(decoded.get("id"), Some(&Value::RecordId(app_id)));
+        let numeric = decode_record_id_literal("person:123").unwrap();
+        let numeric_string = decode_record_id_literal("person:`123`").unwrap();
+        assert_eq!(numeric.key, RecordIdKey::Number(123));
+        assert_eq!(numeric_string.key, RecordIdKey::String("123".into()));
+        assert_ne!(numeric, numeric_string);
+        for record in ["person:[1,2]", "person:{key:'one'}", "person:stable-1"] {
+            let input = json!({"id": {TAG: "record", "value": record}}).to_string();
+            assert!(decode_variables(Some(&input)).is_err(), "accepted {record}");
+        }
     }
 
     #[test]

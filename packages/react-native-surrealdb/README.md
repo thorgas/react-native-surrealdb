@@ -85,6 +85,18 @@ result. `transaction.executeBatch()` is the lower-overhead write variant: it
 repeats one parameterized query, discards `RETURN NONE` results, and returns the
 executed count.
 
+The query value bridge represents a native datetime as
+`SurrealSqlValue("datetime", "d'2026-01-01T00:00:00.123456789Z'")`.
+Passing that value back as a query variable preserves nanoseconds after native
+validation of the exact canonical literal. A JavaScript `Date` loses precision
+and remains unsupported. Tagged record IDs retain their key type: for example,
+`note:\`550e8400-e29b-41d4-a716-446655440000\`` is a string key, while
+`note:123` is numeric and `note:\`123\`` is a distinct string key. Record ID
+arrays, objects, ranges, and unsupported quoting fail closed on query input.
+This query bridge does not extend the experimental sync protocol's canonical
+value profile; datetime-bearing records cannot yet be enqueued or pulled as
+full sync payloads.
+
 ```ts
 await db.transaction((transaction) =>
   transaction.executeBatch(

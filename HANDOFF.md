@@ -1177,3 +1177,31 @@ then passed alone and in the complete rerun. Local `release:pack` produced
 native slice, generated file, and license against the prior four-target matrix
 and verifies that the module client contains the source-v2 decoder. The `.1`
 archive remains immutable. No tag, npm publication, or app integration occurred.
+
+## Query wire datetime source slice (host verified; native artifacts pending)
+
+The next SDK source slice adds strict inverse decoding for the existing native
+datetime tag. It accepts only a SurrealDB 3.2.4 RFC3339 datetime whose quoted
+`d'...'` literal reserializes byte-for-byte, so malformed dates, offsets,
+trailing SQL, noncanonical values, and extra fields fail before query execution.
+The TypeScript bridge permits only `SurrealSqlValue("datetime", exactLiteral)`
+among SQL-formatted values. Tagged record IDs now construct scalar key types and
+require exact native serialization; quoted UUID string keys and numeric keys
+remain distinct, while array/object/range keys are rejected. Source tests cover
+nanoseconds, nested tagged values, NONE versus NULL, hostile literals, and a
+SurrealKV read/copy/reopen. With one Cargo job, locked/offline Rust 1.96.1 and
+the shared cached host target, `cargo test -p surrealdb-rn-core wire::tests::`
+passed 7/7 and the named
+`surrealkv_native_datetime_content_survives_wire_copy_and_reopen` passed 1/1.
+The app-style `type::record('note', uuidString)` path returned the quoted UUID
+string key, which decoded to its original typed ID. Focused Vitest passed 6/6,
+package `tsc --noEmit` passed, and rustfmt/Prettier/diff checks passed. The
+host slot was released with 7,233,696 KiB free. The existing `.2` archive and four native slices do not
+contain this source and remain historical; do not package or vendor them as a
+datetime-capable runtime.
+
+`sync_codec.rs` still rejects native datetime (and other canonical types not in
+the current engine protocol). `sync_state.rs` materializes full canonical
+content with `.upsert(...).content(content)`. This query wire change does not
+make full Note intent or pull lossless, and classifier activation remains gated
+on a separate engine protocol/profile and app codec decision.

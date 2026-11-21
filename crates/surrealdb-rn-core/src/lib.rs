@@ -1292,6 +1292,72 @@ mod tests {
             .unwrap();
         assert_eq!(result[0].value_json, r#""Ada""#);
     }
+
+    #[tokio::test]
+    async fn surrealkv_native_datetime_content_survives_wire_copy_and_reopen() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let options = ConnectOptions {
+            endpoint: format!("surrealkv://{}", directory.path().display()),
+            namespace: Some("datetime_wire".into()),
+            database: Some("datetime_wire".into()),
+        };
+        let database = connect(options.clone()).await.unwrap();
+        let uuid = "550e8400-e29b-41d4-a716-446655440000";
+        let nested = serde_json::json!({
+            "integer": {"$surreal":"int", "value":"9007199254740993"},
+            "decimal": {"$surreal":"decimal", "value":"1234567890.0000000001"},
+            "bytes": {"$surreal":"bytes", "base64":"AAH+/w=="},
+            "record": {"$surreal":"record", "value":"person:ada"},
+            "null": null
+        });
+        database
+            .query(
+                "UPSERT type::record('note', $uuid) CONTENT { created_at: d'2026-01-01T00:00:00.123456789Z', nested: $nested } RETURN NONE".into(),
+                Some(serde_json::json!({"uuid": uuid, "nested": nested}).to_string()),
+            )
+            .await
+            .unwrap();
+        let original = database
+            .query("SELECT * FROM note".into(), None)
+            .await
+            .unwrap();
+        let mut rows: serde_json::Value = serde_json::from_str(&original[0].value_json).unwrap();
+        let mut content = rows.as_array_mut().unwrap().remove(0);
+        assert_eq!(content["id"]["value"], format!("note:`{uuid}`"));
+        let id = content.as_object_mut().unwrap().remove("id").unwrap();
+        let round_tripped_id =
+            wire::decode_variables(Some(&serde_json::json!({"id": id}).to_string())).unwrap();
+        assert_eq!(
+            round_tripped_id["id"],
+            surrealdb::types::Value::RecordId(surrealdb::types::RecordId::new("note", uuid))
+        );
+        assert_eq!(
+            content["created_at"]["value"],
+            "d'2026-01-01T00:00:00.123456789Z'"
+        );
+        assert_eq!(content["nested"]["integer"]["value"], "9007199254740993");
+        assert!(content["nested"]["null"].is_null());
+        database
+            .query(
+                "CREATE note:copy CONTENT $content RETURN NONE".into(),
+                Some(serde_json::json!({"content": content}).to_string()),
+            )
+            .await
+            .unwrap();
+        database.close().await.unwrap();
+        drop(database);
+
+        let reopened = connect(options).await.unwrap();
+        let result = reopened
+            .query("SELECT * FROM note:copy".into(), None)
+            .await
+            .unwrap();
+        let mut rows: serde_json::Value = serde_json::from_str(&result[0].value_json).unwrap();
+        let mut copied = rows.as_array_mut().unwrap().remove(0);
+        copied.as_object_mut().unwrap().remove("id");
+        assert_eq!(copied, content);
+        reopened.close().await.unwrap();
+    }
     #[cfg(unix)]
     #[tokio::test]
     async fn persistent_bridge_excludes_duplicate_objects_aliases_processes_and_reopens_after_last_client()

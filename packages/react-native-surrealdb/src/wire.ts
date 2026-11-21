@@ -124,6 +124,9 @@ function encodeValue(value: unknown, ancestors: WeakSet<object>): unknown {
     return { [TAG]: "bytes", base64: encodeBase64(value) };
   }
   if (value instanceof SurrealSqlValue) {
+    if (value.kind === "datetime") {
+      return taggedString("datetime", value.value);
+    }
     throw new TypeError(
       `Surreal ${value.kind} variables are not supported yet`,
     );

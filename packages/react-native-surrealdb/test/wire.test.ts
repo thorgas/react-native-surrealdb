@@ -8,6 +8,7 @@ import {
   SurrealUuid,
   decodeSurrealValue,
   encodeQueryVariables,
+  encodeSurrealValue,
 } from "../src/wire";
 
 describe("SurrealDB wire codec", () => {
@@ -63,7 +64,35 @@ describe("SurrealDB wire codec", () => {
     );
   });
 
+  it("round-trips a nanosecond datetime and nested lossless values", () => {
+    const encoded =
+      '{"when":{"$surreal":"datetime","value":"d\'2026-01-01T00:00:00.123456789Z\'"},' +
+      '"nested":{"integer":{"$surreal":"int","value":"9007199254740993"},' +
+      '"decimal":{"$surreal":"decimal","value":"1234567890.0000000001"},' +
+      '"bytes":{"$surreal":"bytes","base64":"AAH+/w=="},' +
+      '"record":{"$surreal":"record","value":"person:ada"},' +
+      '"missing":{"$surreal":"none"},"null":null}}';
+    const decoded = decodeSurrealValue(encoded);
+    expect(JSON.parse(encodeSurrealValue(decoded))).toEqual(
+      JSON.parse(encoded),
+    );
+  });
+
   it("produces equivalent values with copy and in-place decoding", () => {
+    const ids = encodeQueryVariables({
+      app: new SurrealRecordId("note:`550e8400-e29b-41d4-a716-446655440000`"),
+      number: new SurrealRecordId("note:123"),
+      numericString: new SurrealRecordId("note:`123`"),
+    });
+    expect(JSON.parse(ids)).toEqual({
+      app: {
+        $surreal: "record",
+        value: "note:`550e8400-e29b-41d4-a716-446655440000`",
+      },
+      number: { $surreal: "record", value: "note:123" },
+      numericString: { $surreal: "record", value: "note:`123`" },
+    });
+
     const json =
       '{"rows":[{"sequence":{"$surreal":"int","value":"42"},' +
       '"name":"answer","nested":{"values":[true,{"$surreal":"none"}]}}],' +
@@ -84,5 +113,10 @@ describe("SurrealDB wire codec", () => {
     expect(() => encodeQueryVariables({ value: new Date() })).toThrow(
       /unsupported/,
     );
+    expect(() =>
+      encodeQueryVariables({
+        value: new SurrealSqlValue("geometry", "point(1,2)"),
+      }),
+    ).toThrow(/not supported/);
   });
 });
