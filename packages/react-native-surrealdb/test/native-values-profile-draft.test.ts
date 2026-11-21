@@ -497,7 +497,7 @@ describe("native-values profile draft contract fixtures", () => {
     });
   });
 
-  it.todo("SDK invocation preserves the native Set representative");
-  it.todo("SDK invocation rejects members equal under pinned Number::Ord");
-  it.todo("SDK invocation round-trips accepted canonical Set bytes");
+  it.todo(
+    "public SDK/native Set construction exposes the surviving representative through a value conversion path",
+  );
 });

@@ -1,5 +1,8 @@
+use std::{env, fs};
+
 use super::{decode_value, encode_value, CodecError};
 use serde::Deserialize;
+use serde_json::json;
 use surrealdb::types::{
     Array, Datetime, Number, Object, RecordId, RecordIdKey, Set, Uuid, Value as SurrealValue,
 };
@@ -52,6 +55,23 @@ struct ResourceBoundaryCases {
     empty_record_string_key_bytes: usize,
     over_encoded_output_bytes: usize,
     native_set_equality_checked_in_typescript: bool,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InteropRequest {
+    cases: Vec<InteropCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InteropCase {
+    id: String,
+    cbor_hex: String,
+    #[serde(default)]
+    expected: Option<String>,
+    #[serde(default)]
+    expect_error: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -237,6 +257,52 @@ fn aggregate_resource_limits_and_record_key_boundaries_match_shared_fixture() {
         ))),
         Err(CodecError::InvalidRecordId),
     );
+}
+
+#[test]
+#[ignore = "driven by the opt-in TypeScript interop test harness"]
+fn typescript_bytes_cross_rust_decoder() {
+    let (Ok(request_path), Ok(response_path)) = (
+        env::var("NATIVE_VALUES_DRAFT_INTEROP_REQUEST"),
+        env::var("NATIVE_VALUES_DRAFT_INTEROP_RESPONSE"),
+    ) else {
+        return;
+    };
+    let request: InteropRequest =
+        serde_json::from_slice(&fs::read(request_path).expect("interop request fixture exists"))
+            .expect("interop request fixture is valid JSON");
+    let mut results = Vec::with_capacity(request.cases.len());
+    for case in request.cases {
+        let bytes = hex_to_bytes(&case.cbor_hex);
+        if let Some(expected_error) = case.expect_error {
+            let error = decode_value(&bytes).expect_err(&case.id);
+            assert_eq!(format!("{error:?}"), expected_error, "{}", case.id);
+            results.push(json!({
+                "id": case.id,
+                "status": "rejected",
+                "error": format!("{error:?}")
+            }));
+            continue;
+        }
+
+        let expected_id = case
+            .expected
+            .expect("accepted interop case names native expectation");
+        let decoded = decode_value(&bytes)
+            .unwrap_or_else(|error| panic!("{} expected acceptance: {error:?}", case.id));
+        assert_eq!(decoded, expected_native_value(&expected_id), "{}", case.id);
+        let encoded = encode_value(&decoded).expect("native-decoded value can re-encode");
+        results.push(json!({
+            "id": case.id,
+            "status": "accepted",
+            "cborHex": hex(&encoded)
+        }));
+    }
+    fs::write(
+        response_path,
+        serde_json::to_vec(&json!({ "results": results })).expect("interop response serializes"),
+    )
+    .expect("interop response is written");
 }
 
 fn expected_native_value(id: &str) -> SurrealValue {

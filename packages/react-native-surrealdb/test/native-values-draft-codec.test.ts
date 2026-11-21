@@ -1,5 +1,8 @@
-import { readFileSync } from "node:fs";
-import { URL } from "node:url";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath, URL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   decodeDraftNativeValue,
@@ -40,6 +43,7 @@ const hex = (s: string) =>
   Uint8Array.from(s.match(/.{2}/g)?.map((x) => parseInt(x, 16)) ?? []);
 const decimalMax = "ffffffffffffffffffffffff";
 const uuid = "00112233445566778899aabbccddeeff";
+const runRustInterop = process.env.RUN_NATIVE_VALUES_RUST_INTEROP === "1";
 
 function expected(id: string): DraftNativeValue {
   switch (id) {
@@ -155,6 +159,105 @@ function expected(id: string): DraftNativeValue {
 }
 
 describe("unwired native-values draft codec", () => {
+  it.skipIf(!runRustInterop)(
+    "round-trips accepted Sets and reports native Set collapse through Rust",
+    () => {
+      const tempDir = mkdtempSync(
+        join(tmpdir(), "native-values-draft-interop-"),
+      );
+      const requestPath = join(tempDir, "request.json");
+      const responsePath = join(tempDir, "response.json");
+      const cases: {
+        id: string;
+        cborHex: string;
+        expected?: string;
+        expectError?: string;
+      }[] = fixture.valid.map((vector) => ({
+        id: vector.expected,
+        cborHex: Buffer.from(
+          encodeDraftNativeValue(expected(vector.expected)),
+        ).toString("hex"),
+        expected: vector.expected,
+      }));
+      const setCollapse = fixture.nativeSetCardinalityCase;
+      cases.push({
+        id: setCollapse.id,
+        cborHex: Buffer.from(
+          encodeDraftNativeValue({
+            kind: "set",
+            values: [
+              { kind: "int", value: 1n },
+              { kind: "float", bitsHex: "3ff0000000000000" },
+            ],
+          }),
+        ).toString("hex"),
+        expectError: setCollapse.rustError,
+      });
+      writeFileSync(requestPath, JSON.stringify({ cases }), "utf8");
+      try {
+        const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
+        const result = spawnSync(
+          process.env.CARGO ?? "cargo",
+          [
+            "test",
+            "-p",
+            "surrealdb-rn-core",
+            "native_values_draft_codec::tests::typescript_bytes_cross_rust_decoder",
+            "--lib",
+            "--locked",
+            "--offline",
+            "--jobs",
+            "1",
+            "--",
+            "--ignored",
+            "--exact",
+          ],
+          {
+            cwd: repoRoot,
+            env: {
+              ...process.env,
+              NATIVE_VALUES_DRAFT_INTEROP_REQUEST: requestPath,
+              NATIVE_VALUES_DRAFT_INTEROP_RESPONSE: responsePath,
+            },
+            encoding: "utf8",
+            timeout: 120_000,
+            maxBuffer: 2 * 1024 * 1024,
+          },
+        );
+        expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+        const response = JSON.parse(readFileSync(responsePath, "utf8")) as {
+          results: {
+            id: string;
+            status: string;
+            cborHex?: string;
+            error?: string;
+          }[];
+        };
+        expect(response.results).toHaveLength(cases.length);
+        expect(response.results.map(({ id }) => id).sort()).toEqual(
+          cases.map(({ id }) => id).sort(),
+        );
+        for (const entry of response.results) {
+          const source = cases.find(({ id }) => id === entry.id)!;
+          if (entry.status === "rejected") {
+            expect(source.expectError).toBe("SetCardinality");
+            expect(entry.error).toBe(source.expectError);
+            continue;
+          }
+          expect(entry.status).toBe("accepted");
+          expect(source.expected).toBeDefined();
+          const expectedValue = expected(entry.id);
+          expect(decodeDraftNativeValue(hex(entry.cborHex!))).toEqual(
+            expectedValue,
+          );
+        }
+      } finally {
+        rmSync(tempDir, { recursive: true, force: true });
+      }
+    },
+    150_000,
+  );
+
   it("decodes independent literal bytes and encodes explicit expected ASTs", () => {
     for (const vector of fixture.valid) {
       const bytes = hex(vector.cborHex);

@@ -500,12 +500,13 @@ key forms, empty string RecordId keys, i64 endpoints, negative zero, retained
 Set values, tag-lookalike Object keys, depth 32/33, malformed UTF-8, and an
 input one byte over the 4 MiB limit. Resource tests cover exactly 4,096 and
 4,097 value nodes, exactly 1 MiB and 1 MiB plus one aggregate text/Bytes
-payload, and long table/key text. The Rust focused command passes 12/12,
-including native-equal Set collapse rejection. The TypeScript focused codec
-suite passes 6/6 and checks the same literal fixtures and aggregate budgets;
-its Set fixture only proves representation decode and intentionally does not
-make a native-equality claim. The profile contract suite has five passing
-checks and three existing SDK-invocation TODOs.
+payload, and long table/key text. The normal Rust focused command passes 12
+tests with the opt-in bridge ignored; the explicit bridge run also passes. Both
+include native-equal Set collapse rejection. The normal TypeScript focused
+run passes six codec cases and five profile checks, with one opt-in interop
+case skipped and one public SDK Set-construction TODO. The opt-in
+TypeScript/Rust value-byte bridge passes separately and checks native Set
+rejection without approximating native equality in JavaScript.
 
 ## SDK draft contract fixtures
 
@@ -556,18 +557,41 @@ signed i64 endpoints, the empty-key/empty-table distinction, long identity
 fields, malformed UTF-8, and native-equal Set collapse. TypeScript accepts both
 encoded Set member representations; only Rust reports native
 `SetCardinality` for the equality collapse.
-Existing SDK-invocation TODOs therefore remain open. This spike does not add
-profile conversion, transport, storage, activation, ABI changes, or package
-exports, and does not complete full persisted Note sync.
+The only remaining SDK invocation TODO is proving that a public/native Set
+construction path exposes the native-selected representative through an SDK
+value conversion. The existing SDK has no such Set construction/conversion
+call path, and adding one would exceed this draft test-only scope.
+
+An opt-in test-only TypeScript/Rust bridge now exercises the actual TypeScript
+and Rust value-codec functions. Run it with:
+
+```sh
+RUN_NATIVE_VALUES_RUST_INTEROP=1 fnm exec --using=22.22.0 pnpm --filter react-native-surrealdb exec vitest run test/native-values-draft-codec.test.ts -t 'round-trips accepted Sets and reports native Set collapse through Rust'
+```
+
+The Vitest case writes bytes produced by `encodeDraftNativeValue` to a temporary
+request; a filtered offline Rust unit test consumes them with private
+`decode_value`, compares against pinned SurrealDB values, and returns
+`encode_value` bytes for TypeScript `decodeDraftNativeValue` to inspect. The
+bridge covers all accepted shared literal-value IDs and the byte-distinct
+integer/float Set case: TypeScript encodes both representations, Rust rejects
+native cardinality collapse with `SetCardinality`, and the test asserts that
+rejection distinctly. It also covers accepted Sets in both directions. The
+test is gated by `RUN_NATIVE_VALUES_RUST_INTEROP=1`, so ordinary package tests
+do not spawn Cargo. This proves value-codec byte interoperability only; it
+does not add a public SDK API, Set constructor, production call site, profile
+conversion, transport, storage, or activation, and does not complete full
+persisted Note sync.
 
 The Set fixture assertions check only that the selected rules and adversarial
 cases remain present; they do not use JavaScript Set equality as a proxy for
-SurrealDB `Number::Ord`. A separate, private Rust value-codec spike now has
-focused native tests for literal bytes, finite negative zero, Decimal scale,
-last-equal Set representative, byte ordering, and decode cardinality rejection.
-The targeted command
+SurrealDB `Number::Ord`. A separate, private Rust value-codec spike has focused
+native tests for literal bytes, finite negative zero, Decimal scale, last-equal
+Set representative, byte ordering, and decode cardinality rejection. The
+targeted command
 `cargo test -p surrealdb-rn-core native_values_draft_codec::tests --lib --locked --offline --jobs 1`
-passed 10/10. This is native value-node evidence only; three TypeScript TODOs
-remain for SDK invocation/integration. The schema and fingerprint vectors are
-still draft; full Note/fingerprint conformance needs an adopted profile, an
-independent cross-language encoder, and exact persisted retry replay.
+passes 12 tests with the opt-in bridge ignored. The explicit bridge invocation
+passes separately. The bridge tests cross-language value codec behavior only; one
+public SDK/native Set-construction TODO remains. The schema and fingerprint
+vectors are still draft; full Note/fingerprint conformance needs an adopted
+profile and exact persisted retry replay.

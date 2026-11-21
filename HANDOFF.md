@@ -1266,7 +1266,8 @@ fingerprints when their retained member type, Float bits, or Decimal scale
 differs. Retries must retain exact canonical bytes and fingerprint. Draft
 contract fixtures and narrow JS checks pin hand-derived fingerprint bytes and
 Set vectors. The private Rust value codec passed its focused unit suite
-(12/12); it does not integrate sync or prove fingerprint replay. The shared
+(12 passed, 1 interop test ignored unless explicitly driven); it does not
+integrate sync or prove fingerprint replay. The shared
 literal decode vectors are in
 `packages/react-native-surrealdb/test/fixtures/native-values-decode-vectors.json`.
 An isolated SDK-side draft TypeScript CBOR value codec is also present at
@@ -1275,14 +1276,20 @@ literal-vector and malformed-input coverage in
 `packages/react-native-surrealdb/test/native-values-draft-codec.test.ts`.
 It is not exported or called from production, does not instantiate native
 SurrealDB types or approximate native Set equality, and does not implement
-profile conversion, persistence, transport, or activation. The 6 codec Vitest
-cases (11 passed across both draft suites, 3 existing TODOs) and package
-TypeScript check passed under Node 22. The Rust draft now applies its aggregate
+profile conversion, persistence, transport, or activation. The normal Node 22
+focused Vitest run passes 11 cases, with one opt-in interop case skipped and one
+public SDK/native Set-construction TODO. The package typecheck passed. The Rust
+draft now applies its aggregate
 1 MiB payload budget to strings/bytes/Object keys/RecordId table and string
 keys; its 4 MiB writer guard remains separate. Empty string RID keys and
 identity fields over 1,024 bytes are permitted within the aggregate budget;
-empty tables remain rejected. Existing SDK invocation TODOs remain open; full
-persisted Note sync remains blocked.
+empty tables remain rejected. An opt-in test-only bridge now sends bytes from
+the TypeScript draft encoder through the private Rust decoder/encoder and back
+through the TypeScript decoder. The bridge passed; Rust rejects byte-distinct
+int/float Set members as `SetCardinality`. Run it with:
+`RUN_NATIVE_VALUES_RUST_INTEROP=1 fnm exec --using=22.22.0 pnpm --filter react-native-surrealdb exec vitest run test/native-values-draft-codec.test.ts -t 'round-trips accepted Sets and reports native Set collapse through Rust'`.
+The bridge does not call a public SDK Set constructor or integrate persistence;
+full persisted Note sync remains blocked.
 The `.3` SDK artifact does not
 close the full persisted Note sync gate. See the “SDK draft contract fixtures”
 section of the precision review for the exact validation boundary. The schema
