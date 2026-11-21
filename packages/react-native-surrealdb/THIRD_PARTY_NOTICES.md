@@ -36,8 +36,30 @@ The package retains the full Apache License 2.0 terms in
 [`LICENSE-APACHE-2.0`](./LICENSE-APACHE-2.0). This attribution does not change the
 MIT license of the original wrapper code or the UniFFI generator notices above.
 
-The published package also includes or links software from the SurrealDB Rust
-SDK, React Native, Hermes, and their transitive dependency trees. Refer to the
-exact release's `Cargo.lock`, `package.json`, and bundled artifacts for the
-versions in use, and to each dependency's distribution for its governing
-license and notices.
+## Pinned SurrealDB registry crates
+
+The native core's locked registry graph includes these SurrealDB crates. The
+license information below comes from each exact crate's `Cargo.toml` and
+`LICENSE` file, rather than from the SDK wrapper's MIT license. `Cargo.toml`
+for the three 3.2.4 crates uses `license-file = "LICENSE"` and has no `license`
+SPDX expression; `surrealdb-protocol` also declares `license = "BUSL-1.1"`.
+
+| Crate | Version | Cargo license metadata | Retained license file |
+| --- | --- | --- | --- |
+| `surrealdb` | 3.2.4 | `license-file = "LICENSE"`; no SPDX expression | `LICENSE-SURREALDB-3.2.4` |
+| `surrealdb-core` | 3.2.4 | `license-file = "LICENSE"`; no SPDX expression | `LICENSE-SURREALDB-3.2.4` |
+| `surrealdb-types` | 3.2.4 | `license-file = "LICENSE"`; no SPDX expression | `LICENSE-SURREALDB-3.2.4` |
+| `surrealdb-protocol` | 0.10.2 | `license = "BUSL-1.1"`; `license-file = "LICENSE"` | `LICENSE-SURREALDB-PROTOCOL-0.10.2` |
+
+The 3.2.4 crate license files are byte-identical (SHA256
+`98a94ac615f88370865016487b436fa404560910bd329794ed7502277a94b805`).
+The separate 0.10.2 protocol license file has SHA256
+`ace8dd034851d648d4104b7d20ab7bbf3d9666aa4e665e9fc5b865f4433aca13`.
+Both retained files identify Business Source License 1.1 with their respective
+licensed-work parameters. The exact registry package checksums and dependency
+versions remain in the SDK's `Cargo.lock`.
+
+The package also includes or links software from React Native, Hermes, and
+their transitive dependency trees. Refer to the exact release's `Cargo.lock`,
+`package.json`, and bundled artifacts for the versions in use, and to each
+dependency's distribution for its governing license and notices.

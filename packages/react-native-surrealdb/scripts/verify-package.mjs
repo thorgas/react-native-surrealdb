@@ -1,4 +1,5 @@
 import { access, readFile, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -54,6 +55,8 @@ for (const path of [
   "README.md",
   "LICENSE",
   "LICENSE-APACHE-2.0",
+  "LICENSE-SURREALDB-3.2.4",
+  "LICENSE-SURREALDB-PROTOCOL-0.10.2",
   "THIRD_PARTY_NOTICES.md",
   "CHANGELOG.md",
   "Surrealdb.podspec",
@@ -64,6 +67,25 @@ for (const path of [
   "SurrealDbRnFramework.xcframework/Info.plist",
 ]) {
   await requireFile(path);
+}
+
+for (const [path, expectedSha256] of [
+  [
+    "LICENSE-SURREALDB-3.2.4",
+    "98a94ac615f88370865016487b436fa404560910bd329794ed7502277a94b805",
+  ],
+  [
+    "LICENSE-SURREALDB-PROTOCOL-0.10.2",
+    "ace8dd034851d648d4104b7d20ab7bbf3d9666aa4e665e9fc5b865f4433aca13",
+  ],
+]) {
+  if (await exists(path)) {
+    const actualSha256 = createHash("sha256")
+      .update(await readFile(join(root, path)))
+      .digest("hex");
+    if (actualSha256 !== expectedSha256)
+      failures.push(`${path} differs from the pinned crate license`);
+  }
 }
 
 for (const abi of ["arm64-v8a", "x86_64"]) {

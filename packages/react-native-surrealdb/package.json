@@ -33,6 +33,8 @@
     "CHANGELOG.md",
     "LICENSE",
     "LICENSE-APACHE-2.0",
+    "LICENSE-SURREALDB-3.2.4",
+    "LICENSE-SURREALDB-PROTOCOL-0.10.2",
     "THIRD_PARTY_NOTICES.md",
     "RELEASING.md",
     "!ios/build",
