@@ -1326,10 +1326,67 @@ mod tests {
         assert_eq!(content["id"]["value"], format!("note:`{uuid}`"));
         let id = content.as_object_mut().unwrap().remove("id").unwrap();
         let round_tripped_id =
-            wire::decode_variables(Some(&serde_json::json!({"id": id}).to_string())).unwrap();
+            wire::decode_variables(Some(&serde_json::json!({"id": id.clone()}).to_string()))
+                .unwrap();
         assert_eq!(
             round_tripped_id["id"],
             surrealdb::types::Value::RecordId(surrealdb::types::RecordId::new("note", uuid))
+        );
+        let id_variable = serde_json::json!({"id": id}).to_string();
+        let looked_up = database
+            .query("SELECT * FROM $id".into(), Some(id_variable.clone()))
+            .await
+            .unwrap();
+        let looked_up_rows: serde_json::Value =
+            serde_json::from_str(&looked_up[0].value_json).unwrap();
+        assert_eq!(looked_up_rows.as_array().unwrap().len(), 1);
+        assert_eq!(looked_up_rows[0]["id"]["value"], format!("note:`{uuid}`"));
+
+        // SurrealDB can also hold a UUID-typed record key with the same UUID
+        // text. It is a different physical row from the app's string key.
+        let typed_uuid = uuid.parse::<surrealdb::types::Uuid>().unwrap();
+        let typed_id = surrealdb::types::RecordId::new("note", typed_uuid);
+        let typed_content = Object::from(std::collections::BTreeMap::from([(
+            "marker".to_owned(),
+            Value::String("typed".to_owned()),
+        )]));
+        let _: Option<Value> = database
+            .client()
+            .await
+            .unwrap()
+            .upsert(typed_id)
+            .content(typed_content)
+            .await
+            .unwrap();
+        database
+            .query(
+                "UPDATE $id SET marker = 'string' RETURN NONE".into(),
+                Some(id_variable),
+            )
+            .await
+            .unwrap();
+        let listed = database
+            .query("SELECT * FROM note".into(), None)
+            .await
+            .unwrap();
+        let listed_rows: serde_json::Value = serde_json::from_str(&listed[0].value_json).unwrap();
+        let rows = listed_rows.as_array().unwrap();
+        assert_eq!(rows.len(), 2);
+        let string_row = rows
+            .iter()
+            .find(|row| row["id"]["value"] == format!("note:`{uuid}`"))
+            .unwrap();
+        assert_eq!(string_row["marker"], "string");
+        let typed_row = rows
+            .iter()
+            .find(|row| row["id"]["value"] != format!("note:`{uuid}`"))
+            .unwrap();
+        assert_eq!(typed_row["marker"], "typed");
+        assert!(
+            wire::decode_variables(Some(
+                &serde_json::json!({"id": typed_row["id"]}).to_string()
+            ))
+            .is_err()
         );
         assert_eq!(
             content["created_at"]["value"],

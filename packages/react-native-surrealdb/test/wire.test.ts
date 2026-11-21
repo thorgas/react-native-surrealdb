@@ -92,6 +92,18 @@ describe("SurrealDB wire codec", () => {
       number: { $surreal: "record", value: "note:123" },
       numericString: { $surreal: "record", value: "note:`123`" },
     });
+    const nativeId = decodeSurrealValue(
+      '{"$surreal":"record","value":"note:`550e8400-e29b-41d4-a716-446655440000`"}',
+    );
+    expect(nativeId).toEqual(
+      new SurrealRecordId("note:`550e8400-e29b-41d4-a716-446655440000`"),
+    );
+    expect(JSON.parse(encodeQueryVariables({ id: nativeId }))).toEqual({
+      id: {
+        $surreal: "record",
+        value: "note:`550e8400-e29b-41d4-a716-446655440000`",
+      },
+    });
 
     const json =
       '{"rows":[{"sequence":{"$surreal":"int","value":"42"},' +

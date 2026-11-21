@@ -1205,3 +1205,20 @@ the current engine protocol). `sync_state.rs` materializes full canonical
 content with `.upsert(...).content(content)`. This query wire change does not
 make full Note intent or pull lossless, and classifier activation remains gated
 on a separate engine protocol/profile and app codec decision.
+
+### Existing app UUID physical record identity (host verified)
+
+The SurrealKV regression now additionally creates an app-style string-key Note
+with `type::record('note', $uuidString)`, obtains `SELECT id` through the native
+tagged wire, uses that exact tag as `$id` for lookup and update, and checks the
+same physical row. It also creates a UUID-typed key with the same UUID text and
+checks that the string-key update leaves that second row intact. The typed UUID
+key remains unsupported by the narrow query decoder and must fail closed.
+The TypeScript tagged `SurrealRecordId` re-encode test passes with the exact
+quoted app UUID. The named jobs1/locked/offline SurrealKV test executed **1/1
+and passed** under the shared host target (183 other unit tests filtered), with
+6,561,360 KiB free after the slot was released. This proves the query-wire
+physical UUID string-key path; it does not validate the app graph snapshot's
+own RID acceptance rules, which currently reject hyphenated keys. The engine's structural
+`ProtocolRecordId` remains a separate identifier contract and still uses
+`parse_simple` in `sync_state.rs`; the query-wire result alone does not solve it.
