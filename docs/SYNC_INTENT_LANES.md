@@ -39,6 +39,41 @@ not include unmaterialized IDs; use `lane.pendingIntentIds` for the full local
 lane. `blockedSnapshotJson` and `headIdentityJson` are opaque protocol JSON.
 Preserve the conflict snapshot unchanged when presenting an editor.
 
+`readIntentLanes()` enumerates **every** durable lane under one native runtime
+lock, including a new record whose latest unmaterialized edit deletes it and
+therefore has no `readSnapshot().snapshot.rows` entry. Its shape is:
+
+```ts
+{
+  revision: string,
+  cursor: SyncReadCursor,
+  lanes: Array<{
+    recordId: string,
+    pendingIntentIds: string[],
+    headIdentityJson: string | null,
+    blockedSnapshotJson: string | null,
+    blockedReason: string | null,
+    resolutionRevision: string,
+  }>,
+}
+```
+
+The array is ordered by record ID and includes blocked and accepted-awaiting-pull
+lanes after process restart. `revision`, `cursor.revision`, and
+`resolutionRevision` are decimal strings, never JavaScript numbers. The cursor
+belongs to the same native read journal as `readChanges`. Register an SDK
+`createReadStore().watchCollection(listener)` and re-read `readIntentLanes()`
+on its `snapshot` and `batch` events; the store owns polling, cancellation,
+and `reset_required` handling. It emits a `batch` even when `batch.changes` is
+empty for a lane-only durable revision. Registering the listener before its
+initial read, then re-reading on that initial `snapshot`, closes the mutation
+race between inventory and subscription. A process restart triggers a fresh
+snapshot and inventory. Treat scope invalidation or read errors as unavailable
+inventory; do not keep showing an old scope's lane list. Reading individual
+`readIntentRecord(recordId)` values after enumeration is a separate read and
+does not claim an atomic cross-record Note list. The app needs no durable ID
+index or polling timer.
+
 For an explicit conflict choice, first call
 `projectLaneConflictSnapshot(blockedSnapshotJson)` to obtain the local,
 remote, and observed domain values for an editor. Keep the original snapshot

@@ -627,6 +627,41 @@ impl NativeSyncClient {
         crate::sync_read::output(&serde_json::json!({"viewJson": view_json, "lane": lane}))
     }
 
+    /// One locked revision of every durable intent lane, including lanes whose
+    /// latest local delete has no projected read row. The cursor belongs to the
+    /// same read journal used by read_changes_json for invalidation.
+    pub async fn read_intent_lanes_json(&self) -> Result<String, NativeSyncError> {
+        let mut slot = self.lock_runtime().await;
+        self.refresh_scope_barrier(&mut slot).await?;
+        let runtime = slot.read_client()?;
+        let revision = runtime.state().revision;
+        let mut lanes = Vec::with_capacity(runtime.state().lanes.len());
+        for (id, lane) in &runtime.state().lanes {
+            let blocked_snapshot_json = runtime
+                .lane_conflict_snapshot(id)
+                .map(|snapshot| encode_output(&snapshot))
+                .transpose()?;
+            let head_identity_json = lane
+                .head
+                .as_ref()
+                .map(|head| encode_output(&head.identity))
+                .transpose()?;
+            lanes.push(serde_json::json!({
+                "recordId": id.0.clone(),
+                "pendingIntentIds": lane.pending_intents.iter().map(|id| id.0.clone()).collect::<Vec<_>>(),
+                "headIdentityJson": head_identity_json,
+                "blockedSnapshotJson": blocked_snapshot_json,
+                "blockedReason": lane.blocked.as_ref().map(|blocked| &blocked.reason),
+                "resolutionRevision": lane.resolution_revision.to_string(),
+            }));
+        }
+        crate::sync_read::output(&serde_json::json!({
+            "revision": revision.to_string(),
+            "cursor": slot.journal.cursor(revision),
+            "lanes": lanes,
+        }))
+    }
+
     /// Prepare an opaque request without mutating the durable lane. The app
     /// persists this exact request and caller ID before submitting it.
     pub async fn prepare_lane_resolution_json(
@@ -2169,6 +2204,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn intent_lane_inventory_retains_unprojected_delete_and_invalidates_empty_read_batch() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let database = surrealkv_database(directory.path()).await;
+        let client = open_sync_client(database.clone(), options("all"))
+            .await
+            .unwrap();
+        let record = "note:new";
+        let first = LocalIntent {
+            id: surrealdb_sync_client::LocalIntentId("create".into()),
+            record_id: RecordId(record.into()),
+            value: LocalIntentValue::Present {
+                value: json!({"title":"draft"}),
+                reference: None,
+            },
+            observation: None,
+        };
+        let observation = client.observe_record_json(record.into()).await.unwrap();
+        client
+            .clone()
+            .enqueue_intent_json(serde_json::to_string(&first).unwrap(), observation)
+            .await
+            .unwrap();
+        let before: JsonValue =
+            serde_json::from_str(&client.read_intent_lanes_json().await.unwrap()).unwrap();
+        assert_eq!(before["lanes"][0]["recordId"], record);
+        assert_eq!(before["lanes"][0]["pendingIntentIds"], json!(["create"]));
+        assert_eq!(before["revision"], before["cursor"]["revision"]);
+
+        // An equal-value suffix changes the durable lane but not the read row.
+        // The existing read journal still emits a revision batch with no row changes.
+        let same_value = LocalIntent {
+            id: surrealdb_sync_client::LocalIntentId("same-value".into()),
+            ..first
+        };
+        let observation = client.observe_record_json(record.into()).await.unwrap();
+        client
+            .clone()
+            .enqueue_intent_json(serde_json::to_string(&same_value).unwrap(), observation)
+            .await
+            .unwrap();
+        let changes: JsonValue = serde_json::from_str(
+            &client
+                .read_changes_json(before["cursor"].to_string(), 32)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(changes["kind"], "batches");
+        assert_eq!(changes["batches"][0]["changes"], json!([]));
+        let after_same_value: JsonValue =
+            serde_json::from_str(&client.read_intent_lanes_json().await.unwrap()).unwrap();
+        assert_eq!(
+            after_same_value["lanes"][0]["pendingIntentIds"],
+            json!(["create", "same-value"])
+        );
+
+        let deletion = LocalIntent {
+            id: surrealdb_sync_client::LocalIntentId("delete".into()),
+            record_id: RecordId(record.into()),
+            value: LocalIntentValue::<JsonValue>::Deleted,
+            observation: None,
+        };
+        let observation = client.observe_record_json(record.into()).await.unwrap();
+        client
+            .clone()
+            .enqueue_intent_json(serde_json::to_string(&deletion).unwrap(), observation)
+            .await
+            .unwrap();
+        let projection: JsonValue =
+            serde_json::from_str(&client.read_snapshot_json().await.unwrap()).unwrap();
+        assert!(projection["snapshot"]["rows"].get(record).is_none());
+        let durable: JsonValue =
+            serde_json::from_str(&client.read_intent_lanes_json().await.unwrap()).unwrap();
+        assert_eq!(
+            durable["lanes"][0]["pendingIntentIds"],
+            json!(["create", "same-value", "delete"])
+        );
+
+        client.close().await;
+        drop(client);
+        database.close().await.unwrap();
+        drop(database);
+        let database = surrealkv_database(directory.path()).await;
+        let reopened = open_sync_client(database, options("all")).await.unwrap();
+        let recovered: JsonValue =
+            serde_json::from_str(&reopened.read_intent_lanes_json().await.unwrap()).unwrap();
+        assert_eq!(recovered["lanes"], durable["lanes"]);
+        assert_ne!(
+            recovered["cursor"]["processEpoch"],
+            durable["cursor"]["processEpoch"]
+        );
+        let reset: JsonValue = serde_json::from_str(
+            &reopened
+                .read_changes_json(durable["cursor"].to_string(), 32)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(reset["kind"], "reset_required");
+        assert_eq!(
+            crate::sync_read::ReadJournal::default().cursor(9_007_199_254_740_993)["revision"],
+            "9007199254740993"
+        );
+    }
+
+    #[tokio::test]
     async fn intent_read_projects_unmaterialized_suffix_delete_conflict_and_reopen() {
         let directory = temp_dir::TempDir::new().unwrap();
         let database = surrealkv_database(directory.path()).await;
@@ -2340,6 +2481,11 @@ mod tests {
             json!(["first", "second", "delete"])
         );
         assert_eq!(persisted["lane"]["blockedReason"], "conflict");
+        let blocked_lanes: JsonValue =
+            serde_json::from_str(&reopened.read_intent_lanes_json().await.unwrap()).unwrap();
+        assert_eq!(blocked_lanes["lanes"][0]["recordId"], record);
+        assert_eq!(blocked_lanes["lanes"][0]["blockedReason"], "conflict");
+        assert!(blocked_lanes["lanes"][0]["blockedSnapshotJson"].is_string());
         let snapshot_json = persisted["lane"]["blockedSnapshotJson"]
             .as_str()
             .unwrap()
@@ -2620,12 +2766,27 @@ mod tests {
         )
         .unwrap();
         assert_eq!(accepted["state"], "awaiting_pull");
+        let accepted_lanes: JsonValue =
+            serde_json::from_str(&client.read_intent_lanes_json().await.unwrap()).unwrap();
+        assert_eq!(accepted_lanes["lanes"][0]["recordId"], record);
+        assert!(accepted_lanes["lanes"][0]["headIdentityJson"].is_string());
         assert!(
             accepted["receiptJson"]
                 .as_str()
                 .unwrap()
                 .contains("9007199254740999")
         );
+        client.close().await;
+        drop(client);
+        database.close().await.unwrap();
+        drop(database);
+        let reopened_database = surrealkv_database(directory.path()).await;
+        let reopened = open_sync_client(reopened_database, options("all"))
+            .await
+            .unwrap();
+        let recovered_lanes: JsonValue =
+            serde_json::from_str(&reopened.read_intent_lanes_json().await.unwrap()).unwrap();
+        assert_eq!(recovered_lanes["lanes"], accepted_lanes["lanes"]);
     }
 
     #[tokio::test]
@@ -3298,6 +3459,10 @@ mod tests {
         ));
         assert!(matches!(
             client.read_snapshot_json().await,
+            Err(NativeSyncError::PendingQuarantineRequired)
+        ));
+        assert!(matches!(
+            client.read_intent_lanes_json().await,
             Err(NativeSyncError::PendingQuarantineRequired)
         ));
         assert!(matches!(
@@ -5489,6 +5654,10 @@ mod tests {
         assert_eq!(existing_schema(&reopened).await, schema);
         assert!(matches!(
             attached.read_snapshot_json().await,
+            Err(NativeSyncError::PendingQuarantineRequired)
+        ));
+        assert!(matches!(
+            attached.read_intent_lanes_json().await,
             Err(NativeSyncError::PendingQuarantineRequired)
         ));
         attached.close().await;

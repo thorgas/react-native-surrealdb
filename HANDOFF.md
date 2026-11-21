@@ -1031,3 +1031,62 @@ signed version tag, the Build release candidate workflow, and an approved
 `npm-production` deployment through the Publish tested package workflow for
 public npm publication. This task authorizes a local reviewable tarball only:
 no tag, GitHub release, npm publish, or version reuse.
+
+## Lane inventory source correction and superseded native probes
+
+The app adapter found a recovery gap: `readSnapshot().snapshot.rows` omits a
+new record whose unmaterialized create is followed by a local delete, although
+its durable lane remains. The SDK is adding `readIntentLanes()` backed by one
+native runtime lock over every engine-owned lane, plus the same read-journal
+cursor used by `readChanges`. This is a new production Rust/FFI input, so the
+earlier Android arm64 and iOS simulator probes, although hash-preserved above,
+are superseded and must not be packaged with new bindings. The paired Android
+command began before this gap was reported: arm64 completed with its previous
+hash, then the command automatically entered x86_64. It was interrupted with
+exit 130 during x86_64 compilation, before generation/staging; no compiler
+remained and no iOS/full-package command ran. Free space after stop was
+15,342,864 KiB.
+
+The selected facade is `readIntentLanes(options?): Promise<{
+revision: string; cursor: SyncReadCursor; lanes: readonly Lane[] }>` with each
+lane carrying `recordId`, `pendingIntentIds`, `headIdentityJson`,
+`blockedSnapshotJson`, `blockedReason`, and decimal `resolutionRevision`.
+The existing SDK `createReadStore().watchCollection` emits even empty
+row-change batches for lane-only revisions and emits a fresh snapshot after
+`reset_required`; it owns polling and cancellation. Consumers re-enumerate on
+snapshot/batch events, with no app durable ID index. Source tests cover the
+absent projected row, persistence reopen, empty-batch invalidation, reset
+cursor, blocked and awaiting-pull lanes, scope barriers, and large counters.
+The new native input and generated ABI hashes remain pending a coherent source
+commit, an explicit renewed native build slot, and a complete four-target rebuild.
+The package source `tsc --noEmit` passed and full Vitest passed 160/160 across
+18 files after the inventory facade and empty-batch watcher tests. `cargo
++1.96.1 fmt --all` and `git diff --check` passed. The repository's existing
+`sync.ts` and `sync-http.test.ts` do not pass whole-file Prettier at baseline;
+formatting them wholesale would rewrite hundreds of unrelated lines, so the
+source diff remains scoped.
+
+The SDK then used a bounded host-only Rust slot with one Cargo job, the shared
+authority target, `--locked --offline`, and the 5 GiB stop floor. The new
+`intent_lane_inventory_retains_unprojected_delete_and_invalidates_empty_read_batch`
+test passed. The affected blocked/reopen, accepted-awaiting-pull/reopen,
+scope-barrier, and read-cursor tests passed individually. Full cached
+`cargo +1.96.1 test --locked --offline -p surrealdb-rn-core --lib --quiet`
+passed with 177 tests, 3 intentional ignored, and 0 failed. `cargo +1.96.1
+fmt --all -- --check` passed. No compiler remained, and the host slot was
+released at 13,369,016 KiB free. Native generation and local packing have
+not resumed.
+
+The vendored-license audit inspected the exact locked registry contents:
+`surrealdb`, `surrealdb-core`, and `surrealdb-types` 3.2.4 all declare
+`license-file = "LICENSE"` with no `license` SPDX expression and share the
+same 4,633-byte Business Source License 1.1 file (SHA256
+`98a94ac615f88370865016487b436fa404560910bd329794ed7502277a94b805`).
+Locked `surrealdb-protocol` 0.10.2 declares both `license = "BUSL-1.1"` and
+`license-file = "LICENSE"`; its distinct 4,564-byte file has SHA256
+`ace8dd034851d648d4104b7d20ab7bbf3d9666aa4e665e9fc5b865f4433aca13`.
+Those exact files are now copied into the package allowlist and verified by
+hash in `verify-package.mjs`, alongside wrapper MIT, engine Apache, and UniFFI
+MPL notice. This closes a previously missing notice-text gap without making a
+legal conclusion. Local package verification still intentionally fails on the
+incomplete native/JS matrix.

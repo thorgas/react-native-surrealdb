@@ -52,12 +52,15 @@ when npm accepts the GitHub OIDC attestation.
 ### Private wrapper artifacts
 
 `0.1.0-alpha.7.tdt.20261121.1` is a new local private candidate. It does not
-replace the immutable `haus` alpha7 artifact below. Its native input is SDK
-commit `eba56329e744e65c1da674dcd1d316955d389aba`, pinned to engine
-`5f104c16e0d367b686fba6905550b38ef57653f4`; handwritten runtime facade
-source is `be42c754e4a8ac0eb17152b30285b296df26936d`. The test-only
-SurrealKV rollback commit `77a9e7e` changes neither production native input
-nor generated ABI. Complete all four matching platform slices, JS declarations,
+replace the immutable `haus` alpha7 artifact below. The earlier two-target
+probe used SDK native input `eba56329e744e65c1da674dcd1d316955d389aba`
+and handwritten runtime facade `be42c754e4a8ac0eb17152b30285b296df26936d`,
+pinned to engine `5f104c16e0d367b686fba6905550b38ef57653f4`. A new
+durable lane inventory API supersedes that probe; record fresh native input,
+runtime source, generated output, and all four binary hashes before packing.
+The test-only SurrealKV rollback commit `77a9e7e` changed neither prior
+production native input nor generated ABI. Complete all four matching platform
+slices, JS declarations,
 license and file inventory, size comparison, and consumer checks before making
 the local candidate tarball. This candidate has no public tag or npm release.
 

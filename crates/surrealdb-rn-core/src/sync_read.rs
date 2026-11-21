@@ -75,7 +75,7 @@ impl ReadJournal {
     pub(crate) fn exhaust_epoch_for_test(&mut self) {
         self.epoch.generation = u64::MAX;
     }
-    fn cursor(&self, revision: u64) -> Value {
+    pub(crate) fn cursor(&self, revision: u64) -> Value {
         json!({"processEpoch":self.epoch.value(),"revision":revision.to_string()})
     }
     pub(crate) fn view_epoch(&self) -> String {

@@ -45,6 +45,7 @@ function createSync(laneCapable = false) {
       laneResolutionReceiptJson: vi.fn(async () => JSON.stringify({ status: "unknown" })),
       acknowledgeLaneResolutionReceipt: vi.fn(async () => status),
       readIntentRecordJson: vi.fn(async (_recordId: string): Promise<string> => { throw new Error("Intent read fixture not configured"); }),
+      readIntentLanesJson: vi.fn(async (): Promise<string> => { throw new Error("Intent lane fixture not configured"); }),
       prepareLaneResolutionJson: vi.fn(async (_snapshot: string, _choice: string) => ({ resolutionId: "stable", requestJson: '{"replacement_identity":{"sequence":18446744073709551615}}' })),
       projectLaneConflictSnapshotJson: vi.fn(() => JSON.stringify({
         recordId: "recipe:one", coveredIntentPrefixJson: '["intent-1"]',
@@ -222,6 +223,36 @@ describe("ExperimentalSyncHttpAdapter", () => {
     expect(native.readIntentRecordJson).toHaveBeenCalledWith("recipe:one", undefined);
   });
 
+  it("enumerates durable lanes without projecting their record rows or losing counters", async () => {
+    const { native, sync } = createSync(true);
+    new ExperimentalSyncHttpAdapter({
+      sync, baseUrl: "https://sync.example.test", partitionId: "p", clientId: "c",
+      requestedScope: "all", subscriptionRevision: 7n, accessToken: () => "token",
+      codec: sourceCodec, pullSourceProof: true,
+    });
+    const encoded = JSON.stringify({
+      revision: "9007199254740993",
+      cursor: { processEpoch: "process:1", revision: "9007199254740993" },
+      lanes: [
+        { recordId: "note:created-then-deleted", pendingIntentIds: ["create", "delete"],
+          headIdentityJson: null, blockedSnapshotJson: null, blockedReason: null,
+          resolutionRevision: "9007199254740995" },
+        { recordId: "note:blocked", pendingIntentIds: ["edit"],
+          headIdentityJson: '{"clientCommitId":"opaque"}', blockedSnapshotJson: '{"version":18446744073709551615}',
+          blockedReason: "conflict", resolutionRevision: "9007199254740996" },
+      ],
+    });
+    native.readIntentLanesJson?.mockResolvedValue(encoded);
+    const result = await sync.readIntentLanes();
+    expect(result.revision).toBe("9007199254740993");
+    expect(result.cursor).toEqual({ processEpoch: "process:1", revision: "9007199254740993" });
+    expect(result.lanes.map((lane) => lane.recordId)).toEqual(["note:created-then-deleted", "note:blocked"]);
+    expect(result.lanes[1]?.blockedSnapshotJson).toBe('{"version":18446744073709551615}');
+    expect(native.readIntentLanesJson).toHaveBeenCalledWith(undefined);
+    native.readIntentLanesJson?.mockResolvedValue(encoded.replace('"9007199254740993"', '9007199254740993'));
+    await expect(sync.readIntentLanes()).rejects.toThrow("Invalid native intent lane snapshot");
+  });
+
   it("prepares and replays opaque lane requests without parsing protocol counters", async () => {
     const { native, sync } = createSync(true);
     new ExperimentalSyncHttpAdapter({
@@ -322,6 +353,11 @@ describe("ExperimentalSyncHttpAdapter", () => {
     expect(() => new ExperimentalSyncHttpAdapter({ ...options, sync: wrong.sync }))
       .toThrow(/matching rebuilt native source-proof bindings/);
     expect(wrong.native.enqueue).not.toHaveBeenCalled();
+    const withoutEnumeration = createSync(true);
+    delete withoutEnumeration.native.readIntentLanesJson;
+    expect(() => new ExperimentalSyncHttpAdapter({ ...options, sync: withoutEnumeration.sync }))
+      .toThrow(/matching rebuilt native source-proof bindings/);
+    expect(withoutEnumeration.native.enqueueIntentJson).not.toHaveBeenCalled();
   });
   it("bootstraps legacy read coverage without deleting or dispatching pending intent", async () => {
     const fetch = vi

@@ -152,6 +152,39 @@ function bootstrap(initial = snapshot()): SyncReadBootstrap {
   };
 }
 describe("one engine read pump", () => {
+  it("emits lane-only empty batches and reset snapshots across subscription races", async () => {
+    const initial = bootstrap();
+    const laneOnly: SyncReadBatch = { ...batch(initial.snapshot), changes: [] };
+    const fresh = applySyncReadBatch(initial.snapshot, laneOnly);
+    const pending = deferred<SyncReadChanges>();
+    const readChanges = vi.fn()
+      .mockResolvedValueOnce({
+        kind: "batches", batches: [laneOnly],
+        cursor: { ...initial.cursor, revision: laneOnly.revision },
+      })
+      .mockResolvedValueOnce({
+        kind: "reset_required", snapshot: fresh,
+        cursor: { processEpoch: "reopened", revision: laneOnly.revision },
+      })
+      .mockImplementation(() => pending.promise);
+    const store = new ExperimentalSyncReadStore({
+      readSnapshot: async () => initial,
+      readChanges,
+    });
+    const events: SyncReadEvent[] = [];
+    const stop = store.watchCollection((event) => events.push(event));
+    await vi.waitFor(() =>
+      expect(events.map((event) => event.kind)).toEqual(["snapshot", "batch", "snapshot"]),
+    );
+    expect(events[1]?.kind === "batch" && events[1].batch.changes).toEqual([]);
+    expect(events[2]?.kind === "snapshot" && events[2].snapshot.metadata.revision)
+      .toBe("9007199254740994");
+    expect(readChanges).toHaveBeenCalledWith(initial.cursor, 32, expect.any(Object));
+    stop();
+    store.close();
+    pending.resolve({ kind: "batches", batches: [], cursor: { processEpoch: "reopened", revision: laneOnly.revision } });
+  });
+
   it("delivers a commit racing initial subscription as one complete batch", async () => {
     const initial = bootstrap(),
       change = batch(initial.snapshot);

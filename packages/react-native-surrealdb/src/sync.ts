@@ -75,6 +75,7 @@ interface NativeLanePort {
   laneResolutionReceiptJson(resolutionId: string, options?: CallOptions): Promise<string>;
   acknowledgeLaneResolutionReceipt(resolutionId: string, options?: CallOptions): Promise<NativeSyncStatus>;
   readIntentRecordJson(recordId: string, options?: CallOptions): Promise<string>;
+  readIntentLanesJson(options?: CallOptions): Promise<string>;
   prepareLaneResolutionJson(snapshotJson: string, choiceJson: string, options?: CallOptions): Promise<ExperimentalPreparedLaneResolution>;
   projectLaneConflictSnapshotJson(snapshotJson: string, options?: CallOptions): string;
   inspectLaneResolutionJson(snapshotJson: string, resolutionId?: string, requestJson?: string, options?: CallOptions): Promise<string>;
@@ -114,6 +115,18 @@ export type ExperimentalIntentRecord = Readonly<{
     headIdentityJson: string | null;
     resolutionRevision: string;
   }>;
+}>;
+export type ExperimentalIntentLaneSnapshot = Readonly<{
+  revision: string;
+  cursor: SyncReadCursor;
+  lanes: readonly Readonly<{
+    recordId: string;
+    pendingIntentIds: readonly string[];
+    headIdentityJson: string | null;
+    blockedSnapshotJson: string | null;
+    blockedReason: string | null;
+    resolutionRevision: string;
+  }>[];
 }>;
 function laneAbiMissing(): never {
   throw new Error("Lane intents require matching rebuilt native source-proof bindings");
@@ -183,6 +196,7 @@ export class ExperimentalSyncClient {
       typeof native.laneResolutionReceiptJson !== "function" ||
       typeof native.acknowledgeLaneResolutionReceipt !== "function" ||
       typeof native.readIntentRecordJson !== "function" ||
+      typeof native.readIntentLanesJson !== "function" ||
       typeof native.prepareLaneResolutionJson !== "function" ||
       typeof native.projectLaneConflictSnapshotJson !== "function" ||
       typeof native.inspectLaneResolutionJson !== "function" ||
@@ -501,6 +515,39 @@ export class ExperimentalSyncClient {
         resolutionRevision: lane.resolutionRevision,
       },
     };
+  }
+
+  /** Every durable lane at one native revision, including rows hidden by a local delete. */
+  async readIntentLanes(options?: CallOptions): Promise<ExperimentalIntentLaneSnapshot> {
+    if (!this.#laneSourceProof) throw new Error("Lane reads require matching native source-proof bindings");
+    const method = this.#native.readIntentLanesJson ?? laneAbiMissing();
+    const parsed: unknown = JSON.parse(await method.call(this.#native, options));
+    const u64 = (value: unknown): value is string =>
+      typeof value === "string" && /^(0|[1-9][0-9]{0,19})$/.test(value) &&
+      BigInt(value) <= 18446744073709551615n;
+    if (typeof parsed !== "object" || parsed === null ||
+        !("revision" in parsed) || !u64(parsed.revision) ||
+        !("cursor" in parsed) || typeof parsed.cursor !== "object" || parsed.cursor === null ||
+        !("processEpoch" in parsed.cursor) || typeof parsed.cursor.processEpoch !== "string" ||
+        parsed.cursor.processEpoch.length === 0 || parsed.cursor.processEpoch.length > 4096 ||
+        !("revision" in parsed.cursor) || parsed.cursor.revision !== parsed.revision ||
+        !("lanes" in parsed) || !Array.isArray(parsed.lanes) || parsed.lanes.length > 100_000)
+      throw new Error("Invalid native intent lane snapshot");
+    const ids = new Set<string>();
+    for (const lane of parsed.lanes) {
+      if (typeof lane !== "object" || lane === null ||
+          !("recordId" in lane) || typeof lane.recordId !== "string" || lane.recordId.length === 0 ||
+          ids.has(lane.recordId) ||
+          !("pendingIntentIds" in lane) || !Array.isArray(lane.pendingIntentIds) ||
+          !lane.pendingIntentIds.every((id: unknown) => typeof id === "string" && id.length > 0) ||
+          !("headIdentityJson" in lane) || !(lane.headIdentityJson === null || typeof lane.headIdentityJson === "string") ||
+          !("blockedSnapshotJson" in lane) || !(lane.blockedSnapshotJson === null || typeof lane.blockedSnapshotJson === "string") ||
+          !("blockedReason" in lane) || !(lane.blockedReason === null || typeof lane.blockedReason === "string") ||
+          !("resolutionRevision" in lane) || !u64(lane.resolutionRevision))
+        throw new Error("Invalid native intent lane snapshot");
+      ids.add(lane.recordId);
+    }
+    return parsed as ExperimentalIntentLaneSnapshot;
   }
 
   recordPushResponse(

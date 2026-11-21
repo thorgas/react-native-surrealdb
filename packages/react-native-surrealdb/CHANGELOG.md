@@ -3,9 +3,10 @@
 - Add durable source-proof intent lanes, optimistic pending-record reads,
   conflict resolution preparation and retained receipts through the native
   engine pinned to `5f104c16e0d367b686fba6905550b38ef57653f4`.
-- Regenerate UniFFI bindings from SDK native input `eba56329`; the handwritten
-  runtime facade is `be42c754`. Full four-target native artifacts and a local
-  reviewable tarball remain required before this candidate can be consumed.
+- The earlier two-target UniFFI probe used SDK native input `eba56329` and
+  handwritten facade `be42c754`. The durable lane inventory API supersedes
+  that probe; matching full four-target native artifacts, generated bindings,
+  and a local reviewable tarball are required before consumption.
 - Keep the existing public protocol and package publication unchanged. This
   private candidate is not a tag or npm release.
 
