@@ -1308,3 +1308,21 @@ nodes only, not messages, operations, fingerprints, persistence, or activation.
 Because the candidate profile rejects non-finite floats accepted by the native
 type, it is not proven lossless for every native Number and does not close the
 full persisted Note sync gate.
+
+### Independent Upsert fingerprint literals (2026-11-21)
+
+Added `packages/react-native-surrealdb/test/fixtures/native-values-upsert-fingerprint-vectors.json`
+and `packages/react-native-surrealdb/test/native-values-upsert-fingerprint.test.ts`.
+The literal preimages cover absent/exact base, null/typed reference, Decimal
+scale, signed zero, and object-key input order. The focused test hashes literal
+bytes with Node standard crypto; it is not an SDK fingerprint implementation
+or cross-language runtime proof. The Rust codec owner should consume these same
+preimage/digest fixtures and independently verify them. SDK Node 22 test and
+typecheck results are recorded in the task handoff.
+
+Scope representation check: SDK `ExperimentalSyncOpenOptions.requestedScope`
+is a string; native open options store it as `requested_scope: String`, and the
+v1 protocol wraps it as `ScopeIdentity(pub String)` and emits it as opaque CBOR
+text. Native-values pull should carry that exact text as its own request field;
+the profile-binding token's authenticated `scopeIdentity` claim remains a
+separate binding check, not a replacement or inferred transformation.

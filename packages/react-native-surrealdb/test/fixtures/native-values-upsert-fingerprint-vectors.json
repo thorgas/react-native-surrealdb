@@ -1,0 +1,87 @@
+{
+  "status": "draft-contract-hand-derived-literal-not-runtime-verified",
+  "sourceProfileDraft": "surrealdb-sync/native-values/1",
+  "sourceProfileDraftCommit": "df88ce632bf8784b8bed439a19da224ef9936583",
+  "sourceSchema": "docs/NATIVE_VALUES_PROFILE_PRECISION_REVIEW.md:278-296",
+  "derivation": {
+    "preimage": "deterministic CBOR six-item array [domain, profile, partitionId, clientId, clientCommitId, orderedOperations]",
+    "upsert": "[0, [tableText, [keyKind, key]], [0] | [1, versionU64], NativeValue, referenceIdentityOrNull]",
+    "nativeValue": "semantic tag 60000 wrapping [kindId, payload]; object entries encoded in ascending UTF-8 key order",
+    "digest": "SHA-256 of the literal preimage bytes, formatted sha256: plus lowercase hex; checked by Node standard crypto",
+    "independence": "Preimage bytes are checked-in literals derived field-by-field from the reviewed CBOR shapes; tests hash those literals with Node standard crypto and do not call the draft codec or engine encoder."
+  },
+  "vectors": [
+    {
+      "id": "upsert-absent-null-ref-scale2-negative-zero-object-reverse-input",
+      "operation": "upsert note integer key 7; absent base; null reference",
+      "baseVersion": [0],
+      "reference": null,
+      "objectInputOrder": ["z", "a"],
+      "canonicalObjectOrder": ["a", "z"],
+      "decimal": { "coefficient": "100", "scale": 2 },
+      "floatBits": "8000000000000000",
+      "preimageHex": "8678387375727265616c64622d73796e632f6e61746976652d76616c7565732f312f636f6d6d69742d66696e6765727072696e742f736861323536781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f3169706172746974696f6e68636c69656e742d6168636f6d6d69742d3181850082646e6f74658200078100d9ea60820882826161d9ea60820a83f44c0000000000000000000000640282617ad9ea608204488000000000000000f6",
+      "fingerprint": "sha256:b45f0b9df1590610e8adfb6f608002294a209d04ef393f5bb3163c0781660077"
+    },
+    {
+      "id": "upsert-absent-null-ref-scale2-negative-zero-object-sorted-input",
+      "operation": "same upsert as reverse-input vector; object supplied in canonical order",
+      "baseVersion": [0],
+      "reference": null,
+      "objectInputOrder": ["a", "z"],
+      "canonicalObjectOrder": ["a", "z"],
+      "decimal": { "coefficient": "100", "scale": 2 },
+      "floatBits": "8000000000000000",
+      "preimageHex": "8678387375727265616c64622d73796e632f6e61746976652d76616c7565732f312f636f6d6d69742d66696e6765727072696e742f736861323536781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f3169706172746974696f6e68636c69656e742d6168636f6d6d69742d3181850082646e6f74658200078100d9ea60820882826161d9ea60820a83f44c0000000000000000000000640282617ad9ea608204488000000000000000f6",
+      "fingerprint": "sha256:b45f0b9df1590610e8adfb6f608002294a209d04ef393f5bb3163c0781660077"
+    },
+    {
+      "id": "upsert-exact7-null-ref-scale2-negative-zero",
+      "operation": "upsert note integer key 7; exact base 7; null reference",
+      "baseVersion": [1, 7],
+      "reference": null,
+      "objectInputOrder": ["z", "a"],
+      "canonicalObjectOrder": ["a", "z"],
+      "decimal": { "coefficient": "100", "scale": 2 },
+      "floatBits": "8000000000000000",
+      "preimageHex": "8678387375727265616c64622d73796e632f6e61746976652d76616c7565732f312f636f6d6d69742d66696e6765727072696e742f736861323536781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f3169706172746974696f6e68636c69656e742d6168636f6d6d69742d3181850082646e6f7465820007820107d9ea60820882826161d9ea60820a83f44c0000000000000000000000640282617ad9ea608204488000000000000000f6",
+      "fingerprint": "sha256:3d2c587fc39299725dca0d8e478953ce53621dd26c52c832faf74b35bec734c4"
+    },
+    {
+      "id": "upsert-absent-typed-string-reference-scale2-negative-zero",
+      "operation": "upsert note integer key 7; absent base; reference pillar:string key north",
+      "baseVersion": [0],
+      "reference": ["pillar", [1, "north"]],
+      "objectInputOrder": ["z", "a"],
+      "canonicalObjectOrder": ["a", "z"],
+      "decimal": { "coefficient": "100", "scale": 2 },
+      "floatBits": "8000000000000000",
+      "preimageHex": "8678387375727265616c64622d73796e632f6e61746976652d76616c7565732f312f636f6d6d69742d66696e6765727072696e742f736861323536781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f3169706172746974696f6e68636c69656e742d6168636f6d6d69742d3181850082646e6f74658200078100d9ea60820882826161d9ea60820a83f44c0000000000000000000000640282617ad9ea608204488000000000000000826670696c6c61728201656e6f727468",
+      "fingerprint": "sha256:a5cd51ddde640a4bfdf6a8f8b7787e9402efca325a43e20f2c412879073a27d7"
+    },
+    {
+      "id": "upsert-absent-null-ref-scale1-negative-zero",
+      "operation": "same absent-base/null-reference operation with decimal coefficient 10, scale 1",
+      "baseVersion": [0],
+      "reference": null,
+      "objectInputOrder": ["z", "a"],
+      "canonicalObjectOrder": ["a", "z"],
+      "decimal": { "coefficient": "10", "scale": 1 },
+      "floatBits": "8000000000000000",
+      "preimageHex": "8678387375727265616c64622d73796e632f6e61746976652d76616c7565732f312f636f6d6d69742d66696e6765727072696e742f736861323536781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f3169706172746974696f6e68636c69656e742d6168636f6d6d69742d3181850082646e6f74658200078100d9ea60820882826161d9ea60820a83f44c00000000000000000000000a0182617ad9ea608204488000000000000000f6",
+      "fingerprint": "sha256:e105087e63a204922432f4fc9b13e56feadbaff9b78d9a0c62141e141f685e1b"
+    },
+    {
+      "id": "upsert-absent-null-ref-scale2-positive-zero",
+      "operation": "same absent-base/null-reference operation with float positive zero bits",
+      "baseVersion": [0],
+      "reference": null,
+      "objectInputOrder": ["z", "a"],
+      "canonicalObjectOrder": ["a", "z"],
+      "decimal": { "coefficient": "100", "scale": 2 },
+      "floatBits": "0000000000000000",
+      "preimageHex": "8678387375727265616c64622d73796e632f6e61746976652d76616c7565732f312f636f6d6d69742d66696e6765727072696e742f736861323536781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f3169706172746974696f6e68636c69656e742d6168636f6d6d69742d3181850082646e6f74658200078100d9ea60820882826161d9ea60820a83f44c0000000000000000000000640282617ad9ea608204480000000000000000f6",
+      "fingerprint": "sha256:f06cb2fbfdf67f92fc8b2520499a2de44da9f69dd1bbd330f01be6f5b5bf9b97"
+    }
+  ]
+}

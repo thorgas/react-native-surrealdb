@@ -84,6 +84,20 @@ Keep the existing v1 fixture
 `sha256:0167e7a657c1697643410c575a0ad1ffa6015f94e4ba70ed17f08320339bd769`
 as a non-regression vector; do not replace it with a candidate digest.
 
+### Complete Upsert preimage literals
+
+`packages/react-native-surrealdb/test/fixtures/native-values-upsert-fingerprint-vectors.json`
+adds literal six-field Upsert preimages and digests using the operation/value
+shapes proposed below. They cover absent and exact base versions, null and
+structurally typed string-key references, Decimal coefficient/scale, Float
+negative/positive-zero bits, and a sorted object whose two input key orders
+produce identical bytes. The preimage strings are checked into the fixture;
+the focused test hashes those exact bytes with Node's standard SHA-256 API. It
+does not call the SDK draft value codec for the complete operation and does not
+assert that an SDK fingerprint API exists. The vectors remain draft contracts,
+not Rust/SDK encoder runtime proof; the engine codec owner should consume the
+same fixture bytes and digest strings for independent cross-language checks.
+
 ## Chosen Set representative and ordering rules
 
 The pinned SurrealDB `surrealdb-types` 3.2.4 source defines `Set` as a
