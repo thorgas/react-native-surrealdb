@@ -71,9 +71,9 @@ For the candidate shapes above, these exact deterministic-CBOR preimages are
 useful review vectors (partition `partition`, client `client-a`, commit
 `commit-1`; one delete of `note` at base version zero):
 
-| Key | Preimage hex | Candidate digest |
-| --- | --- | --- |
-| integer `7` | `8678387375727265616c64622d73796e632f6e61746976652d76616c7565732f312f636f6d6d69742d66696e6765727072696e742f736861323536781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f3169706172746974696f6e68636c69656e742d6168636f6d6d69742d3181830182646e6f746582000700` | `sha256:af9faebfbf5afd784b0691280e4f9c8b16ca3f12fc6320ae9c5c41c78202806e` |
+| Key          | Preimage hex                                                                                                                                                                                                                                                                 | Candidate digest                                                          |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| integer `7`  | `8678387375727265616c64622d73796e632f6e61746976652d76616c7565732f312f636f6d6d69742d66696e6765727072696e742f736861323536781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f3169706172746974696f6e68636c69656e742d6168636f6d6d69742d3181830182646e6f746582000700`   | `sha256:af9faebfbf5afd784b0691280e4f9c8b16ca3f12fc6320ae9c5c41c78202806e` |
 | string `"7"` | `8678387375727265616c64622d73796e632f6e61746976652d76616c7565732f312f636f6d6d69742d66696e6765727072696e742f736861323536781e7375727265616c64622d73796e632f6e61746976652d76616c7565732f3169706172746974696f6e68636c69656e742d6168636f6d6d69742d3181830182646e6f74658201613700` | `sha256:29307c46cb38fa49880331cf3f3561a8748c61786016831a0205e9f8b3710b4f` |
 
 These are **hand-derived candidate vectors**, not runtime evidence. They freeze
@@ -126,14 +126,14 @@ normalization, or another ordering-dependent choice.
 Constructor vectors under the selected rule (the expected member is preserved
 with its original representation):
 
-| Input order | Expected native Set member |
-| --- | --- |
-| `Int(1), Float(1.0)` | `Int(1)` |
-| `Float(1.0), Int(1)` | `Float(1.0)` |
-| `Decimal(1.00), Int(1)` | the original `Decimal(1.00)` |
-| `Int(1), Decimal(1.00)` | `Int(1)` |
-| `Float(-0.0), Float(+0.0)` | the original `Float(-0.0)` |
-| `Float(+0.0), Float(-0.0)` | the original `Float(+0.0)` |
+| Input order                | Expected native Set member   |
+| -------------------------- | ---------------------------- |
+| `Int(1), Float(1.0)`       | `Int(1)`                     |
+| `Float(1.0), Int(1)`       | `Float(1.0)`                 |
+| `Decimal(1.00), Int(1)`    | the original `Decimal(1.00)` |
+| `Int(1), Decimal(1.00)`    | `Int(1)`                     |
+| `Float(-0.0), Float(+0.0)` | the original `Float(-0.0)`   |
+| `Float(+0.0), Float(-0.0)` | the original `Float(+0.0)`   |
 
 Adversarial conformance vectors must assert all of the following:
 
@@ -173,15 +173,15 @@ an equivalent replay.
 
 ## Unresolved decisions and evidence boundary
 
-- Confirm the proposed fingerprint domain string and 6-item envelope; then
-  assign the complete native operation/value tags and capture non-empty
-  Datetime, Decimal, UUID, Set, typed-ID and full-note vectors in the actual
-  Rust and SDK implementations.
-- Confirm that typed RecordKey discriminants `[0, 1, 2]` and their payload
-  shapes are acceptable, or assign the wire-schema's fixed semantic tags.
 - Add cross-language goldens for input insertion-order permutations, bytewise
   Set order, duplicate native equality, scalar Decimal scale, signed zero,
   and exact preimage bytes. Hand-derived vectors above are not a substitute.
+- Review the proposed tag `60000` with the external CBOR tag registry before
+  public standardization. This document proposes an internal value only and
+  does not claim that it is registered or reserved.
+- Assign no HTTP route here. Before a route is selected, cross-check the
+  acceptance-receipt-v2 contract and test exact method/path/media/family
+  dispatch against both existing profiles.
 
 Source comparison is not runtime proof. The pinned dependency source establishes
 the BTreeSet and numeric comparison rules; this SDK branch does not contain a
@@ -189,6 +189,280 @@ native-values encoder, server route, persisted profile binding, or full Note
 sync. The representation-preserving Set and fingerprint rule is the selected
 design for this amendment; it has not been runtime tested. SDK `.3` artifact
 success does not close the persisted Note sync gate.
+
+## Concrete native-values wire-schema proposal
+
+This is an implementation-ready **candidate schema**, not an accepted engine
+wire contract. It fills the tag, payload, operation, and message-layout gaps in
+engine draft `df88ce632bf8784b8bed439a19da224ef9936583`. The one semantic tag
+number below is an internal proposal for this profile. It is not an IANA
+registration claim; before publishing an interoperable standard, check the
+current CBOR tag registry and make any required registration. Until then,
+implementations must dispatch on the exact profile envelope before interpreting
+tag `60000`.
+
+### Native value tags and payloads
+
+Every value node is exactly
+`NativeValue := tag(60000, [kind, payload])`. `kind` is the unsigned integer in
+the table. Every child in an Array, Object, or Set payload is another complete
+`NativeValue` node. This one family tag plus a closed kind enum keeps the value
+representation compact while making it impossible for a v1 ordinary map or
+primitive to masquerade as a native value.
+
+| Kind | Name     | Exact CBOR payload                 | Validation                                                                                                                                                                                                                                        |
+| ---: | -------- | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+|    0 | None     | `null`                             | Distinct from kind 1 despite the same payload.                                                                                                                                                                                                    |
+|    1 | Null     | `null`                             |                                                                                                                                                                                                                                                   |
+|    2 | Bool     | CBOR boolean                       |                                                                                                                                                                                                                                                   |
+|    3 | Int      | CBOR integer                       | Signed i64 only; shortest deterministic integer encoding.                                                                                                                                                                                         |
+|    4 | Float    | 8-byte byte string                 | Big-endian IEEE-754 binary64 bits; preserve every bit pattern, including infinities, NaN payloads, and signed zero; never CBOR float-shortening.                                                                                                  |
+|    5 | String   | CBOR text string                   | Preserve exact Unicode scalar sequence/UTF-8; no Unicode normalization.                                                                                                                                                                           |
+|    6 | Bytes    | CBOR byte string                   | At most 1 MiB.                                                                                                                                                                                                                                    |
+|    7 | Array    | `[NativeValue, ...]`               | At most 1,024 children.                                                                                                                                                                                                                           |
+|    8 | Object   | `[[keyText, NativeValue], ...]`    | At most 1,024 pairs; keys unique and strictly ascending by unsigned UTF-8 bytes. No CBOR map is used.                                                                                                                                             |
+|    9 | Datetime | `[signedUnixSeconds, nanoseconds]` | i64 seconds, u32 nanoseconds, `0..999,999,999`; construct with pinned `surrealdb_types::Datetime::from_timestamp(seconds, nanos)` and reject when it returns `None` (including timestamps outside Chrono's supported UTC range).                  |
+|   10 | Decimal  | `[negative, coefficient12, scale]` | Boolean sign, exactly 12-byte unsigned big-endian coefficient, scale `0..=28`; coefficient must be at most `79,228,162,514,264,337,593,543,950,335` (the 96-bit `rust_decimal::Decimal` maximum). Preserve trailing scale and signed/scaled zero. |
+|   11 | Uuid     | 16-byte byte string                | Raw UUID bytes only.                                                                                                                                                                                                                              |
+|   12 | Set      | `[NativeValue, ...]`               | At most 1,024 children; sort by complete encoded member bytes, unsigned lexicographic, strict ascending; after native construction reject any cardinality shrink. Preserve the actual retained member representation.                             |
+|   13 | RecordId | `NativeRecordIdentity`             | Structural identity below; never stringify/reparse.                                                                                                                                                                                               |
+
+The canonical record identity forms are:
+
+```text
+NativeRecordIdentity := [tableText, NativeRecordKey]
+NativeRecordKey      := [0, signedI64] | [1, keyText] | [2, uuidBytes16]
+```
+
+`tableText` and `keyText` are nonempty UTF-8 text and each is limited to 1,024
+bytes. Kind 0 is a numeric key, kind 1 a string key, and kind 2 a UUID key.
+Numeric-looking text stays a string key. Array, object, and range keys are
+unsupported and fail closed. All operation IDs, record references, pull
+records, snapshots, mappings, and conflict records use this same structural
+identity shape.
+
+### Complete message and operation envelopes
+
+The wire profile string is `surrealdb-sync/native-values/1`; message schema
+version is `0` (the initial envelope layout), with this exact four-item root:
+
+```text
+NativeMessage := ["surrealdb-sync/native-values/1", 0, messageKind, payload]
+messageKind   := 0 PushRequest | 1 PushResponse | 2 PullRequest | 3 PullResponse
+```
+
+The exact profile string is checked before kind or payload decoding. Each
+payload begins with that same profile string, which must equal the root value.
+Authenticated remote requests also carry a versioned opaque server-issued
+binding token:
+
+```text
+ProfileBindingToken := [0, tokenBytes]  ; tokenBytes length 1..=4096
+```
+
+The token is not a replacement for the bearer/session authentication. For every
+remote request the server reauthenticates and validates principal, partition,
+stable client, exact profile, scope identity, authorization revision,
+subscription revision, and partition epoch against the token before any
+remote outcome/cache/checkpoint/subscription/log/record lookup. A mismatch or
+unknown profile fails before state access. An already enrolled offline client
+may read/enqueue against the exact profile binding persisted locally; an
+unbound first-sync client must enroll online before creating outbox entries.
+
+Payload layouts:
+
+```text
+PushRequest  := [profileId, ProfileBindingToken, partitionId, clientId, ClientCommit]
+PushResponse := [profileId, partitionId, clientId, DurableOutcome]
+PullRequest  := [profileId, ProfileBindingToken, partitionId, clientId,
+                 checkpointOrNull, requestedScope, subscriptionRevision]
+PullResponse := [profileId, partitionId, clientId, NativePullResponse]
+
+ClientCommit := [clientCommitId, fingerprintText, [Operation, ...]]
+Operation    := [0, NativeRecordIdentity, BaseVersion, NativeValue,
+                 NativeRecordIdentityOrNull]               ; Upsert
+              | [1, NativeRecordIdentity, baseVersionU64]  ; Delete
+BaseVersion  := [0] | [1, versionU64]
+```
+
+The fingerprint uses the six-item native domain-separated preimage already
+specified above. The operation array is this exact ordered operation list.
+Fingerprint text is `sha256:` plus 64 lowercase hex digits; retries use the
+stored fingerprint and exact canonical commit bytes, never reconstruction
+from equality-equivalent values.
+
+Push response result discriminants retain their v1 numeric meanings but use
+structural record IDs and NativeValue in states:
+
+```text
+DurableOutcome := [0, CommitIdentity, sequenceU64, [IdMapping, ...]]
+                | [1, CommitIdentity, NativeRecordIdentity, RecordState]
+                | [2, CommitIdentity, rejectReasonU64]
+CommitIdentity := [clientCommitId, fingerprintText]
+IdMapping      := [localNativeRecordIdentity, canonicalNativeRecordIdentity]
+RecordState    := [0] | [1, NativeValue, versionU64, referenceOrNull]
+                | [2, versionU64]
+```
+
+For exact reason values, accepted/rejected/conflict kinds are `0/2/1` as in
+v1; reject reasons are InvalidOperation `0`, CommitIdentityMismatch `1`,
+Unauthorized `2`, UnsupportedSchemaVersion `3`. RecordState is Absent `0`,
+Present `1`, Tombstone `2`. `BaseVersion` uses Absent `[0]` and Exact `[1,u64]`.
+
+`NativePullResponse` retains the v1 batch/reset and frame shapes, replacing
+record IDs and values with the structural forms above. Its pull commit is
+exactly `[sequenceU64, sourceOrNull, [AppliedRecord, ...]]`; the source slot
+is required even when null. A non-null source is
+`[clientCommitId, fingerprintText]` and follows the source-v2 privacy rule
+(server-owned immutable identity disclosed only for a visible commit from the
+authenticated principal); clients never infer it. The exact pull structures
+are:
+
+```text
+NativePullResponse := [0, [PullFrame, ...]]
+                    | [1, resetReasonU64, Checkpoint, [SnapshotRecord, ...]]
+PullFrame          := [0, Checkpoint]
+                    | [1, opaqueCheckpointText,
+                       [sequenceU64, sourceOrNull, [AppliedRecord, ...]]]
+                    | [2, Checkpoint]
+AppliedRecord      := [NativeRecordIdentity, RecordState]
+SnapshotRecord     := [NativeRecordIdentity, RecordState]
+Checkpoint         := [tokenText, [epochU64, sequenceU64],
+                       [scopeIdentity, authorizationRevisionU64,
+                        subscriptionRevisionU64]]
+```
+
+Reset reasons retain v1 values: CheckpointExpired `0`, EpochChanged `1`,
+AuthorizationChanged `2`, SubscriptionChanged `3`, ScopeChanged `4`,
+ExternalWriteQuarantined `5`. Optional identities/checkpoints are CBOR null
+or their complete typed form; missing array slots are invalid.
+
+### JSON bridge AST
+
+Every value crossing the React Native JSON bridge is a three-item array:
+
+```text
+NativeJsonValue := ["surrealdb-sync/native-values/1", kind, payload]
+```
+
+All children recursively use `NativeJsonValue`. Objects are arrays of
+`[keyText, NativeJsonValue]` pairs sorted by unsigned UTF-8 bytes, never JSON
+objects. RecordId payload is `[tableText, [keyKind, keyPayload]]`. Int and
+Datetime seconds are canonical decimal strings; Float is exactly 16 lowercase
+hex digits; Bytes is even-length lowercase hex; Decimal coefficient is exactly
+24 lowercase hex digits with separate boolean sign and integer scale; UUID is
+32 lowercase hex digits; Datetime nanoseconds and Decimal scale are bounded
+JSON integers. This bridge form is separate from the CBOR tag representation.
+It cannot confuse ordinary maps containing `$surreal`, this family string, or
+nested tag-like keys because native values are recognized only as exact
+family-prefixed arrays with exact arity and a known kind. Apply the same depth,
+container, item, string/byte and numeric limits before FFI conversion, and a
+4 MiB serialized bridge limit; reject extra elements, wrong types, unknown
+kinds, malformed hex, or ordinary map nodes in a native-value slot.
+
+### Canonical encoding, errors, and compatibility
+
+Use RFC 8949 deterministic CBOR: definite lengths only, shortest integer and
+length forms, exactly one top-level item, no trailing bytes, no duplicate
+Object keys, and byte-for-byte decode/re-encode equality. CBOR maps are
+forbidden in profile values and message payloads; the Object pair-array rule
+above is normative. Unknown profile/family/schema/kind/tag, wrong arity,
+noncanonical ordering or representation, unsupported record key, invalid
+datetime/decimal/UUID/float, a Set whose native cardinality changes, resource
+limit excess, and trailing data are typed fail-closed errors before durable
+mutation. No fallback to v1 values or source-less v1 pull bytes is allowed.
+
+The error names below are **local decoder/encoder error categories**, not a
+CBOR Error message kind, HTTP status assignment, or durable rejection enum.
+They are stable diagnostic categories for implementations; transport mapping
+is intentionally unassigned until a route is reviewed. A client must fail
+before queue/outbox mutation when local value validation or encoding fails.
+A receiver must fully decode, validate limits, verify canonical re-encoding,
+validate profile binding, and verify fingerprint before any durable mutation.
+Failure leaves no partially decoded values, Set, response, or durable write.
+Only a syntactically valid, authenticated push that reaches the authority's
+domain validation may produce the existing `DurableOutcome::Rejected` values
+below; decoder/profile errors do not get converted into that enum.
+
+| Local error category                                                  | Trigger                                                                                                                     |
+| --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `Decode`                                                              | Input is not a decodable CBOR item.                                                                                         |
+| `TrailingBytes`                                                       | A valid single item is followed by any byte.                                                                                |
+| `NonCanonical`                                                        | Deterministic encoding, byte-order, or byte-exact re-encoding check fails.                                                  |
+| `InvalidEnvelope`                                                     | Root/payload array has wrong type, arity, duplicated or inconsistent profile ID.                                            |
+| `UnsupportedProfile` / `UnsupportedSchema` / `InvalidMessageKind`     | Exact family, schema, or closed message discriminant is unsupported.                                                        |
+| `UnsupportedTag` / `UnsupportedKind`                                  | A value uses a tag or kind outside the assigned table.                                                                      |
+| `InvalidValuePayload`                                                 | A known value kind has the wrong CBOR type, payload arity, or primitive shape.                                              |
+| `InvalidFloat` / `InvalidDatetime` / `InvalidDecimal` / `InvalidUuid` | Fixed-width form or pinned native constructor/range constraint fails.                                                       |
+| `InvalidRecordIdentity`                                               | Record table/key shape, key kind, UTF-8, or key constructor constraints fail.                                               |
+| `DuplicateObjectKey`                                                  | Object keys repeat or are not strictly sorted by UTF-8 bytes.                                                               |
+| `NativeSetCardinalityChanged`                                         | Native Set construction removes any encoded member as equal to another.                                                     |
+| `InvalidFingerprint`                                                  | Fingerprint text shape or recomputed native-domain digest differs.                                                          |
+| `InvalidProfileBinding`                                               | Token is malformed, expired, unknown, or mismatches authenticated principal/profile/partition/client/scope/revisions/epoch. |
+| `DepthLimit` / `ContainerLimit` / `StringLimit` / `EncodedLimit`      | One depth/container/item/string-byte/whole-message ceiling is exceeded.                                                     |
+
+Resource limits are inclusive maxima: depth 32 counts the root value/message
+as depth 1; a container may have at most 1,024 direct members; a message may
+contain at most 4,096 total value/container items; a text or byte string may
+contain at most 1,048,576 encoded bytes; the complete CBOR item may contain at
+most 4,194,304 bytes; a binding token contains 1 through 4,096 bytes; and the
+serialized JSON bridge message may contain at most 4,194,304 UTF-8 bytes.
+Exceeding any ceiling fails closed before allocating based on the claimed
+length or touching durable state. Float payloads must be exactly eight bytes;
+all binary64 bit patterns are valid and must round-trip exactly, including
+infinity and NaN payload bits (the pinned `Number::Float(f64)` accepts these
+values). Decimal coefficient
+and scale must round-trip exactly through the pinned Decimal constructor;
+never rescale to make an out-of-range value fit. Datetime payloads must
+successfully pass the pinned `Datetime::from_timestamp` constructor. UUIDs are
+exactly 16 bytes. These rules are derived from the proposed schema and pinned
+type constructors; their native encode/decode behavior still requires runtime
+conformance evidence.
+
+| Existing contract                 | Existing exact identity                                                                                                                                           | Native-values compatibility decision                                                                                                                                                                      |
+| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V1 values/messages                | `surrealdb-sync/1`; v1 None tag `6`, RecordId tag `8`; `application/vnd.surrealdb-sync.v1+cbor`; current v1 routes                                                | Keep unchanged. V1 decoder rejects tag `60000`; native decoder rejects v1 family and does not reinterpret v1 maps or tags.                                                                                |
+| Pull source-v2                    | `surrealdb-sync/pull-source/2`, schema `0`, kind `3`; `POST /v1/sync/pull/source-v2`; `application/vnd.surrealdb-sync.pull-source-v2+cbor`; body values remain v1 | Never select native-values by this route, response media, family, or source field. It has no new value tag assignments.                                                                                   |
+| Acceptance-receipt-v2 reservation | `surrealdb-sync/2`; `application/vnd.surrealdb-sync.v2+cbor`; `/v2/sync/...` namespace                                                                            | Keep separate; exact family/media/path matching precedes body decode. The inspected draft states these reservations but supplies no tag allocation table; do not infer one or dispatch by kind/tag alone. |
+| Native-values proposal            | `surrealdb-sync/native-values/1`; candidate `application/vnd.surrealdb-sync.native-values.v1+cbor`                                                                | Use exact family plus exact media type. No HTTP route is assigned in this proposal. Tag `60000` is internal/proposed and not claimed registered.                                                          |
+
+The outer family check and media/path routing are mandatory; payload shape,
+tag number, generic `/v2/` prefix, and JSON map contents never negotiate or
+select a profile. Profile negotiation itself remains authenticated and
+out-of-band until a separate router/schema review assigns its endpoint. The
+tag table does not claim a global registry collision check: before external
+standardization, confirm the proposed `60000` semantic tag is available and
+obtain any required registration.
+
+### Implementation-ready checklist and remaining gates
+
+An implementation following this proposal has a finite contract to implement:
+
+1. Dispatch by exact family, schema, and message kind; accept only the four
+   assigned message envelopes and their exact payload arities.
+2. Encode/decode the closed value-kind table `0..=13`, typed RecordIdentity
+   keys, operation/outcome/state/frame discriminants, and binding token shape.
+3. Enforce deterministic CBOR, byte-exact re-encoding, representation-preserving
+   Float/Decimal/Set behavior, and the listed inclusive limits before mutation.
+4. Compute fingerprints from the complete ordered native operation array and
+   exact six-field native domain preimage; persist and replay exact bytes.
+5. Implement the typed JSON bridge AST without interpreting ordinary JSON
+   objects as tagged values; enforce the same bridge limits before FFI.
+6. Keep v1, pull-source-v2, acceptance-receipt-v2, and native-values dispatch
+   isolated by exact family/media/path. Do not add fallback or infer profile
+   from a value tag.
+7. Prove each hand-derived value/fingerprint vector with independent Rust and
+   SDK implementations, then exercise native Set insertion/decoder rejection,
+   persistence, and exact retry replay.
+
+Items 1–6 are proposed contract, not existing implementation. Item 7 is the
+remaining runtime proof. No user product choice is needed to implement this
+candidate. The external CBOR registry check/registration is needed only before
+external standardization, and the HTTP route remains deliberately unassigned
+until a separate router review proves no acceptance-receipt-v2 collision.
+Neither external gate changes the internal candidate tag number, profile
+family, or wire vectors in this review. No engine source or profile runtime is
+changed by this proposal; full persisted Note sync remains blocked.
 
 ## SDK draft contract fixtures
 
@@ -206,8 +480,8 @@ Set fixture assertions check only that the chosen rules and adversarial cases
 remain present and explicitly marked `nativeRuntimeRequired`. They do not
 execute JavaScript Set equality as a proxy for SurrealDB `Number::Ord`, nor do
 they claim native Set construction, decoder rejection, or encode/decode
-stability. Three `todo` tests name the native-runtime gates. Set member bytes
-and full Note fingerprints remain unavailable until the wire contract assigns
-semantic CBOR tags/payloads for the supported native values and freezes the
-complete operation/envelope layout. Do not fill those gaps with a test-only
-codec that duplicates its own expected behavior.
+stability. Three `todo` tests name the native-runtime gates. The concrete
+candidate assignments and hand-derived simple-value bytes are in the schema
+proposal below; they are not runtime goldens. Full Note/fingerprint conformance
+still requires a real encoder/decoder and byte-exact replay. Do not fill that
+gate with a test-only codec that duplicates its own expected behavior.

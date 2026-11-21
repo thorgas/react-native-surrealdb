@@ -37,8 +37,285 @@
     "representative": "preserve-the-member-already-retained-by-native-set-construction",
     "wireOrder": "strict-ascending-unsigned-lexicographic-complete-canonical-member-bytes",
     "retry": "preserve-and-replay-exact-canonical-bytes-and-fingerprint",
-    "memberEncodingTagsAssigned": false,
+    "memberEncodingTagsAssigned": true,
     "nativeRuntimeEvidenceRequired": true
+  },
+  "nativeValueSchema": {
+    "familyTag": 60000,
+    "familyTagStatus": "internal-proposal-not-registered",
+    "payload": "[kindId, payload]",
+    "kinds": [
+      { "id": 0, "name": "none", "payload": "null" },
+      { "id": 1, "name": "null", "payload": "null" },
+      { "id": 2, "name": "bool", "payload": "CBOR boolean" },
+      { "id": 3, "name": "int", "payload": "signed i64 CBOR integer" },
+      {
+        "id": 4,
+        "name": "float",
+        "payload": "8-byte big-endian IEEE-754 binary64"
+      },
+      { "id": 5, "name": "string", "payload": "CBOR text" },
+      { "id": 6, "name": "bytes", "payload": "CBOR byte string" },
+      { "id": 7, "name": "array", "payload": "array of NativeValue" },
+      {
+        "id": 8,
+        "name": "object",
+        "payload": "sorted array of [keyText, NativeValue] pairs"
+      },
+      {
+        "id": 9,
+        "name": "datetime",
+        "payload": "[signedUnixSecondsI64, nanosecondsU32]"
+      },
+      {
+        "id": 10,
+        "name": "decimal",
+        "payload": "[negativeBool, coefficient12ByteBigEndian, scaleU8]"
+      },
+      { "id": 11, "name": "uuid", "payload": "16-byte string" },
+      { "id": 12, "name": "set", "payload": "sorted array of NativeValue" },
+      { "id": 13, "name": "recordId", "payload": "NativeRecordIdentity" }
+    ],
+    "recordIdentity": ["tableText", ["keyKind", "keyPayload"]],
+    "recordKeyKinds": [
+      { "id": 0, "name": "integer", "payload": "signed i64" },
+      { "id": 1, "name": "string", "payload": "UTF-8 text" },
+      { "id": 2, "name": "uuid", "payload": "16-byte string" }
+    ],
+    "messageEnvelope": [
+      "surrealdb-sync/native-values/1",
+      0,
+      "messageKind",
+      "payload"
+    ],
+    "messageKinds": [
+      { "id": 0, "name": "pushRequest" },
+      { "id": 1, "name": "pushResponse" },
+      { "id": 2, "name": "pullRequest" },
+      { "id": 3, "name": "pullResponse" }
+    ],
+    "pushRequestPayload": [
+      "profileId",
+      "ProfileBindingToken",
+      "partitionId",
+      "clientId",
+      "ClientCommit"
+    ],
+    "pushResponsePayload": [
+      "profileId",
+      "partitionId",
+      "clientId",
+      "DurableOutcome"
+    ],
+    "pullRequestPayload": [
+      "profileId",
+      "ProfileBindingToken",
+      "partitionId",
+      "clientId",
+      "checkpointOrNull",
+      "requestedScope",
+      "subscriptionRevision"
+    ],
+    "pullResponsePayload": [
+      "profileId",
+      "partitionId",
+      "clientId",
+      "NativePullResponse"
+    ],
+    "profileBindingToken": [0, "opaqueTokenBytes:1..4096"],
+    "operationKinds": [
+      {
+        "id": 0,
+        "name": "upsert",
+        "shape": "[0, identity, baseVersion, value, referenceOrNull]"
+      },
+      { "id": 1, "name": "delete", "shape": "[1, identity, baseVersionU64]" }
+    ],
+    "baseVersion": [[0], [1, "versionU64"]],
+    "clientCommit": ["clientCommitId", "fingerprintText", "operations"],
+    "durableOutcomes": [
+      {
+        "id": 0,
+        "name": "accepted",
+        "shape": "[0, CommitIdentity, sequenceU64, idMappings]"
+      },
+      {
+        "id": 1,
+        "name": "conflict",
+        "shape": "[1, CommitIdentity, recordIdentity, RecordState]"
+      },
+      {
+        "id": 2,
+        "name": "rejected",
+        "shape": "[2, CommitIdentity, rejectReasonU64]"
+      }
+    ],
+    "recordStates": [
+      { "id": 0, "name": "absent", "shape": "[0]" },
+      {
+        "id": 1,
+        "name": "present",
+        "shape": "[1, NativeValue, versionU64, referenceOrNull]"
+      },
+      { "id": 2, "name": "tombstone", "shape": "[2, versionU64]" }
+    ],
+    "nativePullResponse": [
+      "[0, frames]",
+      "[1, resetReasonU64, checkpoint, snapshotRecords]"
+    ],
+    "pullFrames": [
+      { "id": 0, "name": "start", "shape": "[0, checkpoint]" },
+      {
+        "id": 1,
+        "name": "commit",
+        "shape": "[1, opaqueCheckpoint, pullCommit]"
+      },
+      { "id": 2, "name": "end", "shape": "[2, checkpoint]" }
+    ],
+    "checkpoint": [
+      "tokenText",
+      ["epochU64", "sequenceU64"],
+      ["scopeIdentity", "authorizationRevisionU64", "subscriptionRevisionU64"]
+    ],
+    "pullCommit": ["sequenceU64", "sourceOrNullRequired", "appliedRecords"],
+    "rejectReasons": [
+      { "id": 0, "name": "invalidOperation" },
+      { "id": 1, "name": "commitIdentityMismatch" },
+      { "id": 2, "name": "unauthorized" },
+      { "id": 3, "name": "unsupportedSchemaVersion" }
+    ],
+    "resetReasons": [
+      { "id": 0, "name": "checkpointExpired" },
+      { "id": 1, "name": "epochChanged" },
+      { "id": 2, "name": "authorizationChanged" },
+      { "id": 3, "name": "subscriptionChanged" },
+      { "id": 4, "name": "scopeChanged" },
+      { "id": 5, "name": "externalWriteQuarantined" }
+    ],
+    "nativeCodecErrors": [
+      "Decode",
+      "TrailingBytes",
+      "NonCanonical",
+      "InvalidEnvelope",
+      "UnsupportedProfile",
+      "UnsupportedSchema",
+      "InvalidMessageKind",
+      "UnsupportedTag",
+      "UnsupportedKind",
+      "InvalidValuePayload",
+      "InvalidFloat",
+      "InvalidDatetime",
+      "InvalidDecimal",
+      "InvalidUuid",
+      "InvalidRecordIdentity",
+      "DuplicateObjectKey",
+      "NativeSetCardinalityChanged",
+      "InvalidFingerprint",
+      "InvalidProfileBinding",
+      "DepthLimit",
+      "ContainerLimit",
+      "StringLimit",
+      "EncodedLimit"
+    ],
+    "errorBoundary": {
+      "wireErrorMessageKind": false,
+      "transportStatusAssigned": false,
+      "localValidationBeforeOutboxMutation": true,
+      "receiverValidationBeforeDurableMutation": true,
+      "decoderFailureIsDurableRejectedOutcome": false,
+      "partialValueExposureOnFailure": false
+    },
+    "limits": {
+      "depth": 32,
+      "containerItems": 1024,
+      "totalItems": 4096,
+      "stringOrBytes": 1048576,
+      "encodedCbor": 4194304,
+      "profileBindingToken": 4096,
+      "serializedJsonBridge": 4194304
+    },
+    "limitSemantics": {
+      "depthCountsRootAs": 1,
+      "containerItemsAreDirectMembers": true,
+      "stringsAndBytesMeasure": "encoded UTF-8 or byte count",
+      "encodedCborMeasures": "complete single CBOR message",
+      "maximaInclusive": true,
+      "claimedLengthValidatedBeforeAllocation": true
+    },
+    "constructorRules": {
+      "floatWidthBytes": 8,
+      "allBinary64BitPatternsValid": true,
+      "preserveNaNPayloadBits": true,
+      "preserveSignedFloatZero": true,
+      "decimalMaxCoefficient": "79228162514264337593543950335",
+      "decimalMaxScale": 28,
+      "decimalMustRoundTripConstructor": true,
+      "datetimeConstructor": "surrealdb_types::Datetime::from_timestamp",
+      "uuidWidthBytes": 16
+    },
+    "jsonAst": ["surrealdb-sync/native-values/1", "kindId", "payload"],
+    "jsonObjectPayload": "sorted array of [keyText, NativeJsonValue] pairs",
+    "compatibilityReservations": {
+      "v1": {
+        "family": "surrealdb-sync/1",
+        "mediaType": "application/vnd.surrealdb-sync.v1+cbor",
+        "valueTags": [6, 8]
+      },
+      "pullSourceV2": {
+        "family": "surrealdb-sync/pull-source/2",
+        "path": "/v1/sync/pull/source-v2",
+        "mediaType": "application/vnd.surrealdb-sync.pull-source-v2+cbor",
+        "schema": 0,
+        "pullResponseKind": 3
+      },
+      "acceptanceReceiptV2": {
+        "family": "surrealdb-sync/2",
+        "mediaType": "application/vnd.surrealdb-sync.v2+cbor",
+        "pathNamespace": "/v2/sync/...",
+        "valueTagsSpecifiedInInspectedDraft": false
+      },
+      "nativeValues": {
+        "family": "surrealdb-sync/native-values/1",
+        "mediaType": "application/vnd.surrealdb-sync.native-values.v1+cbor",
+        "routeAssigned": false,
+        "familyTag": 60000
+      }
+    },
+    "nativeValueVectors": [
+      { "id": "none", "kind": 0, "cborHex": "d9ea608200f6" },
+      { "id": "null", "kind": 1, "cborHex": "d9ea608201f6" },
+      { "id": "int-one", "kind": 3, "cborHex": "d9ea60820301" },
+      { "id": "string-one", "kind": 5, "cborHex": "d9ea6082056131" },
+      {
+        "id": "float-negative-zero",
+        "kind": 4,
+        "cborHex": "d9ea608204488000000000000000"
+      },
+      {
+        "id": "float-nan-payload-one",
+        "kind": 4,
+        "cborHex": "d9ea608204487ff8000000000001"
+      },
+      {
+        "id": "decimal-one-scale-two",
+        "kind": 10,
+        "cborHex": "d9ea60820a83f44c00000000000000000000006402"
+      },
+      {
+        "id": "set-containing-int-one",
+        "kind": 12,
+        "cborHex": "d9ea60820c81d9ea60820301"
+      },
+      {
+        "id": "record-note-integer-seven",
+        "kind": 13,
+        "cborHex": "d9ea60820d82646e6f7465820007"
+      }
+    ],
+    "pendingExternalDecisions": [
+      "check and complete any required external CBOR tag registration for 60000",
+      "assign a native-values HTTP route after acceptance-receipt-v2 router collision testing"
+    ]
   },
   "setVectors": [
     {
@@ -154,8 +431,5 @@
       "nativeRuntimeRequired": true
     }
   ],
-  "missingNativeContract": [
-    "semantic CBOR tags and payload encodings for native values",
-    "full native-values operation and envelope wire schema"
-  ]
+  "missingNativeContract": []
 }

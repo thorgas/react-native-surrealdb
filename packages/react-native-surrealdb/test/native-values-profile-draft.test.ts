@@ -22,6 +22,61 @@ type DraftFixture = {
     memberEncodingTagsAssigned: boolean;
     nativeRuntimeEvidenceRequired: boolean;
   };
+  nativeValueSchema: {
+    familyTag: number;
+    familyTagStatus: string;
+    kinds: { id: number; name: string; payload: string }[];
+    recordKeyKinds: { id: number; name: string; payload: string }[];
+    messageEnvelope: unknown[];
+    messageKinds: { id: number; name: string }[];
+    pushRequestPayload: string[];
+    pushResponsePayload: string[];
+    pullRequestPayload: string[];
+    pullResponsePayload: string[];
+    operationKinds: { id: number; name: string; shape: string }[];
+    baseVersion: unknown[];
+    clientCommit: string[];
+    durableOutcomes: { id: number; name: string; shape: string }[];
+    recordStates: { id: number; name: string; shape: string }[];
+    nativePullResponse: string[];
+    pullFrames: { id: number; name: string; shape: string }[];
+    checkpoint: unknown[];
+    pullCommit: string[];
+    rejectReasons: { id: number; name: string }[];
+    resetReasons: { id: number; name: string }[];
+    nativeCodecErrors: string[];
+    errorBoundary: Record<string, boolean>;
+    limits: Record<string, number>;
+    limitSemantics: Record<string, string | number | boolean>;
+    constructorRules: Record<string, string | number | boolean>;
+    jsonAst: string[];
+    jsonObjectPayload: string;
+    profileBindingToken: [number, string];
+    compatibilityReservations: {
+      v1: { family: string; mediaType: string; valueTags: number[] };
+      pullSourceV2: {
+        family: string;
+        path: string;
+        mediaType: string;
+        schema: number;
+        pullResponseKind: number;
+      };
+      acceptanceReceiptV2: {
+        family: string;
+        mediaType: string;
+        pathNamespace: string;
+        valueTagsSpecifiedInInspectedDraft: boolean;
+      };
+      nativeValues: {
+        family: string;
+        mediaType: string;
+        routeAssigned: boolean;
+        familyTag: number;
+      };
+    };
+    nativeValueVectors: { id: string; kind: number; cborHex: string }[];
+    pendingExternalDecisions: string[];
+  };
   setVectors: {
     id: string;
     input: unknown[];
@@ -116,7 +171,7 @@ describe("native-values profile draft contract fixtures", () => {
       wireOrder:
         "strict-ascending-unsigned-lexicographic-complete-canonical-member-bytes",
       retry: "preserve-and-replay-exact-canonical-bytes-and-fingerprint",
-      memberEncodingTagsAssigned: false,
+      memberEncodingTagsAssigned: true,
       nativeRuntimeEvidenceRequired: true,
     });
     expect(draft.setVectors.map(({ id }) => id)).toEqual([
@@ -149,9 +204,227 @@ describe("native-values profile draft contract fixtures", () => {
           vector.encodedMembers.length === 2,
       ),
     ).toBe(true);
-    expect(draft.missingNativeContract).toContain(
-      "semantic CBOR tags and payload encodings for native values",
+    expect(draft.missingNativeContract).toEqual([]);
+  });
+
+  it("pins the proposed closed native tag, kind, and message assignments", () => {
+    const schema = draft.nativeValueSchema;
+    expect(schema.familyTag).toBe(60_000);
+    expect(schema.familyTagStatus).toBe("internal-proposal-not-registered");
+    expect(schema.kinds).toEqual([
+      { id: 0, name: "none", payload: "null" },
+      { id: 1, name: "null", payload: "null" },
+      { id: 2, name: "bool", payload: "CBOR boolean" },
+      { id: 3, name: "int", payload: "signed i64 CBOR integer" },
+      {
+        id: 4,
+        name: "float",
+        payload: "8-byte big-endian IEEE-754 binary64",
+      },
+      { id: 5, name: "string", payload: "CBOR text" },
+      { id: 6, name: "bytes", payload: "CBOR byte string" },
+      { id: 7, name: "array", payload: "array of NativeValue" },
+      {
+        id: 8,
+        name: "object",
+        payload: "sorted array of [keyText, NativeValue] pairs",
+      },
+      {
+        id: 9,
+        name: "datetime",
+        payload: "[signedUnixSecondsI64, nanosecondsU32]",
+      },
+      {
+        id: 10,
+        name: "decimal",
+        payload: "[negativeBool, coefficient12ByteBigEndian, scaleU8]",
+      },
+      { id: 11, name: "uuid", payload: "16-byte string" },
+      { id: 12, name: "set", payload: "sorted array of NativeValue" },
+      { id: 13, name: "recordId", payload: "NativeRecordIdentity" },
+    ]);
+    expect(new Set(schema.kinds.map(({ name }) => name)).size).toBe(14);
+    expect(schema.recordKeyKinds.map(({ id }) => id)).toEqual([0, 1, 2]);
+    expect(schema.messageEnvelope).toEqual([
+      "surrealdb-sync/native-values/1",
+      0,
+      "messageKind",
+      "payload",
+    ]);
+    expect(schema.messageKinds).toEqual([
+      { id: 0, name: "pushRequest" },
+      { id: 1, name: "pushResponse" },
+      { id: 2, name: "pullRequest" },
+      { id: 3, name: "pullResponse" },
+    ]);
+    expect(schema.pushRequestPayload).toEqual([
+      "profileId",
+      "ProfileBindingToken",
+      "partitionId",
+      "clientId",
+      "ClientCommit",
+    ]);
+    expect(schema.pushResponsePayload).toEqual([
+      "profileId",
+      "partitionId",
+      "clientId",
+      "DurableOutcome",
+    ]);
+    expect(schema.pullRequestPayload).toEqual([
+      "profileId",
+      "ProfileBindingToken",
+      "partitionId",
+      "clientId",
+      "checkpointOrNull",
+      "requestedScope",
+      "subscriptionRevision",
+    ]);
+    expect(schema.pullResponsePayload).toEqual([
+      "profileId",
+      "partitionId",
+      "clientId",
+      "NativePullResponse",
+    ]);
+    expect(schema.operationKinds).toEqual([
+      {
+        id: 0,
+        name: "upsert",
+        shape: "[0, identity, baseVersion, value, referenceOrNull]",
+      },
+      {
+        id: 1,
+        name: "delete",
+        shape: "[1, identity, baseVersionU64]",
+      },
+    ]);
+    expect(schema.baseVersion).toEqual([[0], [1, "versionU64"]]);
+    expect(schema.clientCommit).toEqual([
+      "clientCommitId",
+      "fingerprintText",
+      "operations",
+    ]);
+    expect(schema.durableOutcomes.map(({ id, name }) => [id, name])).toEqual([
+      [0, "accepted"],
+      [1, "conflict"],
+      [2, "rejected"],
+    ]);
+    expect(schema.recordStates.map(({ id, name }) => [id, name])).toEqual([
+      [0, "absent"],
+      [1, "present"],
+      [2, "tombstone"],
+    ]);
+    expect(schema.nativePullResponse).toEqual([
+      "[0, frames]",
+      "[1, resetReasonU64, checkpoint, snapshotRecords]",
+    ]);
+    expect(schema.pullFrames.map(({ id, name }) => [id, name])).toEqual([
+      [0, "start"],
+      [1, "commit"],
+      [2, "end"],
+    ]);
+    expect(schema.pullCommit).toEqual([
+      "sequenceU64",
+      "sourceOrNullRequired",
+      "appliedRecords",
+    ]);
+    expect(schema.rejectReasons.map(({ id }) => id)).toEqual([0, 1, 2, 3]);
+    expect(schema.resetReasons.map(({ id }) => id)).toEqual([0, 1, 2, 3, 4, 5]);
+    expect(schema.nativeCodecErrors).toContain("NativeSetCardinalityChanged");
+    expect(schema.errorBoundary).toEqual({
+      wireErrorMessageKind: false,
+      transportStatusAssigned: false,
+      localValidationBeforeOutboxMutation: true,
+      receiverValidationBeforeDurableMutation: true,
+      decoderFailureIsDurableRejectedOutcome: false,
+      partialValueExposureOnFailure: false,
+    });
+    expect(schema.limits).toEqual({
+      depth: 32,
+      containerItems: 1024,
+      totalItems: 4096,
+      stringOrBytes: 1048576,
+      encodedCbor: 4194304,
+      profileBindingToken: 4096,
+      serializedJsonBridge: 4194304,
+    });
+    expect(schema.limitSemantics).toEqual({
+      depthCountsRootAs: 1,
+      containerItemsAreDirectMembers: true,
+      stringsAndBytesMeasure: "encoded UTF-8 or byte count",
+      encodedCborMeasures: "complete single CBOR message",
+      maximaInclusive: true,
+      claimedLengthValidatedBeforeAllocation: true,
+    });
+    expect(schema.constructorRules).toEqual({
+      floatWidthBytes: 8,
+      allBinary64BitPatternsValid: true,
+      preserveNaNPayloadBits: true,
+      preserveSignedFloatZero: true,
+      decimalMaxCoefficient: "79228162514264337593543950335",
+      decimalMaxScale: 28,
+      decimalMustRoundTripConstructor: true,
+      datetimeConstructor: "surrealdb_types::Datetime::from_timestamp",
+      uuidWidthBytes: 16,
+    });
+    expect(schema.profileBindingToken).toEqual([0, "opaqueTokenBytes:1..4096"]);
+    expect(schema.jsonAst).toEqual([
+      "surrealdb-sync/native-values/1",
+      "kindId",
+      "payload",
+    ]);
+    expect(schema.jsonObjectPayload).toBe(
+      "sorted array of [keyText, NativeJsonValue] pairs",
     );
+    expect(schema.compatibilityReservations.v1.valueTags).toEqual([6, 8]);
+    expect(schema.familyTag).not.toBe(6);
+    expect(schema.familyTag).not.toBe(8);
+    expect(schema.compatibilityReservations.pullSourceV2).toMatchObject({
+      family: "surrealdb-sync/pull-source/2",
+      schema: 0,
+      pullResponseKind: 3,
+    });
+    expect(schema.compatibilityReservations.acceptanceReceiptV2).toMatchObject({
+      family: "surrealdb-sync/2",
+      mediaType: "application/vnd.surrealdb-sync.v2+cbor",
+      valueTagsSpecifiedInInspectedDraft: false,
+    });
+    expect(schema.compatibilityReservations.nativeValues.routeAssigned).toBe(
+      false,
+    );
+    expect(schema.compatibilityReservations.nativeValues.mediaType).not.toBe(
+      schema.compatibilityReservations.v1.mediaType,
+    );
+    expect(schema.compatibilityReservations.nativeValues.family).not.toBe(
+      schema.compatibilityReservations.pullSourceV2.family,
+    );
+    expect(schema.compatibilityReservations.nativeValues.family).not.toBe(
+      schema.compatibilityReservations.acceptanceReceiptV2.family,
+    );
+
+    const vectors = schema.nativeValueVectors;
+    expect(vectors.map(({ id }) => id)).toEqual([
+      "none",
+      "null",
+      "int-one",
+      "string-one",
+      "float-negative-zero",
+      "float-nan-payload-one",
+      "decimal-one-scale-two",
+      "set-containing-int-one",
+      "record-note-integer-seven",
+    ]);
+    expect(
+      vectors.every(
+        ({ cborHex }) =>
+          cborHex.startsWith("d9ea60") &&
+          Buffer.from(cborHex, "hex").toString("hex") === cborHex,
+      ),
+    ).toBe(true);
+    expect(vectors[0]!.cborHex).not.toBe(vectors[1]!.cborHex);
+    expect(schema.pendingExternalDecisions).toEqual([
+      "check and complete any required external CBOR tag registration for 60000",
+      "assign a native-values HTTP route after acceptance-receipt-v2 router collision testing",
+    ]);
   });
 
   it.todo("native codec preserves the actual SurrealDB Set representative");

@@ -1253,7 +1253,7 @@ SurrealDB 3.2.4 dependencies. See
 [`docs/NATIVE_VALUES_PROFILE_PRECISION_REVIEW.md`](docs/NATIVE_VALUES_PROFILE_PRECISION_REVIEW.md)
 for a candidate domain-separated fingerprint envelope and hand-derived
 RecordKey vectors, selected Set representation/wire-order rules, pinned source
-references, and remaining review choices. The engine lock resolves
+references, and the concrete candidate value/message schema. The engine lock resolves
 `rust_decimal` 1.42.1; the engine draft's 1.43.0 citation needs correction.
 
 This is a design amendment only: no native-values codec, profile negotiation,
@@ -1267,4 +1267,12 @@ contract fixtures and narrow JS checks now pin the hand-derived fingerprint
 bytes and Set vector inventory; they do not prove native Set semantics. This
 choice remains untested in a native codec, and the `.3` SDK artifact does not
 close the full persisted Note sync gate. See the “SDK draft contract fixtures”
-section of the precision review for the exact validation boundary.
+section of the precision review for the exact validation boundary. The schema
+proposal assigns kind IDs 0–13 under internal CBOR tag 60000 and explicit
+push/pull envelopes; it preserves all binary64 bits (including NaN payloads),
+pins the Decimal coefficient ceiling and Datetime constructor validation, and
+defines local validation errors separately from durable wire rejections. Tag
+60000 is not claimed externally registered. It keeps v1
+tags 6/8, pull-source-v2 family/media/route, and the acceptance-receipt-v2
+family/media/path namespace distinct. Route selection and external tag-registry
+check/registration remain pending; no native codec or activation exists.
