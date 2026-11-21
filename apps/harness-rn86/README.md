@@ -151,6 +151,36 @@ injected: physically backgrounding the host would suspend Hermes and prevent in-
 The runner still emits a non-fatal `@rock-js` TypeScript type-stripping warning under Node 22;
 test exit status and readback assertions, not that warning, are the pass criteria.
 
+The separate source-proof intent harness uses two app-private SurrealKV stores
+and closes both database handles before `openExistingExperimentalSync`.
+It verifies an unmaterialized create followed by delete remains discoverable,
+exact intent ID replay and equivocation, then a stable materialized commit,
+authority push, and source-v2 pulls on both clients. Its runner launches a
+direct, task-owned authority process and creates an owner manifest, revision
+marker, bearer, isolated namespace, and ephemeral loopback port under a private
+temporary directory. It does not use the legacy `SYNC_DEV_TOKEN` or launchd
+service. Android emulator traffic uses `10.0.2.2:<port>`; iOS simulator uses
+`127.0.0.1:<port>`. Physical devices are outside this runner.
+
+Prepare the matching native SDK package in the RN86 app under a coordinated
+build slot. The authority binary must come from the source-v2 engine and the
+external SurrealDB 3.2.4 server must be reachable; export
+`SDK_INTENT_AUTHORITY_BINARY`, `SDK_INTENT_DB_ADDRESS`,
+`SDK_INTENT_DB_USER`, and `SDK_INTENT_DB_PASS` from a private task environment.
+The runner never prints credentials or passes them in command arguments.
+After the app is built and the device is selected, run the test without
+triggering another build:
+
+```sh
+bash apps/harness-rn86/scripts/run-local-intent-authority-e2e.sh android
+bash apps/harness-rn86/scripts/run-local-intent-authority-e2e.sh ios
+```
+
+The runner writes only an ignored mode-0600 device configuration module,
+removes it on exit, and requires it to be absent before starting. Its source
+typecheck and shell syntax can run without native compilation; a passing
+device test still requires a real authority and matching app native artifacts.
+
 Each passing local-authority run appends payload-free timing samples to
 `performance-results/ios/local-authority/reports.jsonl` (or `android`). The receiver runs only
 for the test, listens on localhost port 18082, and fails the test if it cannot save a report.

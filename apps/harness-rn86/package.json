@@ -11,6 +11,8 @@
     "e2e:ios": "pnpm run prepare:ios && react-native run-ios --scheme SurrealDbHarness --simulator \"${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro (26.1)}\" --no-packager && react-native-harness --harnessRunner ios --testPathIgnorePatterns surrealkv-seed surrealkv-restart",
     "e2e:local-authority:android": "react-native run-android --appId com.surrealdbharness.rn86 --no-packager && bash scripts/run-local-authority-e2e.sh android",
     "e2e:local-authority:ios": "pnpm run prepare:ios && react-native run-ios --scheme SurrealDbHarness --simulator \"${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro (26.1)}\" --no-packager && bash scripts/run-local-authority-e2e.sh ios",
+    "e2e:local-intent-authority:android": "bash scripts/run-local-intent-authority-e2e.sh android",
+    "e2e:local-intent-authority:ios": "bash scripts/run-local-intent-authority-e2e.sh ios",
     "e2e:sync-restart:android": "react-native run-android --appId com.surrealdbharness.rn86 --no-packager && react-native-harness --harnessRunner android --testPathPatterns surrealkv-seed && react-native-harness --harnessRunner android --testPathPatterns surrealkv-restart",
     "e2e:sync-restart:ios": "pnpm run prepare:ios && react-native run-ios --scheme SurrealDbHarness --simulator \"${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro (26.1)}\" --no-packager && react-native-harness --harnessRunner ios --testPathPatterns surrealkv-seed && react-native-harness --harnessRunner ios --testPathPatterns surrealkv-restart",
     "e2e:surrealkv-migration:android": "bash scripts/run-surrealkv-migration-e2e.sh android",
