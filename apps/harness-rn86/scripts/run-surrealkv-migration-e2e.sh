@@ -4,11 +4,11 @@ set -euo pipefail
 HARNESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOSITORY_ROOT="$(cd -- "$HARNESS_DIR/../.." && pwd)"
 PACKAGE_ROOT="$REPOSITORY_ROOT/packages/react-native-surrealdb"
-SEED_REVISION="e0c200b"
+SEED_REVISION="020269a"
 PLATFORM="${1:-}"
 PNPM="${PNPM_BIN:-$(command -v pnpm || true)}"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/surrealdb-rn-migration.XXXXXX")"
-SEED_WORKTREE="$TEMP_ROOT/seed-3.2.1"
+SEED_WORKTREE="$TEMP_ROOT/seed-3.2.4"
 CURRENT_ARTIFACT_INSTALLED=1
 IOS_BUNDLE_ID="org.reactjs.native.example.SurrealDbHarnessRN86"
 ANDROID_APP_ID="com.surrealdbharness.rn86"
@@ -92,7 +92,7 @@ clear_previous_app_data() {
 
 restore_current_artifact() {
   if (( CURRENT_ARTIFACT_INSTALLED == 0 )); then
-    echo "Restoring the current SurrealDB 3.2.4 native artifact after an interrupted run..." >&2
+    echo "Restoring the current SurrealDB 4.0.1 native artifact after an interrupted run..." >&2
     build_native "$REPOSITORY_ROOT" "$PLATFORM" || \
       echo "Failed to restore the current native artifact; rebuild ubrn:$PLATFORM manually." >&2
   fi
@@ -126,13 +126,13 @@ fi
 git -C "$REPOSITORY_ROOT" cat-file -e "$SEED_REVISION^{commit}"
 if ! git -C "$REPOSITORY_ROOT" show \
   "$SEED_REVISION:crates/surrealdb-rn-core/Cargo.toml" | \
-  grep -Fq 'surrealdb = { version = "=3.2.1"'; then
-  echo "Pinned seed revision no longer proves SurrealDB 3.2.1." >&2
+  grep -Fq 'surrealdb = { version = "=3.2.4"'; then
+  echo "Pinned seed revision no longer proves SurrealDB 3.2.4." >&2
   exit 1
 fi
-if ! grep -Fq 'surrealdb = { version = "=3.2.4"' \
+if ! grep -Fq 'surrealdb = { version = "=4.0.1"' \
   "$REPOSITORY_ROOT/crates/surrealdb-rn-core/Cargo.toml"; then
-  echo "Current runtime is not pinned to SurrealDB 3.2.4." >&2
+  echo "Current runtime is not pinned to SurrealDB 4.0.1." >&2
   exit 1
 fi
 
@@ -142,7 +142,7 @@ git -C "$REPOSITORY_ROOT" worktree add --detach "$SEED_WORKTREE" "$SEED_REVISION
   "$PNPM" install --frozen-lockfile
 )
 
-echo "Building the pinned SurrealDB 3.2.1 seed artifact for $PLATFORM..."
+echo "Building the pinned SurrealDB 3.2.4 seed artifact for $PLATFORM..."
 build_native "$SEED_WORKTREE" "$PLATFORM"
 replace_artifact "$SEED_WORKTREE"
 CURRENT_ARTIFACT_INSTALLED=0
@@ -150,10 +150,10 @@ clear_previous_app_data
 install_host
 run_phase surrealkv-seed
 
-echo "Replacing the native runtime with SurrealDB 3.2.4 without clearing app data..."
+echo "Replacing the native runtime with SurrealDB 4.0.1 (export/import migration) without clearing app data..."
 build_native "$REPOSITORY_ROOT" "$PLATFORM"
 CURRENT_ARTIFACT_INSTALLED=1
 install_host
 run_phase surrealkv-restart
 
-echo "PASS SurrealDB 3.2.1 seed -> 3.2.4 reopen on $PLATFORM"
+echo "PASS SurrealDB 3.2.4 seed -> 4.0.1 migrated reopen on $PLATFORM"
