@@ -12,6 +12,8 @@ integration tests, and benchmark code from `../harness-shared`.
 | `surrealdb-harness-rn84` | 0.84.1       |
 | `surrealdb-harness-rn85` | 0.85.3       |
 | `surrealdb-harness-rn86` | 0.86.0       |
+| `surrealdb-harness-rn87` | 0.87.1       |
+| `surrealdb-harness-rn88` | 0.88.1       |
 
 The versions are declared with named pnpm catalogs in
 `../../pnpm-workspace.yaml`; no script rewrites a `package.json`. Each host also

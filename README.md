@@ -401,6 +401,8 @@ Each static RNTA host imports the same code from `apps/harness-shared`:
 | `surrealdb-harness-rn84` | 0.84.1       |
 | `surrealdb-harness-rn85` | 0.85.3       |
 | `surrealdb-harness-rn86` | 0.86.0       |
+| `surrealdb-harness-rn87` | 0.87.1       |
+| `surrealdb-harness-rn88` | 0.88.1       |
 
 Replace the filter in these examples to test another supported version:
 

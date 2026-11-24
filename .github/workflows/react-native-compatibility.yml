@@ -134,6 +134,10 @@ jobs:
             react-native: "0.85.3"
           - host: harness-rn86
             react-native: "0.86.0"
+          - host: harness-rn87
+            react-native: "0.87.1"
+          - host: harness-rn88
+            react-native: "0.88.1"
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v6
@@ -214,6 +218,10 @@ jobs:
             react-native: "0.85.3"
           - host: harness-rn86
             react-native: "0.86.0"
+          - host: harness-rn87
+            react-native: "0.87.1"
+          - host: harness-rn88
+            react-native: "0.88.1"
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v6
