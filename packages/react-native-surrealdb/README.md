@@ -101,6 +101,23 @@ The alpha supports embedded `memory` and experimental `surrealkv://...`
 endpoints, plus remote `ws://` and `wss://` endpoints. Remote connections can
 select a namespace/database and authenticate with root or database credentials.
 
+### Upgrading stores written by SurrealDB 3.x
+
+The embedded engine is SurrealDB 4.0.1. SurrealDB 4 cannot open a
+`surrealkv://` directory written by 3.x, so the first `connect()` to such a
+directory migrates it automatically:
+
+1. The bundled 3.2.4 reader exports every namespace and database as SurrealQL.
+2. The old directory is moved to `<path>.v3-backup` and a new 4.x store is
+   imported at the original path.
+3. Row counts are compared per table. Only then is the backup deleted.
+
+If the app is killed mid-migration, the next `connect()` restores the backup and
+starts over. Stores that define root, namespace or database users or accesses
+are not migrated: `connect()` fails with a `Database` error and the 3.x data is
+left unchanged. Leave free disk space of roughly twice the store size for the
+first launch after the upgrade.
+
 ## Live queries
 
 The low-level API is a pull-based async iterator with natural backpressure:
@@ -413,6 +430,10 @@ pending outbox, and optimistic replay. This is a local storage/codec proof, not 
 The JavaScript/Rust boundary preserves 64-bit integers, decimals, record IDs,
 UUIDs, bytes, sets, `NONE`, and other SurrealQL-only values rather than losing
 them through ordinary JSON conversion.
+SurrealDB 4 values without a dedicated JavaScript class (`date`, `time`,
+`timestamp`, `interval`, `datetime`, `duration`, ...) arrive as
+`SurrealSqlValue` with their SurrealQL text. Sized integers and floats use the
+same `int` / `float` / `decimal` transport as before.
 
 ## Benchmark diagnostics
 

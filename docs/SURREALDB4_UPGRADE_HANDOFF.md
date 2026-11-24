@@ -6,29 +6,31 @@ Status: IN PROGRESS. Nothing pushed (owner: no online actions; push allowed afte
 - Branch: `feat/surrealdb-4`, base `origin/main` @ `020269a`
 - PRs #14 and #15 were closed as superseded (all commits already on `main`); keep closed.
 
-## Commits (each cherry-pickable)
+## Commits (each cherry-pickable, oldest first)
 
 | SHA | Slice |
 | --- | --- |
-| `eba5c7a` | `surrealdb =4.0.1`; sized numbers widened onto `int`/`float`/`decimal` wire tags (`wire::widen_number`); new `date`/`time`/`timestamp`/`interval` tagged SurrealQL strings (Rust + `SurrealSqlKind` in `wire.ts`); sync codec rejects the new temporal kinds |
-| `1ed6c26` | INFO allow-lists admit 4.0 keys (`buckets`, `compatibility`=4, `extensions`, `types`), still fail-closed; adversarial test `surrealdb4_buckets_types_and_compatibility_changes_fail_closed` |
+| `eba5c7a` | `surrealdb =4.0.1`; sized numbers widened onto `int`/`float`/`decimal` (`wire::widen_number`); `date`/`time`/`timestamp`/`interval` wire tags |
 | `221da98` | `apps/harness-rn87` (0.87.1), `apps/harness-rn88` (0.88.1), catalogs, CI matrix, `react-native-test-app` 5.4.17 |
+| `1ed6c26` | INFO allow-lists admit 4.0 keys, still fail-closed; adversarial test |
+| `1cbd56d` | this handoff |
+| `c0a4c0d` | `migrate_3x`: automatic 3.x -> 4 SurrealKV export/import on first `connect` (feature `migrate-from-3x`, default) |
+| `17f7c39` | in-flight commit cancellation tests run on SurrealKV |
+| `0813d54` | migration device E2E seeds 3.2.4 -> reopens 4.0.1; labels; changelog |
+| `a2133d5` | `.cargo/config.toml` `RUST_MIN_STACK` for debug tests |
+
+## Status
+
+- `cargo test --workspace --all-features`: all pass (debug with `.cargo` stack, release with default stack).
+- Clippy `-D warnings` clean; package vitest 162/162; rn85-rn88 typecheck clean (after `pnpm --filter react-native-surrealdb run build`).
+- Release build: default 2 MiB stack is enough, so no production stack change.
 
 ## Open items
 
-0. BLOCKER (owner decision): SurrealDB 4.0.1 refuses to open SurrealKV data written by 3.x
-   ("Upgrading it in place to SurrealDB 4 is experimental and is refused by default").
-   Opt-in is datastore config `experimental_upgrade_from_3x` (env SURREAL_EXPERIMENTAL_UPGRADE_FROM_3X);
-   the conversion is one-way. Probe source: scratchpad `compat-probe/` (3.2.4 writes, 4.0.1 opens).
-   Latest 3.x is 3.3.5 (on-disk compatible alternative).
-1. 2 lib tests still fail: `sync_client::tests::cancelled_*enqueue_settles_before_sibling*` assert that the
-   first commit poll is Pending; 4.0.1 commits the mem engine directly (no channel) and wraps commit in
-   `RollbackOnDrop`. Needs owner decision (see chat).
-2. Default 2 MiB test-thread stack overflows on 4.0.1; tests currently need
-   `RUST_MIN_STACK=33554432`. Check whether production threads need a larger stack.
-3. Replace remaining `3.2.4` mentions (harness `App.tsx` / benchmark labels,
-   `run-surrealkv-migration-e2e.sh`, docs) and prove 3.2.4 -> 4.0.1 on-disk reopen.
-4. Device E2E on rn87 + rn88 (iOS + Android), then the full matrix.
+1. Device E2E (iOS sim UDID 8F752138-1669-4549-94F4-F403770FCB30, AVD Pixel_9_PlayStore on port 5560)
+   for rn86/87/88 plus `e2e:surrealkv-migration:{ios,android}` — delegated, pending.
+2. Native size grows (bundled 3.x reader); measure and record in NATIVE_SIZE.md.
+3. Push after 19:00 when the owner allows online actions; open the PR.
 
 ## Commands
 
