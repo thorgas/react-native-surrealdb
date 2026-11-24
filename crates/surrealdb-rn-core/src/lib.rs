@@ -4,6 +4,8 @@
 //! SDK while Rust owns engine selection, connection lifetime, authentication,
 //! query execution, and lossless value transport.
 
+#[cfg(feature = "migrate-from-3x")]
+mod migrate_3x;
 mod sync_bootstrap;
 mod sync_bootstrap_store;
 pub mod sync_client;
@@ -828,9 +830,26 @@ async fn connect_with_shutdown_retry(endpoint: &str) -> Result<Surreal<Any>, Sur
     const MAX_ATTEMPTS: usize = 21;
     const RETRY_DELAY: Duration = Duration::from_millis(25);
 
+    #[cfg(feature = "migrate-from-3x")]
+    let store = migrate_3x::store_path(endpoint);
+    #[cfg(feature = "migrate-from-3x")]
+    if let Some(store) = &store {
+        migrate_3x::recover_interrupted(store)?;
+    }
+    #[cfg(feature = "migrate-from-3x")]
+    let mut migrated = false;
+
     for attempt in 0..MAX_ATTEMPTS {
         match connect_any(endpoint).await {
             Ok(client) => return Ok(client),
+            #[cfg(feature = "migrate-from-3x")]
+            Err(error) if !migrated && migrate_3x::is_v3_refusal(&error) => {
+                let Some(store) = &store else {
+                    return Err(error.into());
+                };
+                migrate_3x::migrate(store).await?;
+                migrated = true;
+            }
             Err(error)
                 if endpoint.starts_with("surrealkv://")
                     && error.to_string().contains("already locked")
