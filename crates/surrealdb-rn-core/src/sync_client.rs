@@ -4828,7 +4828,11 @@ mod tests {
     #[tokio::test]
     async fn cancelled_enqueue_settles_before_sibling_and_cancelled_admission_never_runs() {
         for after_dispatch in [false, true] {
-            let db = database().await;
+            // SurrealDB 4 commits the mem engine inside the first poll; SurrealKV
+            // commits do I/O and stay pending, so `after_dispatch` really cancels
+            // a caller whose commit is in flight.
+            let directory = temp_dir::TempDir::new().unwrap();
+            let db = surrealkv_database(&directory.path().join("kv")).await;
             let a = open_sync_client(db.clone(), options("all")).await.unwrap();
             let b = open_sync_client(db.clone(), options("all")).await.unwrap();
             let arrived = Arc::new(tokio::sync::Notify::new());
@@ -4878,7 +4882,11 @@ mod tests {
     #[tokio::test]
     async fn cancelled_bounded_enqueue_settles_before_sibling() {
         for after_dispatch in [false, true] {
-            let db = database().await;
+            // SurrealDB 4 commits the mem engine inside the first poll; SurrealKV
+            // commits do I/O and stay pending, so `after_dispatch` really cancels
+            // a caller whose commit is in flight.
+            let directory = temp_dir::TempDir::new().unwrap();
+            let db = surrealkv_database(&directory.path().join("kv")).await;
             let a = open_sync_client(db.clone(), options("all")).await.unwrap();
             let b = open_sync_client(db.clone(), options("all")).await.unwrap();
             let arrived = Arc::new(tokio::sync::Notify::new());
