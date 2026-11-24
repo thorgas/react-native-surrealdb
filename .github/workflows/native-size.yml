@@ -52,6 +52,12 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      # The runner's default JDK prints a "restricted method" warning while
+      # AGP installs CMake, which fails op-sqlite's configure step. Pin JDK 17.
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 17
       - uses: android-actions/setup-android@v4
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter surrealdb-harness-rn86 run size:android:baseline
