@@ -2462,7 +2462,7 @@ mod tests {
                 .unwrap(),
             expected
         );
-        reopened.close().await.unwrap();
+        reopened.close().await;
     }
 
     #[tokio::test]
@@ -4817,6 +4817,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reopened_handle_requires_reset_for_pre_close_cursor() {
+        let db = database().await;
+        let a = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let initial: JsonValue =
+            serde_json::from_str(&a.read_snapshot_json().await.unwrap()).unwrap();
+        a.clone()
+            .enqueue(serde_json::to_string(&commit()).unwrap())
+            .await
+            .unwrap();
+        let live: JsonValue = serde_json::from_str(
+            &a.read_changes_json(initial["cursor"].to_string(), 8)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(live["kind"], "batches");
+        a.close().await;
+        drop(a);
+        let reopened = open_sync_client(db.clone(), options("all")).await.unwrap();
+        let after: JsonValue = serde_json::from_str(
+            &reopened
+                .read_changes_json(initial["cursor"].to_string(), 8)
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(after["kind"], "reset_required", "{after}");
+        reopened.close().await;
+        db.close().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn aborted_caller_does_not_drop_committed_completion_worker() {
         assert_completion_cancellation_is_shielded(false).await;
     }
@@ -5276,7 +5308,7 @@ mod tests {
             Err(NativeSyncError::PendingQuarantineRequired)
         ));
         attached.close().await;
-        reopened.close().await.unwrap();
+        reopened.close().await;
     }
 
     #[tokio::test]

@@ -48,10 +48,17 @@ install_host() {
       (
         cd "$HARNESS_DIR"
         "$PNPM" run prepare:ios
-        "$PNPM" exec react-native run-ios \
-          --scheme SurrealDbHarness \
-          --simulator "${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}" \
-          --no-packager
+        if [[ -n "${SURREALDB_IOS_UDID:-}" ]]; then
+          "$PNPM" exec react-native run-ios \
+            --scheme SurrealDbHarness \
+            --udid "$SURREALDB_IOS_UDID" \
+            --no-packager
+        else
+          "$PNPM" exec react-native run-ios \
+            --scheme SurrealDbHarness \
+            --simulator "${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro (26.1)}" \
+            --no-packager
+        fi
       )
       ;;
     android)
@@ -78,7 +85,8 @@ run_phase() {
 clear_previous_app_data() {
   case "$PLATFORM" in
     ios)
-      local simulator="${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}"
+      # simctl needs a UDID or an unambiguous name; prefer SURREALDB_IOS_UDID.
+      local simulator="${SURREALDB_IOS_UDID:-${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}}"
       xcrun simctl boot "$simulator" >/dev/null 2>&1 || true
       xcrun simctl bootstatus "$simulator" -b
       xcrun simctl uninstall "$simulator" "$IOS_BUNDLE_ID" >/dev/null 2>&1 || true

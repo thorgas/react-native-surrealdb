@@ -8,8 +8,8 @@
     "build:ios": "react-native bundle --entry-file index.js --platform ios --dev true --bundle-output dist/main.ios.jsbundle --assets-dest dist",
     "configure": "configure-test-app",
     "e2e:android": "react-native run-android --appId com.surrealdbharness.rn88 --no-packager && react-native-harness --harnessRunner android",
-    "e2e:ios": "pnpm run prepare:ios && react-native run-ios --scheme SurrealDbHarness --simulator \"${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}\" --no-packager && react-native-harness --harnessRunner ios",
-    "ios": "pnpm run prepare:ios && react-native run-ios --scheme SurrealDbHarness --simulator \"${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}\"",
+    "e2e:ios": "pnpm run prepare:ios && react-native run-ios --scheme SurrealDbHarness --simulator \"${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro (26.1)}\" --no-packager && react-native-harness --harnessRunner ios",
+    "ios": "pnpm run prepare:ios && react-native run-ios --scheme SurrealDbHarness --simulator \"${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro (26.1)}\"",
     "lint": "eslint --config .eslintrc.js ../harness-shared index.js",
     "prepare:ios": "bash ../harness-shared/scripts/prepare-ios.sh",
     "rock:android": "rock run:android",
@@ -21,7 +21,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@op-engineering/op-sqlite": "17.1.1",
+    "@op-engineering/op-sqlite": "19.0.5",
     "@react-native/new-app-screen": "catalog:rn88",
     "react": "catalog:rn88",
     "react-native": "catalog:rn88",
