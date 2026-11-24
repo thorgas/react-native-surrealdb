@@ -18,6 +18,8 @@ Status: IN PROGRESS. Nothing pushed (owner: no online actions; push allowed afte
 | `17f7c39` | in-flight commit cancellation tests run on SurrealKV |
 | `0813d54` | migration device E2E seeds 3.2.4 -> reopens 4.0.1; labels; changelog |
 | `a2133d5` | `.cargo/config.toml` `RUST_MIN_STACK` for debug tests |
+| `80025db` | package README: 3.x migration + new wire kinds |
+| `8ac9a13` | rn87/rn88 op-sqlite 19.0.5 (RN 0.87 removed `RCTCxxBridge`); simulator defaults; migration E2E `SURREALDB_IOS_UDID`; rn86 ignores two-phase `sync-binary-upgrade`; reopen-reset Rust test; README device prerequisites |
 
 ## Status
 
@@ -25,12 +27,20 @@ Status: IN PROGRESS. Nothing pushed (owner: no online actions; push allowed afte
 - Clippy `-D warnings` clean; package vitest 162/162; rn85-rn88 typecheck clean (after `pnpm --filter react-native-surrealdb run build`).
 - Release build: default 2 MiB stack is enough, so no production stack change.
 
+## Device evidence (2026-11-24, iOS sim 8F752138, iOS 26.1)
+
+- `e2e:surrealkv-migration:ios`: PASS. A 3.2.4 build (020269a) seeded app data, then the 4.0.1 runtime migrated it on reopen.
+- rn86 iOS: 15/17. `sync-binary-upgrade-verify` needs a cold stop (now ignored in `e2e:*`);
+  `sync-read` reopen assertion depends on Hermes GC freeing the closed handle (pre-existing, not 4.0;
+  Rust test `reopened_handle_requires_reset_for_pre_close_cursor` pins the contract).
+- rn87/rn88 iOS: failed on op-sqlite 17.1.1 before `8ac9a13`; not re-run yet.
+- Android: not run (free disk fell below 8 GB because of other agents' builds).
+
 ## Open items
 
-1. Device E2E (iOS sim UDID 8F752138-1669-4549-94F4-F403770FCB30, AVD Pixel_9_PlayStore on port 5560)
-   for rn86/87/88 plus `e2e:surrealkv-migration:{ios,android}` — delegated, pending.
-2. Native size grows (bundled 3.x reader); measure and record in NATIVE_SIZE.md.
-3. Push after 19:00 when the owner allows online actions; open the PR.
+1. Re-run iOS rn87/rn88 and all of Android (rn86/87/88 + `e2e:surrealkv-migration:android`). Needs about 30 GB free.
+2. Measure Release native size (NATIVE_SIZE.md baseline: 24.28 MiB arm64 `.so`); 3.x reader roughly doubles it.
+3. Push `feat/surrealdb-4` and open the PR once the owner allows online actions.
 
 ## Commands
 
