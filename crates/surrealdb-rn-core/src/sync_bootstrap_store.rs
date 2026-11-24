@@ -2897,7 +2897,7 @@ mod tests {
             .unwrap()
             .check()
             .unwrap();
-        client.query("UPDATE $id SET consumed_revision='1'; DEFINE FIELD unexpected ON _sync_bootstrap_header TYPE string; UPDATE $id SET unexpected='invalid';").bind(("id",header_id(key))).await.unwrap().check().unwrap();
+        client.query("UPDATE $id SET consumed_revision='1'; DEFINE FIELD unexpected ON _sync_bootstrap_header TYPE option<string>; UPDATE $id SET unexpected='invalid';").bind(("id",header_id(key))).await.unwrap().check().unwrap();
         assert!(
             BootstrapStore::new(&db)
                 .complete(&receipt, &context, handle, &live_clock(&|| Ok(1)))
