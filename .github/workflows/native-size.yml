@@ -83,6 +83,10 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - uses: actions/setup-java@v5  # JDK 17; see android-baseline
+        with:
+          distribution: temurin
+          java-version: 17
       - uses: android-actions/setup-android@v4
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@v7
