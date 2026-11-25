@@ -1,6 +1,6 @@
 # SurrealDB 4.0.1 upgrade + RN 0.87/0.88 hosts — handoff
 
-Status: IN PROGRESS. Nothing pushed (owner: no online actions; push allowed after 19:00 only when told).
+Status: IN REVIEW as PR #22 (pushed). Merge with rebase after the device items below.
 
 - Worktree: `/Users/timhorgas/git/rnsdb-surreal4`
 - Branch: `feat/surrealdb-4`, base `origin/main` @ `020269a`
@@ -21,6 +21,22 @@ Status: IN PROGRESS. Nothing pushed (owner: no online actions; push allowed afte
 | `80025db` | package README: 3.x migration + new wire kinds |
 | `8ac9a13` | rn87/rn88 op-sqlite 19.0.5 (RN 0.87 removed `RCTCxxBridge`); simulator defaults; migration E2E `SURREALDB_IOS_UDID`; rn86 ignores two-phase `sync-binary-upgrade`; reopen-reset Rust test; README device prerequisites |
 
+## Later commits
+
+| SHA | Slice |
+| --- | --- |
+| `5ab3236`, `b63b150` | CI: pin JDK 17 for the Android size jobs |
+| `a9a2c30` | `migrate-from-3x` opt-in (`scripts/with-migrate-from-3x.sh`); saves ~8 MiB native |
+| `81d0f59` | Android native size budget 40 MiB |
+| `763e169` | NATIVE_SIZE.md: iOS 3.2.4 vs 4.0.1 sizes |
+| `3b7ee91` | npm tarball limit 300 MB (superseded by `a3fb1c8`) |
+| `a3fb1c8` | Native binaries downloaded at build time from the GitHub release, SHA-256 pinned (`scripts/native-artifacts.mjs`); tarball 0.29 MB |
+| `92713f3` | Fix: fetch ran as a no-op when called through the node_modules symlink |
+
+Size finding: SurrealDB 4.0.1 adds ~8.7 MiB per platform, spread over its own crates.
+Trimming its hard-coded optional features (lindera, egg, observability) saved only
+0.6 MiB, so that patch was dropped.
+
 ## Status
 
 - `cargo test --workspace --all-features`: all pass (debug with `.cargo` stack, release with default stack).
@@ -36,11 +52,27 @@ Status: IN PROGRESS. Nothing pushed (owner: no online actions; push allowed afte
 - rn87/rn88 iOS: failed on op-sqlite 17.1.1 before `8ac9a13`; not re-run yet.
 - Android: not run (free disk fell below 8 GB because of other agents' builds).
 
+## Device evidence for build-time download (2026-11-25)
+
+- harness-rn86 iOS (sim 8F752138, renamed "SurrealDB4 iPhone 17 Pro" so other agents
+  do not grab it): `pod install` fetched and verified the XCFramework; E2E 14/15
+  (`sync-read` is the known pre-existing GC failure).
+- harness-rn86 Android: Gradle fetched and verified the `.so`; the APK contains it.
+  E2E not run: system_server died on both `Pixel_9_PlayStore` (even after wipe) and
+  a fresh `SurrealDB4_API36` AVD under host load.
+- YouMotion (worktree `~/git/youmotion-surreal4`, local branch
+  `chore/surrealdb4-native-download`, package.json points at the packed tgz, not
+  committed): typecheck clean, 24 DB Jest tests pass, `pod install` fetched the
+  framework, iOS harness DB suites pass (migration runner, check-in repository,
+  belief flow, archive/restore, history filter, onboarding). UI `.tsx` suites need
+  the `HarnessUI` native module, which a plain debug build does not link.
+
 ## Open items
 
-1. Re-run iOS rn87/rn88 and all of Android (rn86/87/88 + `e2e:surrealkv-migration:android`). Needs about 30 GB free.
-2. Measure Release native size (NATIVE_SIZE.md baseline: 24.28 MiB arm64 `.so`); 3.x reader roughly doubles it.
-3. Push `feat/surrealdb-4` and open the PR once the owner allows online actions.
+1. Android device E2E (rn86/87/88, migration E2E) on a host with free CPU/RAM.
+2. YouMotion Android build and its UI harness suites (needs its E2E build setup).
+3. Merge PR #22 with rebase once 1 is green; then cut a release so the native
+   archives exist on GitHub Releases before anyone installs the new tarball.
 
 ## Commands
 
