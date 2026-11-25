@@ -159,7 +159,11 @@ install_host
 run_phase surrealkv-seed
 
 echo "Replacing the native runtime with SurrealDB 4.0.1 (export/import migration) without clearing app data..."
-build_native "$REPOSITORY_ROOT" "$PLATFORM"
+(
+  cd "$REPOSITORY_ROOT"
+  bash packages/react-native-surrealdb/scripts/with-migrate-from-3x.sh \
+    "$PNPM" --filter react-native-surrealdb run "ubrn:$PLATFORM"
+)
 CURRENT_ARTIFACT_INSTALLED=1
 install_host
 run_phase surrealkv-restart

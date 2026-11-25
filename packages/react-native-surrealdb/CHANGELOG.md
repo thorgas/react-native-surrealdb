@@ -2,8 +2,9 @@
 
 - **Breaking native runtime:** embedded SurrealDB is now `4.0.1` (was `3.2.4`).
   Rebuild the native libraries.
-- SurrealDB 4 refuses to open SurrealKV stores written by 3.x. The default
-  `migrate-from-3x` Rust feature migrates such a store on the first `connect`:
+- SurrealDB 4 refuses to open SurrealKV stores written by 3.x. The opt-in
+  `migrate-from-3x` Rust feature (about +8 MiB native; build with
+  `scripts/with-migrate-from-3x.sh`) migrates such a store on the first `connect`:
   it exports every database with a bundled 3.2.4 engine, imports it into a new
   4.x store at the same path, checks row counts and removes the old copy. An
   interrupted migration is rolled back and retried on the next open. Stores

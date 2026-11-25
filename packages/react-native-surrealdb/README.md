@@ -104,8 +104,22 @@ select a namespace/database and authenticate with root or database credentials.
 ### Upgrading stores written by SurrealDB 3.x
 
 The embedded engine is SurrealDB 4.0.1. SurrealDB 4 cannot open a
-`surrealkv://` directory written by 3.x, so the first `connect()` to such a
-directory migrates it automatically:
+`surrealkv://` directory written by 3.x. Without migration support, `connect()`
+to such a directory fails with a `Database` error that mentions
+`SURREAL_EXPERIMENTAL_UPGRADE_FROM_3X`, and the data is left unchanged.
+
+Migration support bundles a copy of the SurrealDB 3.2.4 engine (the "3.x
+reader") that is used only to export old stores. It adds roughly 8 MiB to the
+native library, so the prebuilt binaries leave it out. Apps that shipped 3.x
+stores rebuild the native libraries with it:
+
+```sh
+cd packages/react-native-surrealdb
+bash scripts/with-migrate-from-3x.sh pnpm run ubrn:ios
+bash scripts/with-migrate-from-3x.sh pnpm run ubrn:android
+```
+
+With that build, the first `connect()` to a 3.x directory migrates it:
 
 1. The bundled 3.2.4 reader exports every namespace and database as SurrealQL.
 2. The old directory is moved to `<path>.v3-backup` and a new 4.x store is
