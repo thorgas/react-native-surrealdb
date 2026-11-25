@@ -1,6 +1,7 @@
 export function createHarnessConfig({
   androidEmulator,
   androidPlatform,
+  physicalAndroidDevice,
   applePlatform,
   appleSimulator,
   androidBundleId,
@@ -20,6 +21,17 @@ export function createHarnessConfig({
             diskSize: "8G",
             heapSize: "2G",
           },
+        ),
+        bundleId: androidBundleId,
+        activityName: "com.microsoft.reacttestapp.MainActivity",
+      }),
+      // A USB-connected phone. Select it with --harnessRunner android-device;
+      // override the match with SURREALDB_ANDROID_DEVICE_MANUFACTURER/_MODEL.
+      androidPlatform({
+        name: "android-device",
+        device: physicalAndroidDevice(
+          process.env.SURREALDB_ANDROID_DEVICE_MANUFACTURER ?? "Google",
+          process.env.SURREALDB_ANDROID_DEVICE_MODEL ?? "Pixel 6a",
         ),
         bundleId: androidBundleId,
         activityName: "com.microsoft.reacttestapp.MainActivity",

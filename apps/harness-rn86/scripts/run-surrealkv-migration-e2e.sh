@@ -17,12 +17,22 @@ usage() {
   echo "Usage: $0 <android|ios>" >&2
 }
 
+# SURREALDB_ANDROID_ARM64_ONLY=1 builds only arm64-v8a (phones, Apple Silicon
+# emulators): half the Rust build time and disk.
+ubrn_script() {
+  if [[ "$1" == android && "${SURREALDB_ANDROID_ARM64_ONLY:-0}" == 1 ]]; then
+    echo "ubrn:android:size"
+  else
+    echo "ubrn:$1"
+  fi
+}
+
 build_native() {
   local repository="$1"
   local platform="$2"
   (
     cd "$repository"
-    "$PNPM" --filter react-native-surrealdb run "ubrn:$platform"
+    "$PNPM" --filter react-native-surrealdb run "$(ubrn_script "$platform")"
   )
 }
 
@@ -66,6 +76,7 @@ install_host() {
         cd "$HARNESS_DIR"
         "$PNPM" exec react-native run-android \
           --appId com.surrealdbharness.rn86 \
+          ${ANDROID_SERIAL:+--deviceId "$ANDROID_SERIAL"} \
           --no-packager
       )
       ;;
@@ -77,7 +88,7 @@ run_phase() {
   (
     cd "$HARNESS_DIR"
     "$PNPM" exec react-native-harness \
-      --harnessRunner "$PLATFORM" \
+      --harnessRunner "${SURREALDB_HARNESS_RUNNER:-$PLATFORM}" \
       --testPathPatterns "$pattern"
   )
 }
@@ -153,6 +164,8 @@ git -C "$REPOSITORY_ROOT" worktree add --detach "$SEED_WORKTREE" "$SEED_REVISION
 echo "Building the pinned SurrealDB 3.2.4 seed artifact for $PLATFORM..."
 build_native "$SEED_WORKTREE" "$PLATFORM"
 replace_artifact "$SEED_WORKTREE"
+# The seed library is copied; its Rust build folder is no longer needed.
+rm -rf -- "$SEED_WORKTREE/target"
 CURRENT_ARTIFACT_INSTALLED=0
 clear_previous_app_data
 install_host
@@ -162,7 +175,7 @@ echo "Replacing the native runtime with SurrealDB 4.0.1 (export/import migration
 (
   cd "$REPOSITORY_ROOT"
   bash packages/react-native-surrealdb/scripts/with-migrate-from-3x.sh \
-    "$PNPM" --filter react-native-surrealdb run "ubrn:$PLATFORM"
+    "$PNPM" --filter react-native-surrealdb run "$(ubrn_script "$PLATFORM")"
 )
 CURRENT_ARTIFACT_INSTALLED=1
 install_host
