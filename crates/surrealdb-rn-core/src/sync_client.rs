@@ -2462,7 +2462,7 @@ mod tests {
                 .unwrap(),
             expected
         );
-        reopened.close().await;
+        reopened.close().await.unwrap();
     }
 
     #[tokio::test]
@@ -5308,7 +5308,7 @@ mod tests {
             Err(NativeSyncError::PendingQuarantineRequired)
         ));
         attached.close().await;
-        reopened.close().await;
+        reopened.close().await.unwrap();
     }
 
     #[tokio::test]
