@@ -13,8 +13,11 @@ const outputDirectory = requestedOutput
     ? requestedOutput
     : resolve(process.cwd(), requestedOutput)
   : join(packageRoot, "release");
+// SurrealDB 4.0.1 grew the packed tarball from ~161 MB to ~261 MB: its core
+// pulls in more crates, and iOS static archives keep all of them until the
+// app links. See NATIVE_SIZE.md.
 const maximumPackedBytes = Number(
-  process.env.MAXIMUM_NPM_TARBALL_BYTES ?? 180_000_000,
+  process.env.MAXIMUM_NPM_TARBALL_BYTES ?? 300_000_000,
 );
 
 if (!Number.isSafeInteger(maximumPackedBytes) || maximumPackedBytes <= 0) {
