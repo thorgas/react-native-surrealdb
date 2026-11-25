@@ -27,6 +27,11 @@ ubrn_script() {
   fi
 }
 
+if [[ "${SURREALDB_ANDROID_ARM64_ONLY:-0}" == 1 ]]; then
+  # Gradle must then skip the x86_64 slice too.
+  export ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a
+fi
+
 build_native() {
   local repository="$1"
   local platform="$2"
