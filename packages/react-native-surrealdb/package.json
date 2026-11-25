@@ -28,8 +28,9 @@
     "android",
     "ios",
     "cpp",
-    "SurrealDbRnFramework.xcframework",
     "*.podspec",
+    "native-artifacts.json",
+    "scripts/native-artifacts.mjs",
     "CHANGELOG.md",
     "LICENSE",
     "LICENSE-APACHE-2.0",
@@ -43,7 +44,9 @@
     "!android/gradlew",
     "!android/gradlew.bat",
     "!android/local.properties",
-    "!**/__tests__"
+    "!**/__tests__",
+    "!android/src/main/jniLibs",
+    "!.native"
   ],
   "main": "./lib/module/index.js",
   "types": "./lib/typescript/index.d.ts",

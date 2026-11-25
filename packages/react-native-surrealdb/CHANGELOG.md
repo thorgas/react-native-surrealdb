@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **Packaging:** the npm tarball no longer contains native binaries (was about
+  261 MB, now under 1 MB). `pod install` and the Android Gradle build download
+  them from the version's GitHub release and verify the SHA-256 pinned in
+  `native-artifacts.json`. Set `SURREALDB_NATIVE_ARCHIVE_DIR` or
+  `SURREALDB_NATIVE_BASE_URL` for offline or mirrored builds.
+
 - **Breaking native runtime:** embedded SurrealDB is now `4.0.1` (was `3.2.4`).
   Rebuild the native libraries.
 - SurrealDB 4 refuses to open SurrealKV stores written by 3.x. The opt-in

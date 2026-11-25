@@ -25,6 +25,23 @@ def isNewArchitectureEnabled() {
   return rootProject.hasProperty("newArchEnabled") && rootProject.getProperty("newArchEnabled") == "true"
 }
 
+// The npm package does not contain the Rust .so files. Download, verify
+// (pinned SHA-256) and unpack them before CMake imports them. Runs while Gradle
+// evaluates this file; it is a no-op when the files are already in place.
+def fetchSurrealNativeBinaries() {
+  def script = new File(projectDir, "../scripts/native-artifacts.mjs").canonicalPath
+  def node = System.getenv("NODE_BINARY") ?: "node"
+  def process = new ProcessBuilder(node, script, "fetch", "android")
+    .directory(projectDir)
+    .redirectErrorStream(true)
+    .start()
+  process.inputStream.eachLine { line -> logger.lifecycle(line) }
+  if (process.waitFor() != 0) {
+    throw new GradleException("react-native-surrealdb: could not install the Android native libraries (see above)")
+  }
+}
+fetchSurrealNativeBinaries()
+
 apply plugin: "com.android.library"
 apply plugin: "kotlin-android"
 

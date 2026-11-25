@@ -53,6 +53,8 @@ DerivedData/
 /generated/
 packages/react-native-surrealdb/SurrealDbRnFramework.xcframework/
 packages/react-native-surrealdb/android/src/main/jniLibs/
+packages/react-native-surrealdb/native-artifacts.json
+packages/react-native-surrealdb/.native/
 
 # Editors and operating systems
 .DS_Store

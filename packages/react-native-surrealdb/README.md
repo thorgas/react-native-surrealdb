@@ -13,6 +13,20 @@ pnpm add react-native-surrealdb
 cd ios && pod install
 ```
 
+The npm package does not contain the native binaries. `pod install` and the
+first Android Gradle build download them from this version's GitHub release,
+check the pinned SHA-256 in `native-artifacts.json`, and unpack them into the
+package. That needs `node` on the `PATH` (or `NODE_BINARY`) and network access
+once per version. For offline or mirrored builds:
+
+- `SURREALDB_NATIVE_ARCHIVE_DIR=/path/to/archives` reads the
+  `react-native-surrealdb-native-<ios|android>-<version>.tar.gz` files from a
+  directory instead of downloading them.
+- `SURREALDB_NATIVE_BASE_URL=https://mirror.example/path` downloads them from
+  an HTTPS mirror instead.
+
+Both still require the pinned checksum and size to match.
+
 Requirements:
 
 - React Native 0.82 or newer with the New Architecture and Hermes enabled;

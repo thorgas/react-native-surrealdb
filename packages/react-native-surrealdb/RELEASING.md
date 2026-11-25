@@ -111,9 +111,16 @@ tags create a draft GitHub release. The **Build release candidate** workflow
 builds Android arm64-v8a/x86_64 and the arm64 iOS device/simulator XCFramework,
 runs the package checks, and attaches these files:
 
-- `react-native-surrealdb-<version>.tgz` — the immutable package candidate;
+- `react-native-surrealdb-<version>.tgz` — the immutable package candidate,
+  without native binaries;
+- `react-native-surrealdb-native-ios-<version>.tar.gz` and
+  `react-native-surrealdb-native-android-<version>.tar.gz` — the binaries.
+  `release:pack` creates them and pins their SHA-256 and size in the tarball's
+  `native-artifacts.json`. Consumers download them from this release during
+  `pod install` and the Android build, so the release must stay published
+  with these exact files;
 - `npm-pack.json` — npm's file-count and size report; and
-- `SHA256SUMS` — the tarball checksum.
+- `SHA256SUMS` — checksums of all attached files.
 
 The iOS simulator artifact requires Apple Silicon. Intel Mac simulators cannot
 load this alpha because its x86_64 iOS slice was removed to stay below npm's

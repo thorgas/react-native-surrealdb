@@ -147,7 +147,7 @@ jobs:
             if (pack.version !== process.env.GITHUB_REF_NAME) throw new Error("packed version does not match tag");
             console.log(`${pack.name}@${pack.version}: ${pack.size} bytes packed, ${pack.unpackedSize} bytes unpacked`);
           '
-          (cd release && sha256sum *.tgz > SHA256SUMS)
+          (cd release && sha256sum *.tgz *.tar.gz > SHA256SUMS)
       - uses: actions/upload-artifact@v6
         with:
           name: react-native-surrealdb-${{ github.ref_name }}
