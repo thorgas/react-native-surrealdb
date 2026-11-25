@@ -25,6 +25,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { dirname, join, resolve, sep } from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -261,7 +262,18 @@ async function main([command, argument]) {
   }
 }
 
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+// Compare real paths: CocoaPods and Gradle reach this file through the
+// node_modules symlink, while import.meta.url is already resolved.
+function isEntryPoint() {
+  if (!process.argv[1]) return false;
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) {
   main(process.argv.slice(2)).catch((error) => {
     console.error(`react-native-surrealdb: ${error.message}`);
     process.exit(1);

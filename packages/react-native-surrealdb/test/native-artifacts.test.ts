@@ -200,6 +200,16 @@ describe("native artifacts", () => {
     expect(() => validateEntryNames(["./arm64-v8a/lib.so"], roots)).not.toThrow();
   });
 
+  it("runs when invoked through a node_modules symlink, as CocoaPods and Gradle do", async () => {
+    const script = new URL("../scripts/native-artifacts.mjs", import.meta.url).pathname;
+    const link = join(work, "linked-native-artifacts.mjs");
+    await symlink(script, link);
+    // No command: a real run prints usage and exits 2. A skipped main() exits 0.
+    const result = spawnSync(process.execPath, [link], { encoding: "utf8" });
+    expect(result.status).toBe(2);
+    expect(result.stderr).toMatch(/Usage/);
+  });
+
   it("re-fetches after an interrupted install instead of trusting partial files", async () => {
     expect(await fetchAndroid()).toBe("fetched");
     await rm(join(consumer, "android/src/main/jniLibs/x86_64"), { recursive: true });
