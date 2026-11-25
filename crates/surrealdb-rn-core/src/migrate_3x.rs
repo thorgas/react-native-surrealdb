@@ -141,33 +141,92 @@ fn require_empty(
     Ok(())
 }
 
+type DatastoreV3 = surrealdb_core_v3::kvs::Datastore;
+type SessionV3 = surrealdb_core_v3::dbs::Session;
+
+async fn query_v3(
+    ds: &DatastoreV3,
+    session: &SessionV3,
+    sql: &str,
+    vars: Option<surrealdb_v3::types::Variables>,
+    stage: &str,
+) -> Result<surrealdb_v3::types::Value, SurrealRnError> {
+    let mut results = ds
+        .execute(sql, session, vars)
+        .await
+        .map_err(|e| failed(stage, e))?;
+    if results.len() != 1 {
+        return Err(failed(stage, "unexpected number of statement results"));
+    }
+    results.remove(0).result.map_err(|e| failed(stage, e))
+}
+
 async fn info_v3(
-    db: &surrealdb_v3::Surreal<surrealdb_v3::engine::any::Any>,
+    ds: &DatastoreV3,
+    session: &SessionV3,
     sql: &str,
 ) -> Result<serde_json::Value, SurrealRnError> {
-    let mut response = db
-        .query(sql)
-        .await
-        .map_err(|e| failed("reading 3.x metadata", e))?;
-    let value: surrealdb_v3::types::Value = response
-        .take(0)
-        .map_err(|e| failed("reading 3.x metadata", e))?;
-    Ok(value.into_json_value())
+    Ok(query_v3(ds, session, sql, None, "reading 3.x metadata")
+        .await?
+        .into_json_value())
 }
 
 async fn count_v3(
-    db: &surrealdb_v3::Surreal<surrealdb_v3::engine::any::Any>,
+    ds: &DatastoreV3,
+    session: &SessionV3,
     table: &str,
 ) -> Result<i64, SurrealRnError> {
-    let mut response = db
-        .query("RETURN count(SELECT VALUE id FROM type::table($table))")
-        .bind(("table", table.to_owned()))
+    let mut vars = surrealdb_v3::types::Variables::new();
+    vars.insert("table", table.to_owned());
+    let value = query_v3(
+        ds,
+        session,
+        "RETURN count(SELECT VALUE id FROM type::table($table))",
+        Some(vars),
+        "counting 3.x rows",
+    )
+    .await?;
+    match value.into_json_value() {
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .ok_or_else(|| failed("counting 3.x rows", "count is not an integer")),
+        serde_json::Value::Null => Ok(0),
+        other => Err(failed("counting 3.x rows", format!("unexpected count {other}"))),
+    }
+}
+
+async fn export_v3(
+    ds: &DatastoreV3,
+    session: &SessionV3,
+    file: &Path,
+) -> Result<(), SurrealRnError> {
+    use std::io::Write;
+    let (sender, receiver) = surrealdb_core_v3::channel::bounded::<Vec<u8>>(32);
+    let job = ds
+        .export(session, sender)
         .await
-        .map_err(|e| failed("counting 3.x rows", e))?;
-    let count: Option<i64> = response
-        .take(0)
-        .map_err(|e| failed("counting 3.x rows", e))?;
-    Ok(count.unwrap_or(0))
+        .map_err(|e| failed("exporting a 3.x database", e))?;
+    let mut output = std::io::BufWriter::new(
+        std::fs::File::create(file).map_err(|e| failed("creating an export file", e))?,
+    );
+    let drain = async {
+        while let Ok(chunk) = receiver.recv().await {
+            output
+                .write_all(&chunk)
+                .map_err(|e| failed("writing an export file", e))?;
+        }
+        Ok::<(), SurrealRnError>(())
+    };
+    let (exported, written) = tokio::join!(job, drain);
+    exported.map_err(|e| failed("exporting a 3.x database", e))?;
+    written?;
+    output
+        .flush()
+        .map_err(|e| failed("writing an export file", e))?;
+    output
+        .get_ref()
+        .sync_all()
+        .map_err(|e| failed("writing an export file", e))
 }
 
 async fn count_v4(
@@ -187,37 +246,39 @@ async fn count_v4(
 
 async fn export_all(store: &Path, export_dir: &Path) -> Result<Vec<Exported>, SurrealRnError> {
     let endpoint = format!("surrealkv://{}", store.display());
-    let db = with_lock_retry(|| {
-        let endpoint = endpoint.clone();
-        async move { surrealdb_v3::engine::any::connect(endpoint).await }
-    })
-    .await
-    .map_err(|e| failed("opening the 3.x store", e))?;
-    let root = info_v3(&db, "INFO FOR ROOT").await?;
+    let ds = with_lock_retry(|| DatastoreV3::new(&endpoint))
+        .await
+        .map_err(|e| failed("opening the 3.x store", e))?;
+    let exported = export_open(&ds, export_dir).await;
+    // Shut the 3.x engine down explicitly and wait for it, so its LOCK is free
+    // before the store is moved. A dropped SDK handle only shuts down on a
+    // background task, which never finished on Android.
+    let shutdown = ds.shutdown().await;
+    drop(ds);
+    let exported = exported?;
+    shutdown.map_err(|e| failed("closing the 3.x store", e))?;
+    Ok(exported)
+}
+
+async fn export_open(ds: &DatastoreV3, export_dir: &Path) -> Result<Vec<Exported>, SurrealRnError> {
+    let root = info_v3(ds, &SessionV3::owner(), "INFO FOR ROOT").await?;
     require_empty(&root, &["accesses", "users"], "the root")?;
     let mut exported = Vec::new();
     for namespace in object_keys(&root, "namespaces")? {
-        db.use_ns(&namespace)
-            .await
-            .map_err(|e| failed("selecting a 3.x namespace", e))?;
-        let ns = info_v3(&db, "INFO FOR NS").await?;
+        let ns_session = SessionV3::owner().with_ns(&namespace);
+        let ns = info_v3(ds, &ns_session, "INFO FOR NS").await?;
         require_empty(&ns, &["accesses", "users"], "a namespace")?;
         for database in object_keys(&ns, "databases")? {
-            db.use_ns(&namespace)
-                .use_db(&database)
-                .await
-                .map_err(|e| failed("selecting a 3.x database", e))?;
-            let info = info_v3(&db, "INFO FOR DB").await?;
+            let session = SessionV3::owner().with_ns(&namespace).with_db(&database);
+            let info = info_v3(ds, &session, "INFO FOR DB").await?;
             require_empty(&info, &["accesses", "users"], "a database")?;
             let mut counts = BTreeMap::new();
             for table in object_keys(&info, "tables")? {
-                let count = count_v3(&db, &table).await?;
+                let count = count_v3(ds, &session, &table).await?;
                 counts.insert(table, count);
             }
             let file = export_dir.join(format!("{}.surql", exported.len()));
-            db.export(&file)
-                .await
-                .map_err(|e| failed("exporting a 3.x database", e))?;
+            export_v3(ds, &session, &file).await?;
             exported.push(Exported {
                 namespace: namespace.clone(),
                 database,
@@ -226,7 +287,6 @@ async fn export_all(store: &Path, export_dir: &Path) -> Result<Vec<Exported>, Su
             });
         }
     }
-    drop(db);
     Ok(exported)
 }
 
