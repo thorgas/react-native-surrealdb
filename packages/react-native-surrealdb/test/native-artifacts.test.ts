@@ -210,6 +210,17 @@ describe("native artifacts", () => {
     expect(result.stderr).toMatch(/Usage/);
   });
 
+  it("keeps the fetch hooks that `ubrn build --and-generate` would overwrite", async () => {
+    // ubrn regenerates the podspec; a regenerated one silently drops the
+    // download and breaks every iOS consumer installing from npm.
+    const packageRoot = new URL("..", import.meta.url).pathname;
+    const podspec = await readFile(join(packageRoot, "Surrealdb.podspec"), "utf8");
+    expect(podspec).toContain('"scripts", "native-artifacts.mjs"');
+    expect(podspec).toContain('native_fetch, "fetch", "ios"');
+    const gradle = await readFile(join(packageRoot, "android/build.gradle"), "utf8");
+    expect(gradle).toMatch(/fetchSurrealNativeBinaries\(\)/);
+  });
+
   it("re-fetches after an interrupted install instead of trusting partial files", async () => {
     expect(await fetchAndroid()).toBe("fetched");
     await rm(join(consumer, "android/src/main/jniLibs/x86_64"), { recursive: true });
