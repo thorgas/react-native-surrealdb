@@ -62,7 +62,9 @@ async fn wait_until_released(store: &Path) -> Result<(), SurrealRnError> {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(failed("waiting for the store to close", error)),
         };
-        if file.try_lock().is_ok() {
+        // fs2 issues the same flock as SurrealKV; std's File::try_lock
+        // reports Unsupported on Android, so it never succeeded there.
+        if fs2::FileExt::try_lock_exclusive(&file).is_ok() {
             return Ok(());
         }
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;

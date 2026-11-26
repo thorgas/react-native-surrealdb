@@ -19,7 +19,7 @@ protocol-ws = ["surrealdb/protocol-ws", "surrealdb/rustls"]
 # exported and re-imported on first open (4.x refuses to open them directly).
 # Off by default: it adds roughly 8 MiB to the native library. Build with
 # packages/react-native-surrealdb/scripts/with-migrate-from-3x.sh to include it.
-migrate-from-3x = ["engine-surrealkv", "dep:surrealdb_v3", "dep:surrealdb_core_v3"]
+migrate-from-3x = ["engine-surrealkv", "dep:surrealdb_v3", "dep:surrealdb_core_v3", "dep:fs2"]
 
 [dependencies]
 base64 = "0.22.1"
@@ -30,6 +30,8 @@ surrealdb = { version = "=4.0.1", default-features = false }
 surrealdb_v3 = { package = "surrealdb", version = "=3.2.4", default-features = false, features = ["kv-surrealkv"], optional = true }
 # Pin the 3.x engine itself: surrealdb 3.2.4 otherwise resolves a newer 3.x core.
 surrealdb_core_v3 = { package = "surrealdb-core", version = "=3.2.4", default-features = false, optional = true }
+# Same flock SurrealKV uses for LOCK; std::fs::File::try_lock is unsupported on Android.
+fs2 = { version = "=0.4.3", optional = true }
 surrealdb-sync-client = { path = "../surrealdb-sync-client" }
 surrealdb-sync-protocol = { path = "../surrealdb-sync-protocol" }
 thiserror = "2.0.17"
