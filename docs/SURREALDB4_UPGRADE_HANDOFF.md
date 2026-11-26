@@ -32,6 +32,10 @@ Status: IN REVIEW as PR #22 (pushed). Merge with rebase after the device items b
 | `3b7ee91` | npm tarball limit 300 MB (superseded by `a3fb1c8`) |
 | `a3fb1c8` | Native binaries downloaded at build time from the GitHub release, SHA-256 pinned (`scripts/native-artifacts.mjs`); tarball 0.29 MB |
 | `92713f3` | Fix: fetch ran as a no-op when called through the node_modules symlink |
+| `d41a550` | Migration exports through the 3.2.4 core Datastore and awaits `shutdown()` |
+| `395e304` | Fix: lock check via `fs2` (std `File::try_lock` is unsupported on Android, so every Android migration timed out) |
+| `dcfccf2` | Clippy on test targets: handle `close()` results |
+| `f049db9`, `edbebce`, latest | Harness `android-device` runner (Pixel 6a); migration E2E: `ANDROID_SERIAL`, `SURREALDB_HARNESS_RUNNER`, `SURREALDB_ANDROID_ARM64_ONLY=1`, xcodebuild install on Xcode 27 |
 
 Size finding: SurrealDB 4.0.1 adds ~8.7 MiB per platform, spread over its own crates.
 Trimming its hard-coded optional features (lindera, egg, observability) saved only
@@ -67,12 +71,22 @@ Trimming its hard-coded optional features (lindera, egg, observability) saved on
   belief flow, archive/restore, history filter, onboarding). UI `.tsx` suites need
   the `HarnessUI` native module, which a plain debug build does not link.
 
+## Device evidence after the Android fixes (2026-11-26)
+
+- Pixel 6a (USB, `--harnessRunner android-device`), APK built with Gradle-fetched libraries:
+  E2E 14/15 (`sync-read` known GC issue).
+- Pixel 6a: `e2e:surrealkv-migration:android` PASS (3.2.4 seed -> 4.0.1 migrated reopen),
+  run with `ANDROID_SERIAL=28261JEGR07474 SURREALDB_HARNESS_RUNNER=android-device SURREALDB_ANDROID_ARM64_ONLY=1`.
+- iOS sim 8F752138: `e2e:surrealkv-migration:ios` PASS with the new export path
+  (`SURREALDB_IOS_UDID=8F752138-1669-4549-94F4-F403770FCB30`).
+- Emulator `SurrealDB4_API36` (6 GB RAM): 13/13 tests in 3 suites; 2 suites hit the 60 s
+  Metro launch timeout on the loaded host.
+
 ## Open items
 
-1. Android device E2E (rn86/87/88, migration E2E) on a host with free CPU/RAM.
-2. YouMotion Android build and its UI harness suites (needs its E2E build setup).
-3. Merge PR #22 with rebase once 1 is green; then cut a release so the native
-   archives exist on GitHub Releases before anyone installs the new tarball.
+1. YouMotion Android build and its UI harness suites (needs its E2E build setup).
+2. Merge PR #22 with rebase; then cut a release so the native archives exist on
+   GitHub Releases before anyone installs the new tarball.
 
 ## Commands
 
