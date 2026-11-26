@@ -4,13 +4,6 @@ require "json"
 package = JSON.parse(File.read(File.join(__dir__, "package.json")))
 folly_compiler_flags = '-DFOLLY_NO_CONFIG -DFOLLY_MOBILE=1 -DFOLLY_USE_LIBCPP=1 -Wno-comma -Wno-shorten-64-to-32'
 
-# The npm package does not contain the Rust XCFramework. Download, verify
-# (pinned SHA-256) and unpack it during `pod install`; a no-op when present.
-native_fetch = File.join(__dir__, "scripts", "native-artifacts.mjs")
-unless system(ENV["NODE_BINARY"] || "node", native_fetch, "fetch", "ios")
-  raise "react-native-surrealdb: could not install the iOS native framework (see above)"
-end
-
 Pod::Spec.new do |s|
   s.name         = "Surrealdb"
   s.version      = package["version"]

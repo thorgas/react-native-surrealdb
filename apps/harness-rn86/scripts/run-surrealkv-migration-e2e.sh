@@ -64,10 +64,16 @@ install_host() {
         cd "$HARNESS_DIR"
         "$PNPM" run prepare:ios
         if [[ -n "${SURREALDB_IOS_UDID:-}" ]]; then
-          "$PNPM" exec react-native run-ios \
-            --scheme SurrealDbHarness \
-            --udid "$SURREALDB_IOS_UDID" \
-            --no-packager
+          # Build and install directly: Xcode 27 ships no Simulator.app, which
+          # `react-native run-ios` (CLI 20.1) still tries to open.
+          local derived="$TEMP_ROOT/ios-derived-data"
+          xcrun simctl boot "$SURREALDB_IOS_UDID" >/dev/null 2>&1 || true
+          xcodebuild -workspace ios/SurrealDbHarnessRN86.xcworkspace \
+            -scheme SurrealDbHarness -configuration Debug \
+            -destination "id=$SURREALDB_IOS_UDID" \
+            -derivedDataPath "$derived" -quiet build
+          xcrun simctl install "$SURREALDB_IOS_UDID" \
+            "$derived/Build/Products/Debug-iphonesimulator/ReactTestApp.app"
         else
           "$PNPM" exec react-native run-ios \
             --scheme SurrealDbHarness \
@@ -125,6 +131,7 @@ restore_current_artifact() {
 cleanup() {
   restore_current_artifact
   git -C "$REPOSITORY_ROOT" worktree remove --force "$SEED_WORKTREE" >/dev/null 2>&1 || true
+  rm -rf -- "$TEMP_ROOT/ios-derived-data"
   rmdir "$TEMP_ROOT" >/dev/null 2>&1 || true
 }
 
