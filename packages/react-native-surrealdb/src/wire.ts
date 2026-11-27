@@ -36,7 +36,17 @@ export class SurrealNone {
 export const NONE = SurrealNone.value;
 
 export type SurrealSqlKind =
-  "datetime" | "duration" | "file" | "geometry" | "range" | "regex" | "table";
+  | "date"
+  | "datetime"
+  | "duration"
+  | "file"
+  | "geometry"
+  | "interval"
+  | "range"
+  | "regex"
+  | "table"
+  | "time"
+  | "timestamp";
 
 /** A lossless SurrealQL-formatted value not yet represented by a JS class. */
 export class SurrealSqlValue {
@@ -239,13 +249,17 @@ function decodeTagged(
       if (!Array.isArray(value.values))
         throw new TypeError("tagged set requires values");
       return new Set(value.values.map(decodeNested));
+    case "date":
     case "datetime":
     case "duration":
     case "file":
     case "geometry":
+    case "interval":
     case "range":
     case "regex":
     case "table":
+    case "time":
+    case "timestamp":
       return new SurrealSqlValue(
         value[TAG],
         requireString(value.value, "value"),

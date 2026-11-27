@@ -401,6 +401,8 @@ Each static RNTA host imports the same code from `apps/harness-shared`:
 | `surrealdb-harness-rn84` | 0.84.1       |
 | `surrealdb-harness-rn85` | 0.85.3       |
 | `surrealdb-harness-rn86` | 0.86.0       |
+| `surrealdb-harness-rn87` | 0.87.1       |
+| `surrealdb-harness-rn88` | 0.88.1       |
 
 Replace the filter in these examples to test another supported version:
 
@@ -435,12 +437,34 @@ pnpm --filter surrealdb-harness-rn86 run e2e:android
 pnpm typecheck:react-native-matrix
 ```
 
-`e2e:ios` uses `iPhone 17 Pro` by default; set `SURREALDB_IOS_SIMULATOR` to an
-available simulator name. `e2e:android` uses the connected emulator selected by
-the React Native CLI. The harness defaults to `Pixel_9`; set
-`SURREALDB_ANDROID_EMULATOR_NAME` to reuse another existing AVD, for example
-`HausSyncStaging20261012`. This selects the harness device only; use the same
-emulator for the React Native CLI deployment.
+Device prerequisites (do these once per machine, in this order):
+
+1. Ruby gems for CocoaPods, per host:
+   `(cd apps/harness-rn86 && bundle install)`. Use
+   `BUNDLE_PATH=vendor/bundle` if you must not change global gems.
+2. iOS simulator: the hosts default to `iPhone 17 Pro (26.1)` (name plus
+   runtime, so it stays unambiguous when several simulators share a name).
+   Override with `SURREALDB_IOS_SIMULATOR="<name> (<iOS version>)"`. The
+   harness itself selects by `SURREALDB_IOS_SIMULATOR_NAME` plus iOS 26.1.
+   List candidates with `xcrun simctl list devices available`.
+3. Xcode 27 no longer ships `Simulator.app`, and `react-native run-ios`
+   (CLI 20.1) still tries to `open` it. Boot the simulator first
+   (`xcrun simctl boot <UDID>`); if `run-ios` still stops at that `open` call,
+   install from the built app with `xcrun simctl install <UDID> <path/to/.app>`
+   and run `test:harness:ios`.
+4. Android: `e2e:android` uses the emulator the React Native CLI selects. The
+   harness defaults to the AVD `Pixel_9`. To use another AVD without disturbing
+   one that is already running, boot it on its own port and point both tools
+   at it:
+
+   ```sh
+   emulator -avd Pixel_9_PlayStore -no-window -no-audio -port 5560 &
+   export ANDROID_SERIAL=emulator-5560
+   export SURREALDB_ANDROID_EMULATOR_NAME=Pixel_9_PlayStore
+   ```
+
+5. Disk: building both platforms plus the SurrealKV migration E2E (which
+   compiles a second, historical runtime) needs about 30 GB free.
 The local proxy test in each static host imports the single shared suite from
 `apps/harness-shared`, which keeps the tests bundleable without duplicating
 their behavior.

@@ -1,0 +1,23 @@
+{
+  "$schema": "./node_modules/react-native-test-app/schema.json",
+  "name": "SurrealDbHarness",
+  "displayName": "SurrealDB Harness RN 0.88",
+  "singleApp": "surrealdb-harness",
+  "components": [
+    {
+      "appKey": "SurrealDbHarness",
+      "displayName": "SurrealDB Harness RN 0.88",
+      "slug": "surrealdb-harness"
+    }
+  ],
+  "resources": {
+    "android": ["dist/res", "dist/main.android.jsbundle"],
+    "ios": ["dist/assets", "dist/main.ios.jsbundle"]
+  },
+  "android": {
+    "package": "com.surrealdbharness.rn88"
+  },
+  "ios": {
+    "bundleIdentifier": "org.reactjs.native.example.SurrealDbHarnessRN88"
+  }
+}

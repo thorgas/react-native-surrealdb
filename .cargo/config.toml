@@ -1,0 +1,5 @@
+[env]
+# SurrealDB 4 builds large async state machines; unoptimized (debug) test
+# threads overflow the default 2 MiB stack. Release builds pass with the
+# default stack, so this only affects local/CI debug test runs.
+RUST_MIN_STACK = "33554432"

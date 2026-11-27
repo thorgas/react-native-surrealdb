@@ -239,7 +239,7 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
             : 'iPhone simulator',
         os: String(Platform.Version),
         reactNative: '0.86.0',
-        surrealDb: '3.2.4',
+        surrealDb: '4.0.1',
         signal: abortController.signal,
         onProgress: setSQLiteBenchProgress,
       });
@@ -303,7 +303,7 @@ function BenchmarkScreen({ isDark }: { isDark: boolean }) {
             : 'iPhone simulator',
         os: String(Platform.Version),
         reactNative: reactNativeVersionLabel,
-        surrealDb: '3.2.4',
+        surrealDb: '4.0.1',
         signal: abortController.signal,
         onProgress: setProgress,
       });

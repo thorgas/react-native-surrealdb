@@ -42,11 +42,12 @@ fn root_admitted(root: &Value) -> Result<bool, ()> {
         "system",
         "users",
         "config",
+        "buckets",
     ];
     if root.len() != keys.len() || root.keys().any(|name| !keys.contains(&name.as_str())) {
         return Err(());
     }
-    for field in ["accesses", "defaults", "users"] {
+    for field in ["accesses", "buckets", "defaults", "users"] {
         if !matches!(root.get(field),Some(Value::Object(map)) if map.is_empty()) {
             return Err(());
         }
@@ -68,8 +69,8 @@ fn root_admitted(root: &Value) -> Result<bool, ()> {
 }
 fn ns_admitted(ns: &Value) -> bool {
     let Value::Object(ns) = ns else { return false };
-    ns.len() == 3
-        && ["accesses", "users"]
+    ns.len() == 4
+        && ["accesses", "buckets", "users"]
             .iter()
             .all(|field| matches!(ns.get(*field),Some(Value::Object(map)) if map.is_empty()))
         && matches!(ns.get("databases"),Some(Value::Object(map)) if map.len()==1 && map.contains_key(NAME))
@@ -289,8 +290,9 @@ async fn public_query_encodes_root_none_and_exact_namespace_statement_indices() 
         serde_json::json!({"database":{"$surreal":"none"},"namespace":NAME})
     );
     let ns: serde_json::Value = serde_json::from_str(&ns[1].value_json).unwrap();
-    assert_eq!(ns.as_object().unwrap().len(), 3);
+    assert_eq!(ns.as_object().unwrap().len(), 4);
     assert_eq!(ns["accesses"], serde_json::json!({}));
+    assert_eq!(ns["buckets"], serde_json::json!({}));
     assert_eq!(ns["users"], serde_json::json!({}));
     let databases = ns["databases"].as_object().unwrap();
     assert_eq!(databases.len(), 1);

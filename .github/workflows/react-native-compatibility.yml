@@ -134,6 +134,10 @@ jobs:
             react-native: "0.85.3"
           - host: harness-rn86
             react-native: "0.86.0"
+          - host: harness-rn87
+            react-native: "0.87.1"
+          - host: harness-rn88
+            react-native: "0.88.1"
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v6
@@ -191,6 +195,21 @@ jobs:
       - run: pnpm --filter react-native-surrealdb run release:check
       - name: Pack and enforce npm size ceiling
         run: pnpm --filter react-native-surrealdb run release:pack -- "$RUNNER_TEMP/npm-package"
+      - name: Install packed tarball the way a consumer does and fetch binaries
+        shell: bash
+        run: |
+          consumer="$RUNNER_TEMP/consumer"
+          mkdir -p "$consumer"
+          tar -xzf "$RUNNER_TEMP"/npm-package/react-native-surrealdb-*.tgz -C "$consumer"
+          cd "$consumer/package"
+          test ! -e SurrealDbRnFramework.xcframework
+          test ! -e android/src/main/jniLibs
+          export SURREALDB_NATIVE_ARCHIVE_DIR="$RUNNER_TEMP/npm-package"
+          node scripts/native-artifacts.mjs fetch ios
+          node scripts/native-artifacts.mjs fetch android
+          test -f SurrealDbRnFramework.xcframework/Info.plist
+          test -f android/src/main/jniLibs/arm64-v8a/libsurrealdb_rn_core.so
+          test -f android/src/main/jniLibs/x86_64/libsurrealdb_rn_core.so
 
   ios:
     name: iOS / ${{ matrix.react-native }}
@@ -214,6 +233,10 @@ jobs:
             react-native: "0.85.3"
           - host: harness-rn86
             react-native: "0.86.0"
+          - host: harness-rn87
+            react-native: "0.87.1"
+          - host: harness-rn88
+            react-native: "0.88.1"
     steps:
       - uses: actions/checkout@v5
       - uses: pnpm/action-setup@v6

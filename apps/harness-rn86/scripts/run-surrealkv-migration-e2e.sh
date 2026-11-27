@@ -4,11 +4,11 @@ set -euo pipefail
 HARNESS_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 REPOSITORY_ROOT="$(cd -- "$HARNESS_DIR/../.." && pwd)"
 PACKAGE_ROOT="$REPOSITORY_ROOT/packages/react-native-surrealdb"
-SEED_REVISION="e0c200b"
+SEED_REVISION="020269a"
 PLATFORM="${1:-}"
 PNPM="${PNPM_BIN:-$(command -v pnpm || true)}"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/surrealdb-rn-migration.XXXXXX")"
-SEED_WORKTREE="$TEMP_ROOT/seed-3.2.1"
+SEED_WORKTREE="$TEMP_ROOT/seed-3.2.4"
 CURRENT_ARTIFACT_INSTALLED=1
 IOS_BUNDLE_ID="org.reactjs.native.example.SurrealDbHarnessRN86"
 ANDROID_APP_ID="com.surrealdbharness.rn86"
@@ -17,12 +17,27 @@ usage() {
   echo "Usage: $0 <android|ios>" >&2
 }
 
+# SURREALDB_ANDROID_ARM64_ONLY=1 builds only arm64-v8a (phones, Apple Silicon
+# emulators): half the Rust build time and disk.
+ubrn_script() {
+  if [[ "$1" == android && "${SURREALDB_ANDROID_ARM64_ONLY:-0}" == 1 ]]; then
+    echo "ubrn:android:size"
+  else
+    echo "ubrn:$1"
+  fi
+}
+
+if [[ "${SURREALDB_ANDROID_ARM64_ONLY:-0}" == 1 ]]; then
+  # Gradle must then skip the x86_64 slice too.
+  export ORG_GRADLE_PROJECT_reactNativeArchitectures=arm64-v8a
+fi
+
 build_native() {
   local repository="$1"
   local platform="$2"
   (
     cd "$repository"
-    "$PNPM" --filter react-native-surrealdb run "ubrn:$platform"
+    "$PNPM" --filter react-native-surrealdb run "$(ubrn_script "$platform")"
   )
 }
 
@@ -48,10 +63,23 @@ install_host() {
       (
         cd "$HARNESS_DIR"
         "$PNPM" run prepare:ios
-        "$PNPM" exec react-native run-ios \
-          --scheme SurrealDbHarness \
-          --simulator "${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}" \
-          --no-packager
+        if [[ -n "${SURREALDB_IOS_UDID:-}" ]]; then
+          # Build and install directly: Xcode 27 ships no Simulator.app, which
+          # `react-native run-ios` (CLI 20.1) still tries to open.
+          local derived="$TEMP_ROOT/ios-derived-data"
+          xcrun simctl boot "$SURREALDB_IOS_UDID" >/dev/null 2>&1 || true
+          xcodebuild -workspace ios/SurrealDbHarnessRN86.xcworkspace \
+            -scheme SurrealDbHarness -configuration Debug \
+            -destination "id=$SURREALDB_IOS_UDID" \
+            -derivedDataPath "$derived" -quiet build
+          xcrun simctl install "$SURREALDB_IOS_UDID" \
+            "$derived/Build/Products/Debug-iphonesimulator/ReactTestApp.app"
+        else
+          "$PNPM" exec react-native run-ios \
+            --scheme SurrealDbHarness \
+            --simulator "${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro (26.1)}" \
+            --no-packager
+        fi
       )
       ;;
     android)
@@ -59,6 +87,7 @@ install_host() {
         cd "$HARNESS_DIR"
         "$PNPM" exec react-native run-android \
           --appId com.surrealdbharness.rn86 \
+          ${ANDROID_SERIAL:+--deviceId "$ANDROID_SERIAL"} \
           --no-packager
       )
       ;;
@@ -70,7 +99,7 @@ run_phase() {
   (
     cd "$HARNESS_DIR"
     "$PNPM" exec react-native-harness \
-      --harnessRunner "$PLATFORM" \
+      --harnessRunner "${SURREALDB_HARNESS_RUNNER:-$PLATFORM}" \
       --testPathPatterns "$pattern"
   )
 }
@@ -78,7 +107,8 @@ run_phase() {
 clear_previous_app_data() {
   case "$PLATFORM" in
     ios)
-      local simulator="${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}"
+      # simctl needs a UDID or an unambiguous name; prefer SURREALDB_IOS_UDID.
+      local simulator="${SURREALDB_IOS_UDID:-${SURREALDB_IOS_SIMULATOR:-iPhone 17 Pro}}"
       xcrun simctl boot "$simulator" >/dev/null 2>&1 || true
       xcrun simctl bootstatus "$simulator" -b
       xcrun simctl uninstall "$simulator" "$IOS_BUNDLE_ID" >/dev/null 2>&1 || true
@@ -92,7 +122,7 @@ clear_previous_app_data() {
 
 restore_current_artifact() {
   if (( CURRENT_ARTIFACT_INSTALLED == 0 )); then
-    echo "Restoring the current SurrealDB 3.2.4 native artifact after an interrupted run..." >&2
+    echo "Restoring the current SurrealDB 4.0.1 native artifact after an interrupted run..." >&2
     build_native "$REPOSITORY_ROOT" "$PLATFORM" || \
       echo "Failed to restore the current native artifact; rebuild ubrn:$PLATFORM manually." >&2
   fi
@@ -101,6 +131,7 @@ restore_current_artifact() {
 cleanup() {
   restore_current_artifact
   git -C "$REPOSITORY_ROOT" worktree remove --force "$SEED_WORKTREE" >/dev/null 2>&1 || true
+  rm -rf -- "$TEMP_ROOT/ios-derived-data"
   rmdir "$TEMP_ROOT" >/dev/null 2>&1 || true
 }
 
@@ -126,13 +157,13 @@ fi
 git -C "$REPOSITORY_ROOT" cat-file -e "$SEED_REVISION^{commit}"
 if ! git -C "$REPOSITORY_ROOT" show \
   "$SEED_REVISION:crates/surrealdb-rn-core/Cargo.toml" | \
-  grep -Fq 'surrealdb = { version = "=3.2.1"'; then
-  echo "Pinned seed revision no longer proves SurrealDB 3.2.1." >&2
+  grep -Fq 'surrealdb = { version = "=3.2.4"'; then
+  echo "Pinned seed revision no longer proves SurrealDB 3.2.4." >&2
   exit 1
 fi
-if ! grep -Fq 'surrealdb = { version = "=3.2.4"' \
+if ! grep -Fq 'surrealdb = { version = "=4.0.1"' \
   "$REPOSITORY_ROOT/crates/surrealdb-rn-core/Cargo.toml"; then
-  echo "Current runtime is not pinned to SurrealDB 3.2.4." >&2
+  echo "Current runtime is not pinned to SurrealDB 4.0.1." >&2
   exit 1
 fi
 
@@ -142,18 +173,24 @@ git -C "$REPOSITORY_ROOT" worktree add --detach "$SEED_WORKTREE" "$SEED_REVISION
   "$PNPM" install --frozen-lockfile
 )
 
-echo "Building the pinned SurrealDB 3.2.1 seed artifact for $PLATFORM..."
+echo "Building the pinned SurrealDB 3.2.4 seed artifact for $PLATFORM..."
 build_native "$SEED_WORKTREE" "$PLATFORM"
 replace_artifact "$SEED_WORKTREE"
+# The seed library is copied; its Rust build folder is no longer needed.
+rm -rf -- "$SEED_WORKTREE/target"
 CURRENT_ARTIFACT_INSTALLED=0
 clear_previous_app_data
 install_host
 run_phase surrealkv-seed
 
-echo "Replacing the native runtime with SurrealDB 3.2.4 without clearing app data..."
-build_native "$REPOSITORY_ROOT" "$PLATFORM"
+echo "Replacing the native runtime with SurrealDB 4.0.1 (export/import migration) without clearing app data..."
+(
+  cd "$REPOSITORY_ROOT"
+  bash packages/react-native-surrealdb/scripts/with-migrate-from-3x.sh \
+    "$PNPM" --filter react-native-surrealdb run "$(ubrn_script "$PLATFORM")"
+)
 CURRENT_ARTIFACT_INSTALLED=1
 install_host
 run_phase surrealkv-restart
 
-echo "PASS SurrealDB 3.2.1 seed -> 3.2.4 reopen on $PLATFORM"
+echo "PASS SurrealDB 3.2.4 seed -> 4.0.1 migrated reopen on $PLATFORM"

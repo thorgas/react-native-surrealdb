@@ -12,6 +12,8 @@ integration tests, and benchmark code from `../harness-shared`.
 | `surrealdb-harness-rn84` | 0.84.1       |
 | `surrealdb-harness-rn85` | 0.85.3       |
 | `surrealdb-harness-rn86` | 0.86.0       |
+| `surrealdb-harness-rn87` | 0.87.1       |
+| `surrealdb-harness-rn88` | 0.88.1       |
 
 The versions are declared with named pnpm catalogs in
 `../../pnpm-workspace.yaml`; no script rewrites a `package.json`. Each host also
@@ -72,10 +74,12 @@ pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:ios
 pnpm --filter surrealdb-harness-rn86 run e2e:sync-restart:android
 ```
 
-The permanent cross-version fixture builds the historical `e0c200b` revision
-with its exact SurrealDB `3.2.1` pin, seeds the app-private database, replaces
-only the native runtime with the current exact `3.2.4` build, reinstalls without
-clearing application data, and verifies the existing restart assertions:
+The permanent cross-version fixture builds the historical `020269a` revision
+with its exact SurrealDB `3.2.4` pin, seeds the app-private database, replaces
+only the native runtime with the current exact `4.0.1` build, reinstalls without
+clearing application data, and verifies the existing restart assertions. The
+reopen exercises the `migrate-from-3x` export/import path, because SurrealDB 4
+refuses to open SurrealKV data written by 3.x:
 
 ```sh
 pnpm --filter surrealdb-harness-rn86 run e2e:surrealkv-migration:ios

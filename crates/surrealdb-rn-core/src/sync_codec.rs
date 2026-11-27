@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 
 use serde_json::Value as JsonValue;
-use surrealdb::types::{Number as SurrealNumber, RecordIdKey, Value as SurrealValue};
+use surrealdb::types::{RecordIdKey, Value as SurrealValue};
 use surrealdb_sync_client::DurableClientState;
 use surrealdb_sync_protocol::{
     CanonicalFloat, CanonicalValue, ClientCommit, DurableOutcome, Fingerprint, Operation,
@@ -11,7 +11,7 @@ use surrealdb_sync_protocol::{
 };
 
 use crate::sync_client::NativeSyncError;
-use crate::wire::from_wire_value;
+use crate::wire::{WideNumber, from_wire_value, widen_number};
 
 pub(crate) fn canonical_fingerprint(
     state: &DurableClientState<JsonValue>,
@@ -149,11 +149,13 @@ fn from_surreal(value: SurrealValue) -> Result<CanonicalValue, ()> {
         SurrealValue::None => Ok(CanonicalValue::None),
         SurrealValue::Null => Ok(CanonicalValue::Null),
         SurrealValue::Bool(value) => Ok(CanonicalValue::Bool(value)),
-        SurrealValue::Number(SurrealNumber::Int(value)) => Ok(CanonicalValue::Int(value)),
-        SurrealValue::Number(SurrealNumber::Float(value)) => CanonicalFloat::new(value)
-            .map(CanonicalValue::Float)
-            .map_err(|_| ()),
-        SurrealValue::Number(SurrealNumber::Decimal(_)) => Err(()),
+        SurrealValue::Number(number) => match widen_number(&number) {
+            WideNumber::Int(value) => Ok(CanonicalValue::Int(value)),
+            WideNumber::Float(value) => CanonicalFloat::new(value)
+                .map(CanonicalValue::Float)
+                .map_err(|_| ()),
+            WideNumber::Decimal(_) => Err(()),
+        },
         SurrealValue::String(value) => Ok(CanonicalValue::String(value)),
         SurrealValue::Bytes(value) => Ok(CanonicalValue::Bytes(value.to_vec())),
         SurrealValue::Array(value) => value
@@ -180,7 +182,11 @@ fn from_surreal(value: SurrealValue) -> Result<CanonicalValue, ()> {
         | SurrealValue::File(_)
         | SurrealValue::Range(_)
         | SurrealValue::Regex(_)
-        | SurrealValue::Set(_) => Err(()),
+        | SurrealValue::Set(_)
+        | SurrealValue::Date(_)
+        | SurrealValue::Time(_)
+        | SurrealValue::Timestamp(_)
+        | SurrealValue::Interval(_) => Err(()),
     }
 }
 

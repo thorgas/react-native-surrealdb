@@ -35,6 +35,32 @@ reference, commands, dates, and hard budgets in
 ignored; the reference metadata remains in
 `apps/harness-rn86/size-budget.json`.
 
+## SurrealDB 4.0.1 size change (2026-11-25)
+
+Stripped (`strip -x`) Release `libsurrealdb_rn_core.dylib` for
+`aarch64-apple-ios`, built with the workspace release profile. That is the fully
+linked Rust code an iOS app contains. gzip -9 approximates the compressed
+App Store download.
+
+| Variant | Stripped | gzip -9 |
+| --- | ---: | ---: |
+| SurrealDB 3.2.4 (`main` @ `020269a`) | 15.63 MiB | 7.83 MiB |
+| SurrealDB 4.0.1 (default) | 24.35 MiB | 12.78 MiB |
+| 4.0.1 + `migrate-from-3x` | 32.66 MiB | 17.17 MiB |
+
+About 8.7 MiB (+56%) comes from SurrealDB 4.0.1 itself. Its core enables
+lindera, egg, surrealdb-diskann and the object_store/reqwest stack, and Cargo
+features cannot turn them off. The 3.x reader adds another 8.3 MiB, so it is
+opt-in (`packages/react-native-surrealdb/scripts/with-migrate-from-3x.sh`). The
+Android budget in `apps/harness-rn86/size-budget.json` is now 40 MiB.
+
+Reproduce:
+
+```sh
+IPHONEOS_DEPLOYMENT_TARGET=15.1 cargo build --release -p surrealdb-rn-core --target aarch64-apple-ios
+strip -x target/aarch64-apple-ios/release/libsurrealdb_rn_core.dylib
+```
+
 ## Changes retained
 
 - Rust Release builds use `opt-level = "z"`, fat LTO, and one codegen unit.

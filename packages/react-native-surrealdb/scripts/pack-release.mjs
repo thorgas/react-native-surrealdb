@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import { archive, MANIFEST_NAME } from "./native-artifacts.mjs";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const requestedOutput = process.argv.find(
@@ -13,8 +14,10 @@ const outputDirectory = requestedOutput
     ? requestedOutput
     : resolve(process.cwd(), requestedOutput)
   : join(packageRoot, "release");
+// Native binaries ship as separate release archives (see native-artifacts.mjs),
+// so the tarball holds only JS, C++ bindings and build scripts.
 const maximumPackedBytes = Number(
-  process.env.MAXIMUM_NPM_TARBALL_BYTES ?? 180_000_000,
+  process.env.MAXIMUM_NPM_TARBALL_BYTES ?? 20_000_000,
 );
 
 if (!Number.isSafeInteger(maximumPackedBytes) || maximumPackedBytes <= 0) {
@@ -22,6 +25,9 @@ if (!Number.isSafeInteger(maximumPackedBytes) || maximumPackedBytes <= 0) {
 }
 
 await mkdir(outputDirectory, { recursive: true });
+// Archives the built binaries next to the tarball and writes the pinned
+// native-artifacts.json that the tarball must carry.
+await archive(outputDirectory, packageRoot);
 
 const packed = spawnSync(
   "npm",
@@ -56,6 +62,18 @@ const [artifact] = report;
 if (artifact.name !== "react-native-surrealdb") {
   throw new Error(`refusing to pack unexpected package ${artifact.name}`);
 }
+const packedPaths = new Set(artifact.files.map((file) => file.path));
+if (!packedPaths.has(MANIFEST_NAME))
+  throw new Error(`npm tarball is missing ${MANIFEST_NAME}`);
+const bundledBinary = artifact.files.find(
+  (file) =>
+    file.path.startsWith("SurrealDbRnFramework.xcframework/") ||
+    file.path.startsWith("android/src/main/jniLibs/") ||
+    file.path.startsWith(".native/"),
+);
+if (bundledBinary)
+  throw new Error(`npm tarball must not contain ${bundledBinary.path}`);
+
 await writeFile(
   join(outputDirectory, "npm-pack.json"),
   `${JSON.stringify(report, null, 2)}\n`,

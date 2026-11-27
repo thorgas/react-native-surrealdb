@@ -20,7 +20,7 @@ describe('SurrealDB upstream-coverage mobile performance', () => {
           : 'iPhone 17 Pro simulator',
       os: String(Platform.Version),
       reactNative: '0.86.0',
-      surrealDb: '3.2.4',
+      surrealDb: '4.0.1',
     });
 
     expect(report.configuration.records).toBe(10_000);

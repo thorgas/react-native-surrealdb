@@ -13,6 +13,20 @@ pnpm add react-native-surrealdb
 cd ios && pod install
 ```
 
+The npm package does not contain the native binaries. `pod install` and the
+first Android Gradle build download them from this version's GitHub release,
+check the pinned SHA-256 in `native-artifacts.json`, and unpack them into the
+package. That needs `node` on the `PATH` (or `NODE_BINARY`) and network access
+once per version. For offline or mirrored builds:
+
+- `SURREALDB_NATIVE_ARCHIVE_DIR=/path/to/archives` reads the
+  `react-native-surrealdb-native-<ios|android>-<version>.tar.gz` files from a
+  directory instead of downloading them.
+- `SURREALDB_NATIVE_BASE_URL=https://mirror.example/path` downloads them from
+  an HTTPS mirror instead.
+
+Both still require the pinned checksum and size to match.
+
 Requirements:
 
 - React Native 0.82 or newer with the New Architecture and Hermes enabled;
@@ -100,6 +114,37 @@ Await transaction operations in sequence, and do not reuse a handle after
 The alpha supports embedded `memory` and experimental `surrealkv://...`
 endpoints, plus remote `ws://` and `wss://` endpoints. Remote connections can
 select a namespace/database and authenticate with root or database credentials.
+
+### Upgrading stores written by SurrealDB 3.x
+
+The embedded engine is SurrealDB 4.0.1. SurrealDB 4 cannot open a
+`surrealkv://` directory written by 3.x. Without migration support, `connect()`
+to such a directory fails with a `Database` error that mentions
+`SURREAL_EXPERIMENTAL_UPGRADE_FROM_3X`, and the data is left unchanged.
+
+Migration support bundles a copy of the SurrealDB 3.2.4 engine (the "3.x
+reader") that is used only to export old stores. It adds roughly 8 MiB to the
+native library, so the prebuilt binaries leave it out. Apps that shipped 3.x
+stores rebuild the native libraries with it:
+
+```sh
+cd packages/react-native-surrealdb
+bash scripts/with-migrate-from-3x.sh pnpm run ubrn:ios
+bash scripts/with-migrate-from-3x.sh pnpm run ubrn:android
+```
+
+With that build, the first `connect()` to a 3.x directory migrates it:
+
+1. The bundled 3.2.4 reader exports every namespace and database as SurrealQL.
+2. The old directory is moved to `<path>.v3-backup` and a new 4.x store is
+   imported at the original path.
+3. Row counts are compared per table. Only then is the backup deleted.
+
+If the app is killed mid-migration, the next `connect()` restores the backup and
+starts over. Stores that define root, namespace or database users or accesses
+are not migrated: `connect()` fails with a `Database` error and the 3.x data is
+left unchanged. Leave free disk space of roughly twice the store size for the
+first launch after the upgrade.
 
 ## Live queries
 
@@ -413,6 +458,10 @@ pending outbox, and optimistic replay. This is a local storage/codec proof, not 
 The JavaScript/Rust boundary preserves 64-bit integers, decimals, record IDs,
 UUIDs, bytes, sets, `NONE`, and other SurrealQL-only values rather than losing
 them through ordinary JSON conversion.
+SurrealDB 4 values without a dedicated JavaScript class (`date`, `time`,
+`timestamp`, `interval`, `datetime`, `duration`, ...) arrive as
+`SurrealSqlValue` with their SurrealQL text. Sized integers and floats use the
+same `int` / `float` / `decimal` transport as before.
 
 ## Benchmark diagnostics
 

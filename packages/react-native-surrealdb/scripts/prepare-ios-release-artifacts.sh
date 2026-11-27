@@ -28,9 +28,34 @@ for library in \
     sdk=iphonesimulator
     platform=ios-simulator
   fi
+  # rustc embeds LLVM bitcode (__LLVM,__bitcode) in every object. When that
+  # bitcode is newer than Xcode's LLVM, Apple's ld silently skips the object,
+  # so all FFI symbols look undefined in device builds. Drop the section with
+  # the LLVM that produced it; the machine code is untouched.
+  if [[ "$MODE" == prepare ]]; then
+    objcopy="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/^host: //p')/bin/llvm-objcopy"
+    if [[ ! -x "$objcopy" ]]; then
+      echo "Missing $objcopy; run: rustup component add llvm-tools" >&2
+      exit 1
+    fi
+    "$objcopy" --remove-section=__LLVM,__bitcode --remove-section=__LLVM,__cmdline \
+      "$library" "$PROBE_DIR/stripped.a"
+    mv "$PROBE_DIR/stripped.a" "$library"
+    xcrun ranlib "$library"
+  fi
+  # Capture first: with pipefail, `grep -q` closing the pipe fails nm.
+  symbols=$(xcrun nm -gU "$library" 2>&1 || true)
+  if grep -q 'Unknown attribute kind' <<<"$symbols"; then
+    echo "$library still contains bitcode Xcode's linker cannot read" >&2
+    exit 1
+  fi
+  if ! grep -q '_ffi_surrealdb_rn_core_rust_future_cancel_f32$' <<<"$symbols"; then
+    echo "$library does not export the UniFFI symbols" >&2
+    exit 1
+  fi
   sdk_version=$(xcrun --sdk "$sdk" --show-sdk-version)
   "$LINK_TOOL" -r -arch arm64 -platform_version "$platform" 15.1 "$sdk_version" \
     -all_load "$library" -o "$PROBE_DIR/$platform.o"
 done
 
-echo "Verified both original iOS release archives without rewriting relocations."
+echo "Removed embedded bitcode and verified both iOS release archives link."

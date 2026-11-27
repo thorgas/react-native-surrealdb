@@ -25,6 +25,37 @@ pub fn encode_value_tree(value: Value) -> Result<String, SurrealRnError> {
     })
 }
 
+/// SurrealDB 4 added sized numeric variants. The bridge keeps its three wire
+/// shapes: every integer that fits `i64` is an `int`, every binary float is a
+/// `float`, and anything wider (large `u64`, decimals) travels as a lossless
+/// `decimal` string.
+pub(crate) enum WideNumber {
+    Int(i64),
+    Float(f64),
+    Decimal(String),
+}
+
+pub(crate) fn widen_number(number: &Number) -> WideNumber {
+    match number {
+        Number::Int(value) => WideNumber::Int(*value),
+        Number::I8(value) => WideNumber::Int(i64::from(*value)),
+        Number::U8(value) => WideNumber::Int(i64::from(*value)),
+        Number::I16(value) => WideNumber::Int(i64::from(*value)),
+        Number::U16(value) => WideNumber::Int(i64::from(*value)),
+        Number::I32(value) => WideNumber::Int(i64::from(*value)),
+        Number::U32(value) => WideNumber::Int(i64::from(*value)),
+        Number::U64(value) => match i64::try_from(*value) {
+            Ok(value) => WideNumber::Int(value),
+            Err(_) => WideNumber::Decimal(value.to_string()),
+        },
+        Number::Float(value) => WideNumber::Float(*value),
+        Number::F16(value) => WideNumber::Float(f64::from(*value)),
+        Number::F32(value) => WideNumber::Float(f64::from(*value)),
+        Number::Decimal(value) => WideNumber::Decimal(value.to_string()),
+        Number::BigDecimal(value) => WideNumber::Decimal(value.to_string()),
+    }
+}
+
 struct WireValue<'a>(&'a Value);
 
 impl Serialize for WireValue<'_> {
@@ -36,16 +67,12 @@ impl Serialize for WireValue<'_> {
             Value::None => tagged(serializer, "none", None),
             Value::Null => serializer.serialize_none(),
             Value::Bool(value) => serializer.serialize_bool(*value),
-            Value::Number(Number::Int(value)) => tagged(serializer, "int", Some(value.to_string())),
-            Value::Number(Number::Float(value)) if value.is_finite() => {
-                serializer.serialize_f64(*value)
-            }
-            Value::Number(Number::Float(value)) => {
-                tagged(serializer, "float", Some(value.to_string()))
-            }
-            Value::Number(Number::Decimal(value)) => {
-                tagged(serializer, "decimal", Some(value.to_string()))
-            }
+            Value::Number(number) => match widen_number(number) {
+                WideNumber::Int(value) => tagged(serializer, "int", Some(value.to_string())),
+                WideNumber::Float(value) if value.is_finite() => serializer.serialize_f64(value),
+                WideNumber::Float(value) => tagged(serializer, "float", Some(value.to_string())),
+                WideNumber::Decimal(value) => tagged(serializer, "decimal", Some(value)),
+            },
             Value::String(value) => serializer.serialize_str(value),
             Value::Bytes(value) => {
                 let mut map = serializer.serialize_map(Some(2))?;
@@ -85,6 +112,18 @@ impl Serialize for WireValue<'_> {
                 serializer,
                 "regex",
                 Some(Value::Regex(value.clone()).to_sql()),
+            ),
+            Value::Date(value) => tagged(serializer, "date", Some(Value::Date(*value).to_sql())),
+            Value::Time(value) => tagged(serializer, "time", Some(Value::Time(*value).to_sql())),
+            Value::Timestamp(value) => tagged(
+                serializer,
+                "timestamp",
+                Some(Value::Timestamp(*value).to_sql()),
+            ),
+            Value::Interval(value) => tagged(
+                serializer,
+                "interval",
+                Some(Value::Interval(*value).to_sql()),
             ),
             Value::Array(values) => {
                 let mut sequence = serializer.serialize_seq(Some(values.len()))?;
@@ -166,16 +205,14 @@ fn to_wire_value(value: Value) -> JsonValue {
         Value::None => json!({ TAG: "none" }),
         Value::Null => JsonValue::Null,
         Value::Bool(value) => JsonValue::Bool(value),
-        Value::Number(Number::Int(value)) => json!({ TAG: "int", "value": value.to_string() }),
-        Value::Number(Number::Float(value)) if value.is_finite() => JsonNumber::from_f64(value)
-            .map(JsonValue::Number)
-            .unwrap_or(JsonValue::Null),
-        Value::Number(Number::Float(value)) => {
-            json!({ TAG: "float", "value": value.to_string() })
-        }
-        Value::Number(Number::Decimal(value)) => {
-            json!({ TAG: "decimal", "value": value.to_string() })
-        }
+        Value::Number(number) => match widen_number(&number) {
+            WideNumber::Int(value) => json!({ TAG: "int", "value": value.to_string() }),
+            WideNumber::Float(value) if value.is_finite() => JsonNumber::from_f64(value)
+                .map(JsonValue::Number)
+                .unwrap_or(JsonValue::Null),
+            WideNumber::Float(value) => json!({ TAG: "float", "value": value.to_string() }),
+            WideNumber::Decimal(value) => json!({ TAG: "decimal", "value": value }),
+        },
         Value::String(value) => JsonValue::String(value),
         Value::Bytes(value) => json!({ TAG: "bytes", "base64": BASE64.encode(value.as_ref()) }),
         Value::Duration(value) => {
@@ -193,6 +230,14 @@ fn to_wire_value(value: Value) -> JsonValue {
         Value::File(value) => json!({ TAG: "file", "value": Value::File(value).to_sql() }),
         Value::Range(value) => json!({ TAG: "range", "value": Value::Range(value).to_sql() }),
         Value::Regex(value) => json!({ TAG: "regex", "value": Value::Regex(value).to_sql() }),
+        Value::Date(value) => json!({ TAG: "date", "value": Value::Date(value).to_sql() }),
+        Value::Time(value) => json!({ TAG: "time", "value": Value::Time(value).to_sql() }),
+        Value::Timestamp(value) => {
+            json!({ TAG: "timestamp", "value": Value::Timestamp(value).to_sql() })
+        }
+        Value::Interval(value) => {
+            json!({ TAG: "interval", "value": Value::Interval(value).to_sql() })
+        }
         Value::Array(value) => JsonValue::Array(value.into_iter().map(to_wire_value).collect()),
         Value::Object(value) => JsonValue::Object(
             value
@@ -362,6 +407,39 @@ mod tests {
         let tree: JsonValue = serde_json::from_str(&encode_value_tree(value).unwrap()).unwrap();
 
         assert_eq!(streaming, tree);
+    }
+
+    #[test]
+    fn widens_surrealdb4_sized_numbers_onto_the_existing_wire_shapes() {
+        let cases = [
+            (
+                Value::Number(Number::I8(-8)),
+                r#"{"$surreal":"int","value":"-8"}"#,
+            ),
+            (
+                Value::Number(Number::U32(u32::MAX)),
+                r#"{"$surreal":"int","value":"4294967295"}"#,
+            ),
+            (
+                Value::Number(Number::U64(7)),
+                r#"{"$surreal":"int","value":"7"}"#,
+            ),
+            (
+                Value::Number(Number::U64(u64::MAX)),
+                r#"{"$surreal":"decimal","value":"18446744073709551615"}"#,
+            ),
+            (Value::Number(Number::F32(1.5)), "1.5"),
+            (
+                Value::Number(Number::F32(f32::NAN)),
+                r#"{"$surreal":"float","value":"NaN"}"#,
+            ),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(encode_value(value.clone()).unwrap(), expected);
+            let streaming: JsonValue = serde_json::from_str(expected).unwrap();
+            let tree: JsonValue = serde_json::from_str(&encode_value_tree(value).unwrap()).unwrap();
+            assert_eq!(streaming, tree);
+        }
     }
 
     #[test]

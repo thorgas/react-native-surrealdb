@@ -170,11 +170,12 @@ async fn inspect_transaction(
         "system",
         "users",
         "config",
+        "buckets",
     ];
     if root.len() != allowed.len() || root.keys().any(|key| !allowed.contains(&key.as_str())) {
         return Err(NativeStorageInspectionError::UnsupportedLayout);
     }
-    for field in ["accesses", "defaults", "users"] {
+    for field in ["accesses", "buckets", "defaults", "users"] {
         if !matches!(root.get(field),Some(Value::Object(value)) if value.is_empty()) {
             return Err(NativeStorageInspectionError::UnsupportedLayout);
         }
@@ -192,7 +193,7 @@ async fn inspect_transaction(
     if namespaces.len() != 1 || !namespaces.contains_key(&options.namespace) {
         return Err(NativeStorageInspectionError::UnsupportedLayout);
     }
-    let ns = metadata(tx,"LET $s=(INFO FOR NS); RETURN {count:array::len(object::keys($s.databases)),valid:array::len(array::complement(object::keys($s),['accesses','databases','users']))=0 AND $s.accesses={} AND $s.users={}}").await?;
+    let ns = metadata(tx,"LET $s=(INFO FOR NS); RETURN {count:array::len(object::keys($s.databases)),valid:array::len(array::complement(object::keys($s),['accesses','buckets','databases','users']))=0 AND $s.accesses={} AND $s.buckets={} AND $s.users={}}").await?;
     settled(db, generation)?;
     if !ns.valid || ns.count != 1 {
         return Err(NativeStorageInspectionError::UnsupportedLayout);
@@ -209,7 +210,7 @@ async fn inspect_transaction(
     if matches != Some(true) {
         return Err(NativeStorageInspectionError::UnsupportedLayout);
     }
-    let schema = metadata(tx,"LET $s=(INFO FOR DB); RETURN {count:array::len(object::keys($s.tables)),valid:array::len(array::complement(object::keys($s),['accesses','apis','analyzers','buckets','functions','modules','models','params','tables','users','configs','sequences']))=0 AND $s.accesses={} AND $s.apis={} AND $s.analyzers={} AND $s.buckets={} AND $s.functions={} AND $s.modules={} AND $s.models={} AND $s.params={} AND $s.users={} AND $s.configs={} AND $s.sequences={}}").await?;
+    let schema = metadata(tx,"LET $s=(INFO FOR DB); RETURN {count:array::len(object::keys($s.tables)),valid:array::len(array::complement(object::keys($s),['accesses','apis','analyzers','buckets','compatibility','extensions','functions','models','params','tables','types','users','configs','sequences']))=0 AND $s.compatibility=4 AND $s.accesses={} AND $s.apis={} AND $s.analyzers={} AND $s.buckets={} AND $s.extensions={} AND $s.functions={} AND $s.types={} AND $s.models={} AND $s.params={} AND $s.users={} AND $s.configs={} AND $s.sequences={}}").await?;
     settled(db, generation)?;
     if !schema.valid {
         return Err(NativeStorageInspectionError::UnsupportedLayout);
@@ -569,6 +570,24 @@ mod tests {
             let db = database(true).await;
             sql(&db,&format!("CREATE _sync_client_meta:['partition','client'] SET partition_id={owner},client_id='client'")).await;
             assert!(inspect_storage(&db, options()).await.is_err());
+        }
+    }
+    #[tokio::test]
+    async fn surrealdb4_buckets_types_and_compatibility_changes_fail_closed() {
+        for definition in [
+            "DEFINE BUCKET foreign BACKEND \"memory\"",
+            "DEFINE TYPE foreign AS string",
+            "ALTER DATABASE inspection COMPATIBILITY 3",
+        ] {
+            let db = database(true).await;
+            sql(&db, definition).await;
+            assert!(
+                matches!(
+                    inspect_storage(&db, options()).await,
+                    Err(NativeStorageInspectionError::UnsupportedLayout)
+                ),
+                "{definition} must not look like known storage"
+            );
         }
     }
     #[tokio::test]
