@@ -27,9 +27,12 @@ pub(crate) fn is_v3_refusal(error: &surrealdb::Error) -> bool {
     error.to_string().contains(REFUSAL_MARKER)
 }
 
+/// The store directory without trailing slashes, so `sibling` paths land next
+/// to it instead of inside it.
 pub(crate) fn store_path(endpoint: &str) -> Option<PathBuf> {
     endpoint
         .strip_prefix("surrealkv://")
+        .map(|path| path.trim_end_matches('/'))
         .filter(|path| !path.is_empty())
         .map(PathBuf::from)
 }
@@ -193,7 +196,10 @@ async fn count_v3(
             .as_i64()
             .ok_or_else(|| failed("counting 3.x rows", "count is not an integer")),
         serde_json::Value::Null => Ok(0),
-        other => Err(failed("counting 3.x rows", format!("unexpected count {other}"))),
+        other => Err(failed(
+            "counting 3.x rows",
+            format!("unexpected count {other}"),
+        )),
     }
 }
 
@@ -433,6 +439,58 @@ mod tests {
             .unwrap();
         assert_eq!(rows[0].value_json, r#"{"$surreal":"int","value":"2"}"#);
         db.close().await.unwrap();
+    }
+
+    // Expo's `Directory.uri` ends with `/`, so apps pass `surrealkv:///…/store/`.
+    // The backup must be a sibling of the store, not a child of it (renaming a
+    // directory into itself fails with EINVAL and the app cannot open its data).
+    #[tokio::test]
+    async fn trailing_slash_endpoints_migrate_like_plain_paths() {
+        let directory = temp_dir::TempDir::new().unwrap();
+        let store = directory.path().join("app.db");
+        seed_v3(&store, SEED).await;
+
+        let db = connect(ConnectOptions {
+            endpoint: format!("surrealkv://{}/", store.display()),
+            namespace: Some("app".into()),
+            database: Some("app".into()),
+        })
+        .await
+        .unwrap();
+        let rows = db
+            .query("RETURN count(SELECT * FROM item)".into(), None)
+            .await
+            .unwrap();
+        assert_eq!(rows[0].value_json, r#"{"$surreal":"int","value":"2"}"#);
+        db.close().await.unwrap();
+        for leftover in [".v3-backup", ".v3-obsolete", ".v3-export"] {
+            assert!(
+                !sibling(&store, leftover).exists(),
+                "{leftover} was left behind"
+            );
+            assert!(
+                !store.join(leftover).exists(),
+                "{leftover} was created inside the store"
+            );
+        }
+    }
+
+    #[test]
+    fn store_path_ignores_trailing_slashes() {
+        assert_eq!(
+            store_path("surrealkv:///data/app/db/"),
+            Some(PathBuf::from("/data/app/db"))
+        );
+        assert_eq!(
+            store_path("surrealkv:///data/app/db//"),
+            Some(PathBuf::from("/data/app/db"))
+        );
+        assert_eq!(
+            store_path("surrealkv:///data/app/db"),
+            Some(PathBuf::from("/data/app/db"))
+        );
+        assert_eq!(store_path("surrealkv:///"), None);
+        assert_eq!(store_path("surrealkv://"), None);
     }
 
     #[tokio::test]
